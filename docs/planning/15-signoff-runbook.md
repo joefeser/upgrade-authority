@@ -95,9 +95,21 @@ repo with at least one commit — tracemap records the SHA; real checkouts alrea
 
 ```powershell
 mkdir C:\ua-estate\scans
-$repos = Get-ChildItem C:\path\to\repos -Directory
+
+# build tracemap ONCE — `dotnet run` re-checks/rebuilds per invocation (minutes each at estate scale).
+# If the $cli path 404s on your tracemap checkout:  dir C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release -Recurse -Filter *.dll
+dotnet build C:\path\to\tracemap\src\dotnet\TraceMap.Cli -c Release
+$cli  = "C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\TraceMap.Cli.dll"
+$root = "C:\path\to\repos"
+
+# scan every repo under $root — resume-safe: repos with an existing facts.ndjson are skipped,
+# so Ctrl+C any time and re-run the block to continue where it left off
+$repos = Get-ChildItem $root -Directory
 foreach ($r in $repos) {
-  dotnet run --project C:\path\to\tracemap\src\dotnet\TraceMap.Cli -- scan --repo $r.FullName --out C:\ua-estate\scans\$($r.Name)
+  $out = "C:\ua-estate\scans\$($r.Name)"
+  if (Test-Path "$out\facts.ndjson") { Write-Host "skip $($r.Name) (already scanned)"; continue }
+  Write-Host "scan  $($r.Name)"
+  dotnet $cli scan --repo $r.FullName --out $out
 }
 ```
 
