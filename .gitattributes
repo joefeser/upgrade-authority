@@ -1,4 +1,5 @@
-fixtures/** text eol=lf
-docs/** text eol=lf
-*.mjs text eol=lf
-*.cs text eol=auto
+# Byte-exact goldens require identical checkout bytes on every platform:
+# all text is LF in the repo AND on checkout — autocrlf cannot convert it.
+# (A CRLF checkout of testdata-ingest/ silently breaks apply goldens;
+# the selftest crlf-guard case fails loudly if it ever happens.)
+* text=auto eol=lf

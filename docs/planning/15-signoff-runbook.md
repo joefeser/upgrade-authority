@@ -24,7 +24,7 @@ dotnet build src/UpgradeAuthority    # ~5s, zero packages, no network needed aft
 ua() { dotnet run --project src/UpgradeAuthority -- "$@"; }   # optional convenience
 ```
 
-**No-build option:** a self-contained single-file binary also works (94/94 verified) —
+**No-build option:** a self-contained single-file binary also works (verified; the suite is now 97 cases) —
 `dotnet publish src/UpgradeAuthority -c Release -r win-x64 --self-contained -p:PublishSingleFile=true`,
 then run `ua.exe` directly. Note `selftest` needs the repo checkout beside it (it reads
 `fixtures/` and `testdata-ingest/`); plan/report/apply/push/ingest only need their own arguments.

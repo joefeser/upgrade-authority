@@ -165,6 +165,32 @@ public static class Program
         foreach (var d in Directory.GetDirectories(src)) CopyDir(d, Path.Combine(dst, Path.GetFileName(d)));
     }
 
+    // tracked files under root when git is available (the EOL guard checks the checkout, not artifacts);
+    // otherwise walk the tree skipping build-output directories
+    static List<string> SelfTestTreeFiles(string root)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("git")
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            psi.ArgumentList.Add("-C"); psi.ArgumentList.Add(root); psi.ArgumentList.Add("ls-files");
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            var listed = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(3000);
+            if (p.ExitCode == 0)
+            {
+                var tracked = listed.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0)
+                    .Select(l => Path.Combine(root, l)).Where(File.Exists).ToList();
+                if (tracked.Count > 0) return tracked;
+            }
+        }
+        catch { /* no git here — fall through to the walk */ }
+        var skip = new[] { $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}", $"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", $"{Path.DirectorySeparatorChar}.vs{Path.DirectorySeparatorChar}" };
+        return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Where(f => { var full = Path.GetFullPath(f); return !skip.Any(s => full.Contains(s)); }).ToList();
+    }
+
     static string? GetOpt(string[] args, string name)
     {
         for (int i = 0; i < args.Length - 1; i++) if (args[i] == name) return args[i + 1];
@@ -1243,6 +1269,28 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL sanitized: {ex.Message}"); }
         finally { Redact.Enabled = false; }
+
+        // working-tree EOL guard: a CRLF checkout (core.autocrlf=true on Windows) converts unpinned
+        // text files and silently breaks byte-exact apply goldens (seen on a real work machine: apply-F13).
+        // Checks tracked files (the checkout); falls back to a walk that skips build-output dirs when no git.
+        try
+        {
+            var crlf = new List<string>();
+            var roots = new[] { fixturesRoot, Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest")) };
+            foreach (var root in roots)
+            {
+                if (!Directory.Exists(root)) continue;
+                foreach (var f in SelfTestTreeFiles(root))
+                    if (File.ReadAllText(f).Contains('\r')) crlf.Add(f);
+            }
+            if (crlf.Count > 0)
+            {
+                var sample = string.Join(", ", crlf.Take(3).Select(Path.GetFileName)) + (crlf.Count > 3 ? $" (+{crlf.Count - 3} more)" : "");
+                throw new Exception($"{sample}: CRLF in working tree — a CRLF checkout (git core.autocrlf) breaks byte-exact goldens; fix: git config core.autocrlf false; git rm -r --cached .; git reset --hard");
+            }
+            Console.WriteLine("ok   crlf-guard (fixtures + testdata working tree is LF-clean)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL crlf-guard: {ex.Message}"); }
 
         Console.WriteLine(fail == 0 ? $"SELFTEST PASS ({pass} cases)" : $"SELFTEST FAIL ({fail} failing)");
         return fail == 0 ? 0 : 1;
