@@ -18,7 +18,7 @@ If any of those fail, fix them first — everything else will work regardless of
 ## 0b. One-time setup (5 min)
 
 ```
-git clone https://github.com/joefeser/upgrade-authority   # or your fork; branch: dev
+git clone https://github.com/joefeser/upgrade-authority   # trunk: main
 cd upgrade-authority
 dotnet build src/UpgradeAuthority    # ~5s, zero packages, no network needed after clone
 ua() { dotnet run --project src/UpgradeAuthority -- "$@"; }   # optional convenience
@@ -81,7 +81,7 @@ ua push .. (again)                                     # -> error: branch exists
 
 ```
 dotnet test isn't used — the tool self-checks:
-ua selftest        # expect: SELFTEST PASS (82 cases)
+ua selftest        # expect: SELFTEST PASS (97 cases)
 node tools/validate-fixtures.mjs   # expect: ALL GOLDENS PASS (23)  [needs node; skip if absent]
 ```
 
