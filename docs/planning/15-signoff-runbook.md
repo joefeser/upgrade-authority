@@ -21,7 +21,7 @@ If any of those fail, fix them first — everything else will work regardless of
 git clone https://github.com/joefeser/upgrade-authority   # trunk: main
 cd upgrade-authority
 dotnet build src/UpgradeAuthority    # ~5s, zero packages, no network needed after clone
-ua() { dotnet run --project src/UpgradeAuthority -- "$@"; }   # optional convenience
+function ua { dotnet run --project src/UpgradeAuthority -- @args }   # optional convenience (PowerShell; bash is ua() { ... "$@"; })
 ```
 
 **No-build option:** a self-contained single-file binary also works (verified; the suite is now 97 cases) —
