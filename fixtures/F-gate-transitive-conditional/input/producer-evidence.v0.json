@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "producers": [
+    { "repo": "R1", "packageId": "P1", "producedVersion": "1.0.0", "publicationStatus": "published" },
+    { "repo": "R1", "packageId": "P2", "producedVersion": "1.0.0", "publicationStatus": "unpublished" },
+    { "repo": "R1", "packageId": "P3", "producedVersion": "1.0.0", "publicationStatus": "unpublished" },
+    { "repo": "R1", "packageId": "P4", "producedVersion": "1.0.0", "publicationStatus": "unpublished" },
+    { "repo": "R2", "packageId": "I1", "producedVersion": "1.0.0" }
+  ]
+}

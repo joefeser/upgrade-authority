@@ -1,0 +1,159 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P1",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.2.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P1 (delta target); release unit R1 = P1..P10 (one unit, assumption flagged)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R2",
+      "classification": "affected",
+      "reasons": [
+        "direct references to P1 and P3; the delta targets P1"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R3",
+      "classification": "affected",
+      "reasons": [
+        "consumes I1 produced by R2; R2 is affected — unit ripple: R3 must rebuild/bump to consume the republished I1",
+        "transitive CONTENT exposure to P1 via I1 remains UNKNOWN (no lockfile) — recorded as a gap, never as not-affected"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "RU",
+      "classification": "not-affected",
+      "reasons": [
+        "positive evidence: complete scan coverage AND RU's own lockfile closure (X9 direct, no P1 row) — transitive exposure ruled out by lockfile evidence, not by absence-of-match"
+      ],
+      "ownership": "self",
+      "actionType": "none",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v0",
+        "scan-coverage"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 2
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P1",
+            "P2",
+            "P3",
+            "P4",
+            "P5",
+            "P6",
+            "P7",
+            "P8",
+            "P9",
+            "P10"
+          ],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "ASSUMPTION FLAGGED: versioning evidence differs within this unit (P1..P8 = 1.x; P9,P10 = independent 2.5.1 line) — single-unit grouping is an assumption, not evidenced shared release",
+            "changing the unit later is a deliberate golden-file change"
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "ready",
+      "prerequisites": [
+        "R1 publishes P1 >= 1.2.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R2",
+          "packages": [
+            "I1"
+          ],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "R3 scheduled in wave 3 on the ripple obligation; its P1 content-exposure stays a gap"
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "status": "ready",
+      "prerequisites": [
+        "R2 publishes I1 rebuilt against P1 1.2.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R3",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "I1 -> P1 dependency edge",
+        "detail": "R2's own reference to P1 is evidenced, but I1's manifest dependency on P1 is a future rung (nuspec-in-index); only R3's lockfile (absent here) could evidence the consumer-side path"
+      },
+      {
+        "subject": "R1 release coupling",
+        "detail": "P9/P10 carry independent 2.5.1 versioning; per-package shared-release semantics unevidenced in V0 inputs (see wave 1 notes)"
+      },
+      {
+        "subject": "R3 content exposure",
+        "detail": "no lockfile-rows for R3; whether P1 itself flows into R3 via I1 is unresolved — ripple obligation stands (affected), content exposure stays unknown (gap), never not-affected"
+      }
+    ]
+  }
+}

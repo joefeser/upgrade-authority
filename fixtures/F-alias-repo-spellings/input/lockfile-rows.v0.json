@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "lockfile-rows.v0",
+  "repo": "RU",
+  "rows": [
+    { "packageId": "X9", "type": "direct", "version": "1.0.0" }
+  ]
+}

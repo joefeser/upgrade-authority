@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/x.git",
+  "sourceCommitSha": "0000000000000000000000000000000000000000",
+  "changes": [
+    { "id": "cc", "packageName": "Contoso.Core", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.0.0", "newVersion": "1.1.0" }
+  ]
+}

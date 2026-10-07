@@ -1,0 +1,32 @@
+{
+  "scanId": "scan-eca2931b597a04ad1ae0",
+  "repoName": "legacy",
+  "remoteUrl": null,
+  "branch": null,
+  "commitSha": "unknown",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-03T01:36:35.206183+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Legacy.csproj"
+  ],
+  "targetFrameworks": [
+    "net48"
+  ],
+  "knownGaps": [
+    "Git commit SHA unavailable; scan is labeled with commitSha \u0027unknown\u0027.",
+    "Workspace diagnostic category: MSBuildRegistrationFailed. Native output was redacted."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "0a6054502040859641106d9d525d55dc",
+  "gitRootHash": null,
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "sourceSnapshotDigest": "c4ea77ef825606fe50e558fc6842a2452b57419707f3bb839fd007326b9c8148"
+}

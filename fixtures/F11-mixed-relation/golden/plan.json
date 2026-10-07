@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "Bogus.Target",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "2.0.0"
+  },
+  "repos": [
+    {
+      "repo": "R11",
+      "classification": "affected",
+      "reasons": [
+        "transitive path R11 -> Bogus.Parent -> Bogus.Target evidenced by R11's lockfile rows (Bogus.Target transitive via Bogus.Parent)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v1"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [
+        "Bogus.Target 2.0.0 available from the public feed (Bogus.Target declared external via producer-evidence.v0; stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R11",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "Bogus.Target producer",
+        "detail": "Bogus.Target is declared external via producer-evidence.v0 externalPackages — attribution is evidence-backed; no scanner/advisory input is claimed (V0 does not ingest scanners)"
+      },
+      {
+        "subject": "R11 coverage (lockfile-evidenced)",
+        "detail": "scan gaps on resolved version not evidenced: Bogus.Null — R11 is affected via lockfile-evidenced transitive exposure; the gaps qualify how much additional work is unknown, they do not erase the evidenced exposure"
+      }
+    ],
+    "findings": [
+      {
+        "subject": "R11 version disagreement: Bogus.Target",
+        "detail": "R11 resolves Bogus.Target to 2 versions across its lockfile/TFM resolution groups: 1.0.0 in src/LibA/packages.lock.json (net8.0) [delta from-version]; 2.0.0 in src/LibB/packages.lock.json (net8.0) — evidenced disagreement, not an error; V0 schedules R11 once at unit level and picks no winner (convergence is deliberately out of scope, §10)"
+      }
+    ]
+  }
+}

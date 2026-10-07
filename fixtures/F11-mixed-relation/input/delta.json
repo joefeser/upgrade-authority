@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/example/f11-delta-source.git",
+  "sourceCommitSha": "f11b000000000000000000000000000000000002",
+  "changes": [
+    { "id": "pkg-bt", "packageName": "Bogus.Target", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.0.0", "newVersion": "2.0.0" }
+  ]
+}

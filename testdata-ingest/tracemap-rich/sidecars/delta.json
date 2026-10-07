@@ -1,0 +1,1 @@
+{"version":"package-delta.v1","sourceRepo":"https://example.invalid/x.git","sourceCommitSha":"0000000000000000000000000000000000000000","changes":[{"id":"nj","packageName":"Newtonsoft.Json","ecosystem":"nuget","changeType":"updated","oldVersion":"12.0.3","newVersion":"13.0.3"}]}

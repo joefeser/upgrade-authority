@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P2",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.3.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P2 (delta target)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R2",
+      "classification": "affected",
+      "reasons": [
+        "direct reference to P2 on the producer side (R2/src/Lib.csproj); produces I1 — R3's lockfile corroborates that I1's closure carries P2 (transitive via I1)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "producer-evidence.v0",
+        "lockfile-rows.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 2
+      }
+    },
+    {
+      "repo": "R3",
+      "classification": "affected",
+      "reasons": [
+        "transitive path R3 -> I1 -> P2 reconstructed from R3's own lockfile (I1 direct; P2 transitive via I1)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P2"
+          ],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "ready",
+      "prerequisites": [
+        "R1 publishes P2 >= 1.3.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R2",
+          "packages": [
+            "I1"
+          ],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "status": "ready",
+      "prerequisites": [
+        "R2 publishes I1 rebuilt against P2 1.3.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R3",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": []
+  }
+}

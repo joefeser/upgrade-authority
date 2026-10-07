@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    {
+      "repo": "R2",
+      "packageId": "P1",
+      "declaredConstraint": "[1.0.0,2.0.0)",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "f1a0000000000000000000000000000000000001",
+      "path": "R2/src/Integration.csproj"
+    },
+    {
+      "repo": "R2",
+      "packageId": "P3",
+      "declaredConstraint": "[1.0.0,2.0.0)",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "f1a0000000000000000000000000000000000001",
+      "path": "R2/src/Integration.csproj"
+    },
+    {
+      "repo": "R3",
+      "packageId": "I1",
+      "declaredConstraint": "[1.0.0,2.0.0)",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "f1a0000000000000000000000000000000000002",
+      "path": "R3/src/Api.csproj"
+    },
+    {
+      "repo": "R3",
+      "packageId": "E1",
+      "declaredConstraint": "[1.0.0,2.0.0)",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "f1a0000000000000000000000000000000000002",
+      "path": "R3/src/Api.csproj"
+    },
+    {
+      "repo": "RU",
+      "packageId": "X9",
+      "declaredConstraint": "[1.0.0,2.0.0)",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "f1a0000000000000000000000000000000000003",
+      "path": "RU/src/Unrelated.csproj"
+    }
+  ],
+  "scanCoverage": [
+    {
+      "repo": "R1/",
+      "status": "complete"
+    },
+    {
+      "repo": "R2",
+      "status": "complete"
+    },
+    {
+      "repo": "R3",
+      "status": "complete"
+    },
+    {
+      "repo": "RU",
+      "status": "complete"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/example/f4a-delta-source.git",
+  "sourceCommitSha": "f4ab000000000000000000000000000000000002",
+  "changes": [
+    { "id": "pkg-p2", "packageName": "P2", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.0.0", "newVersion": "1.3.0" }
+  ]
+}

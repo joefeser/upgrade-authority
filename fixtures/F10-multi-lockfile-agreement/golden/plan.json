@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "Serilog",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "3.1.1",
+    "newVersion": "4.0.0"
+  },
+  "repos": [
+    {
+      "repo": "R-consumer",
+      "classification": "affected",
+      "reasons": [
+        "direct reference to Serilog (R-consumer/src/App.csproj)",
+        "Serilog attribution: DECLARED external via producer-evidence.v0 externalPackages (evidence-backed, not inferred from producer absence — absence alone means unknown, per F3a)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R-neg",
+      "classification": "not-affected",
+      "reasons": [
+        "positive evidence: complete scan coverage AND R-neg's own lockfile closure (Logging.Lib direct, Newtonsoft.Json transitive, Polly direct, no Serilog row) — transitive exposure ruled out by lockfile evidence, not by absence-of-match"
+      ],
+      "ownership": "self",
+      "actionType": "none",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v1",
+        "scan-coverage"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 2
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [
+        "Serilog 4.0.0 available from the public feed (Serilog declared external via producer-evidence.v0; stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R-consumer",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "Serilog producer",
+        "detail": "Serilog is declared external via producer-evidence.v0 externalPackages — attribution is evidence-backed; no scanner/advisory input is claimed (V0 does not ingest scanners)"
+      }
+    ]
+  }
+}

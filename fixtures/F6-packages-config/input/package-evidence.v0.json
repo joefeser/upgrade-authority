@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    { "repo": "R8", "packageId": "P1", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packages.config", "constraintSource": "packages.config", "tfm": "net48", "commitSha": "f6a0000000000000000000000000000000000001", "path": "R8/src/Legacy/packages.config" },
+    { "repo": "RB", "packageId": "P1", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packages.config", "constraintSource": "packages.config", "tfm": "net48", "commitSha": "f6a0000000000000000000000000000000000002", "path": "RB/src/Web/packages.config" }
+  ],
+  "scanCoverage": [
+    { "repo": "R1", "status": "complete" },
+    { "repo": "R8", "status": "complete" },
+    { "repo": "RB", "status": "gaps", "gaps": ["RB/src/legacy-vb not scanned (projectless VB.NET area)"] }
+  ]
+}

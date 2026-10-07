@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    { "repo": "R3", "packageId": "E1", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packagereference", "constraintSource": "Project", "tfm": "net8.0", "commitSha": "f2a0000000000000000000000000000000000001", "path": "R3/src/Api.csproj" },
+    { "repo": "RX", "packageId": "E1", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packagereference", "constraintSource": "Project", "tfm": "net8.0", "commitSha": "f2a0000000000000000000000000000000000002", "path": "RX/src/OtherTeamApi.csproj" },
+    { "repo": "RM", "packageId": "E1", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packagereference", "constraintSource": "Project", "tfm": "net8.0", "commitSha": "f2a0000000000000000000000000000000000004", "path": "RM/src/Orphan.csproj" }
+  ],
+  "scanCoverage": [
+    { "repo": "R3", "status": "complete" },
+    { "repo": "R4", "status": "complete" },
+    { "repo": "RX", "status": "gaps", "gaps": ["RX/src/legacy-dir not scanned"] },
+    { "repo": "RM", "status": "complete" }
+  ]
+}

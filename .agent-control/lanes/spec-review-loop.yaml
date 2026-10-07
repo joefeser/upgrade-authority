@@ -1,0 +1,172 @@
+# upgrade-authority spec-review lane — Agent Control Kit (ACK) lane config.
+# Mirrors tracemap's .agent-control/lanes/pr-review-loop.yaml structure (proven on
+# ACK 0.5.x) and encodes docs/specs/REVIEW-DOCTRINE.md:
+#   round 1 = full fight; round 2 = fixes only; round 3 = exception, then owner decides.
+# Rounds map to ACK freshness cycles: initial review + maxFreshReviewFixCycles (2).
+# Local ACK install: ~/src/joefeser/agent-control-kit @ 0.5.5.
+agentControl:
+  requiredVersion: ">=0.4.4 <0.6.0"
+  channel: stable
+  allowPrerelease: false
+  requiredCapabilities:
+    - reviewQuorum
+    - requiredReviewerBatching
+    - runPrLoopUntilTerminal
+    - quietJson
+    - externalReviewReceipts
+    - boundedLocalReviewFallback
+
+lane:
+  id: upgrade-authority-spec-review-loop
+  version: 0.1.0
+  status: active
+  description: >
+    Repo-local spec-review policy for upgrade-authority. This YAML is lane
+    configuration consumed by agent-control, not an exchanged coordination
+    packet payload. Spec branches (spec/**) are reviewed before merge to dev
+    per the review doctrine: one adversarial round, bounded fix cycles, typed
+    stop reasons instead of endless re-review. Codex and Kiro reviews are
+    owner-ferried (briefs in docs/reviews/); returned verdicts are admitted as
+    external review receipts. When the freshness ceiling is reached, ACK may
+    run the bounded claude-local reviewer and admit only its owner-authorized
+    receipt. Reviewer disagreement is resolved by the coordinator with logged
+    rationale; the owner (joefeser) overrides everything. Repo is local-only
+    until origin is confirmed private and IP posture clears; lane becomes
+    fully operative (bot waits, merge readback) when a remote exists.
+
+# agent-control lane config key; not an inter-agent coordination packet payload.
+prLoopPacket:
+  reviewFreshnessPolicy:
+    # Doctrine: round 1 fight + at most 2 fix cycles = 3 rounds max, then owner.
+    maxFreshReviewFixCycles: 2
+    # Spec/policy/docs changes invalidate a stale review — fresh eyes required.
+    riskyFileGlobs:
+      - docs/specs/**
+      - docs/reviews/**
+      - docs/planning/**
+      - .agent-control/**
+  reviewQuorum:
+    enabled: true
+    groups:
+      trustedSpecReview:
+        bots:
+          - codex
+          - qodo
+        # Quorum per Joe (2026-10-02): Codex + Qodo are THE quorum — wait for
+        # both before patching (one consolidated fix pass per round). Kiro is
+        # additive (optional below); ferried/late reviewers never block.
+        minimumReturned: 2
+        preferAllReturned: true
+        waitForAllTimeoutSeconds: 900
+        noneReturnedStopReason: REQUIRED_REVIEW_QUORUM_NOT_MET
+  # Trusted-base authorization: the commit introducing this block must be
+  # owner-merged before ACK can use it. Head-only policy cannot authorize itself.
+  localReviewers:
+    claude-local:
+      enabled: true
+      provider: claude-code
+      authority: owner_authorized_receipt
+      requirement: try
+      quorumGroups:
+        - trustedSpecReview
+      admitters:
+        - joefeser
+      # Joe asked for "Claude 5.5 via the CLI". This machine's claude-code CLI
+      # (2.1.233) is currently routed to the GLM backend; effective model is
+      # glm-5.3. Update when a Claude 5.x backend is configured.
+      model: glm-5.3
+      modelFamily: glm-5.3
+      kind: implementation
+      targets:
+        - "."
+      outputDir: .agent-control/tmp/local-reviews/claude
+      timeoutSeconds: 1800
+      maxBudgetUsd: 4
+      allowDirty: false
+  localReviewFallback:
+    enabled: true
+    # Doctrine mapping: the fallback is a SUBSTITUTE reviewer (e.g., when an
+    # owner-ferried reviewer cannot return). maxFixCycles: 0 means it has NO
+    # post-ceiling patch authority — it reviews, it does not spawn additional
+    # fix cycles beyond the 3-round budget. After the ceiling, the loop stops
+    # with a typed human-decision outcome.
+    trigger: fresh_review_fix_cycle_ceiling
+    reviewer: claude-local
+    # Two durable attempts at $4 each bound aggregate authorized spend to $8.
+    maxAttempts: 2
+    maxFixCycles: 0
+    postTerminalComment: true
+  pushPolicy:
+    mode: batch_until_review_settles
+    localFixesPresent: false
+    validationEvidence: []
+    findingUrls: []
+    waitTimeoutSeconds: 300
+  bots:
+    codex:
+      requirement: required
+      waitUntilReturnedBeforeProcessing: true
+      waitTimeoutSeconds: 900
+      requestAllowed: policy
+      requestRetryCeiling: 2
+      retryCooldownSeconds: 120
+    qodo:
+      requirement: required
+      waitUntilReturnedBeforeProcessing: true
+      waitTimeoutSeconds: 900
+      requestAllowed: policy
+      requestRetryCeiling: 2
+      retryCooldownSeconds: 120
+    # Kiro: additive reviewer (owner-ferried / Kiro Cloud); never blocks.
+    kiro:
+      requirement: optional
+      waitUntilReturnedBeforeProcessing: false
+  branchPolicy:
+    # Keep target lists expanded instead of YAML aliases. Some consumers use
+    # safe-load YAML parsers that reject aliases by default.
+    overnightAllowedMergeTargets:
+      - dev
+      - spec/**
+    overnightForbiddenMergeTargets:
+      - main
+      - master
+      - release/**
+    ownerOverrideEligibleTargets:
+      - dev
+      - spec/**
+    ownerOverrideDeniedTargets:
+      - main
+      - master
+      - release/**
+    mainPromotionRequiresSeparatePr: true
+    mainPromotionOwnerOnly: true
+    mergeMethod: merge_commit
+
+reviewerReturnPolicy:
+  requiredConfiguredReviewersMustReturn: false
+  optionalReviewersRemainResidualRisk: true
+  requiredTimeoutStopReason: REQUIRED_REVIEWER_RETURN_TIMEOUT
+  nonBlockingTimeoutBehavior: residual-risk
+  mutationBoundary:
+    codex: bounded_retry
+    qodo: never
+    kiro: never
+
+requiredReviewerNonReturnPolicy:
+  stopReason: HUMAN_DECISION_REQUIRED_REVIEW_NON_RETURN
+  overnightAllowedTargets:
+    - dev
+    - spec/**
+  ownerOverrideEligibleTargets:
+    - dev
+    - spec/**
+  ownerOverrideDeniedTargets:
+    - main
+    - master
+    - release/**
+  overnightForbiddenTargets:
+    - main
+    - master
+    - release/**
+  mainPromotionRequiresSeparatePr: true
+  noSquashByDefault: true

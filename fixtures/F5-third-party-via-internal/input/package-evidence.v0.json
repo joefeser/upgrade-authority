@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    { "repo": "R1", "packageId": "N1", "declaredConstraint": "[3.0.0,4.0.0)", "format": "packagereference", "constraintSource": "Project", "tfm": "net8.0", "commitSha": "f5a0000000000000000000000000000000000001", "path": "R1/src/Lib.csproj" },
+    { "repo": "R2", "packageId": "P1", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packagereference", "constraintSource": "Project", "tfm": "net8.0", "commitSha": "f5a0000000000000000000000000000000000002", "path": "R2/src/Consumer.csproj" }
+  ],
+  "scanCoverage": [
+    { "repo": "R1", "status": "complete" },
+    { "repo": "R2", "status": "complete" }
+  ]
+}

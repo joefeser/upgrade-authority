@@ -1,0 +1,34 @@
+{
+  "scanId": "scan-58f3cab3d5ce32a79776",
+  "repoName": "svc",
+  "remoteUrl": null,
+  "branch": null,
+  "commitSha": "unknown",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-03T01:37:06.067376+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Api/Api.csproj",
+    "src/Worker/Worker.csproj"
+  ],
+  "targetFrameworks": [
+    "net48",
+    "net8.0"
+  ],
+  "knownGaps": [
+    "Git commit SHA unavailable; scan is labeled with commitSha \u0027unknown\u0027.",
+    "Workspace diagnostic category: MSBuildRegistrationFailed. Native output was redacted."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "55fbc5f78d49043189a5ef7b50ce0061",
+  "gitRootHash": null,
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "sourceSnapshotDigest": "d2e749b53e471d21c3fd065f190eb9e2600874eac9f86607e87a0c988e754384"
+}

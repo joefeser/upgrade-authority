@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "apply.v1",
+  "delta": {
+    "packageName": "Contoso.Core",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.1.0"
+  },
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [
+        "Contoso.Core 1.1.0 available from the public feed (Contoso.Core declared external via producer-evidence.v0; stated, not verified live)"
+      ],
+      "units": [
+        {
+          "repo": "svc",
+          "action": "edit",
+          "edits": [
+            {
+              "kind": "E2",
+              "path": "Directory.Packages.props",
+              "attribute": "PackageVersion/Version",
+              "oldVersion": "1.0.0",
+              "newVersion": "1.1.0",
+              "line": 2,
+              "evidenceKind": "central-package-version.v0",
+              "shared": true
+            },
+            {
+              "kind": "E3",
+              "path": "src/Worker/Worker.csproj",
+              "attribute": "VersionOverride",
+              "oldVersion": "0.9.0",
+              "newVersion": "1.1.0",
+              "line": 2,
+              "evidenceKind": "package-evidence.v0"
+            }
+          ]
+        }
+    ]
+    }
+  ]
+}

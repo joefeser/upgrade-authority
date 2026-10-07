@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/example/f5-delta-source.git",
+  "sourceCommitSha": "f5b0000000000000000000000000000000000003",
+  "changes": [
+    { "id": "pkg-n1", "packageName": "N1", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "3.0.0", "newVersion": "3.0.1" }
+  ]
+}

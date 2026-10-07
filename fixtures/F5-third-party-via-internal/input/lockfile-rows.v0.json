@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "lockfile-rows.v0",
+  "repo": "R2",
+  "rows": [
+    { "packageId": "P1", "type": "direct", "version": "1.0.0" },
+    { "packageId": "N1", "type": "transitive", "version": "3.0.0", "via": "P1", "names": null }
+  ]
+}

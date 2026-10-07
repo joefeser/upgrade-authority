@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "ownership.v0",
+  "selfTeamId": "team-a",
+  "ownerships": [
+    {
+      "repo": "R1",
+      "team": "team-a"
+    },
+    {
+      "repo": "R2",
+      "team": "team-a"
+    },
+    {
+      "repo": "R3",
+      "team": "team-a"
+    },
+    {
+      "repo": "RU",
+      "team": "team-a"
+    }
+  ],
+  "mirrors": [
+    {
+      "canonical": "R1",
+      "aliases": [
+        "https://GitHub.com/enterprise/R1.git"
+      ]
+    }
+  ]
+}

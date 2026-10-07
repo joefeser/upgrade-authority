@@ -1,0 +1,33 @@
+{
+  "scanId": "scan-e735cd11413282a4984a",
+  "repoName": "corelib",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "6f0ad72f2c27a93081af9ea5b7a1483354d8565c",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-04T04:45:37.381817+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Core.csproj"
+  ],
+  "targetFrameworks": [
+    "net8.0"
+  ],
+  "knownGaps": [
+    "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "50e6fb888ef6f02cd3e07b491653e42b",
+  "gitRootHash": "50e6fb888ef6f02cd3e07b491653e42b",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "43aab3b3136b710c2225a91985c8dad75f1bea1c9627701173996fde235e21fd"
+}

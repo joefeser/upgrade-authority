@@ -1,0 +1,31 @@
+{
+  "scanId": "scan-2fcc2caad27e6c79ab9e",
+  "repoName": "cleanrepo",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "ed57384c3a603a91f7b0f64bc7a6c092a36c775e",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-03T16:28:40.306725+00:00",
+  "analysisLevel": "Level1SemanticAnalysis",
+  "buildStatus": "Succeeded",
+  "solutions": [],
+  "projects": [
+    "src/Lib/Lib.csproj"
+  ],
+  "targetFrameworks": [
+    "net10.0"
+  ],
+  "knownGaps": [],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "482f73ab81fcde16e80b4d3f38cbabda",
+  "gitRootHash": "482f73ab81fcde16e80b4d3f38cbabda",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "11b576c65f337245174183f775b8efad396737d25da3576582e5e76d5ac20bb7"
+}

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "Contoso.Core",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.1.0"
+  },
+  "repos": [
+    {
+      "repo": "svc",
+      "classification": "affected",
+      "reasons": [
+        "OBSERVED direct reference to Contoso.Core (Directory.Packages.props) — an observed reference is positive evidence of affected-ness; coverage gaps qualify HOW MUCH work is uncertain, they do not erase the observed edge",
+        "central package management: single pin edit in Directory.Packages.props fans out to Api.csproj + Worker.csproj",
+        "Worker.csproj carries an explicit VersionOverride pinning Contoso.Core = 0.9.0 (src/Worker/Worker.csproj) — the override is visible and must be updated or consciously kept",
+        "Contoso.Core attribution: DECLARED external via producer-evidence.v0 externalPackages (evidence-backed, not inferred from producer absence — absence alone means unknown, per F3a)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "scan-coverage"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      },
+      "scanNotes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "Workspace diagnostic category: SdkResolutionFailed. Native output was redacted.",
+        "Workspace diagnostic category: UncategorizedWorkspaceFailure. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [
+        "Contoso.Core 1.1.0 available from the public feed (Contoso.Core declared external via producer-evidence.v0; stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "svc",
+          "packages": [],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "scheduled on the observed edge; unscanned area may surface additional work — tracked as a gap, not a blocker"
+          ]
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "Contoso.Core producer",
+        "detail": "Contoso.Core is declared external via producer-evidence.v0 externalPackages — attribution is evidence-backed; no scanner/advisory input is claimed (V0 does not ingest scanners)"
+      },
+      {
+        "subject": "svc coverage",
+        "detail": "scan gaps on NuGet lockfile analysis reported `packages-lock-group-unsupported`. — svc still affected (observed edge) and scheduled; additional edges/work in the unscanned area remain unknown"
+      }
+    ],
+    "findings": [
+      {
+        "subject": "svc version disagreement: Contoso.Core",
+        "detail": "svc resolves Contoso.Core to 2 versions across its lockfile/TFM resolution groups: 1.0.0 in src/Api/packages.lock.json (net8.0) [delta from-version]; 0.9.0 in src/Worker/packages.lock.json (net8.0) — evidenced disagreement, not an error; V0 schedules svc once at unit level and picks no winner (convergence is deliberately out of scope, §10); svc also has lockfile groups the scanner could not parse and contributed no rows — those resolutions stay unevidenced (coverage gap)"
+      },
+      {
+        "subject": "svc version disagreement: Newtonsoft.Json",
+        "detail": "svc resolves Newtonsoft.Json to 2 versions across its lockfile/TFM resolution groups: 13.0.1 in src/Api/packages.lock.json (net8.0); 12.0.3 in src/Worker/packages.lock.json (net8.0) — evidenced disagreement, not an error; V0 schedules svc once at unit level and picks no winner (convergence is deliberately out of scope, §10)"
+      }
+    ]
+  }
+}

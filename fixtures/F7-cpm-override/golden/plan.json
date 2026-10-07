@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P1",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.2.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P1 (delta target)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R9",
+      "classification": "affected",
+      "reasons": [
+        "central package management: single pin edit in R9/Directory.Packages.props fans out to ProjA + ProjB",
+        "ProjC carries an explicit VersionOverride pinning P1 = 1.0.0 (R9/src/ProjC/ProjC.csproj) — the override is visible and must be updated or consciously kept"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P1"
+          ],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "ready",
+      "prerequisites": [
+        "R1 publishes P1 >= 1.2.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R9",
+          "packages": [],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "edit sites: Directory.Packages.props (central, fans out to ProjA/ProjB) AND ProjC VersionOverride (separate visible pin — not hidden by the central version)"
+          ]
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": []
+  }
+}

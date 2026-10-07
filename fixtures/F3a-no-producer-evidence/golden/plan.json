@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P7",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.4.0"
+  },
+  "repos": [
+    {
+      "repo": "R11",
+      "classification": "affected",
+      "reasons": [
+        "direct reference to P7 (R11/src/App.csproj) — affected-ness is consumer-side and fully evidenced",
+        "no producer wave possible: producer of P7 unknown"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "conditional",
+      "condition": "producer of P7 is unknown — no producer wave is derivable; R11's wave proceeds only after the producer is identified and P7 1.4.0 is available",
+      "prerequisites": [
+        "P7 1.4.0 exists on the configured feed and authenticated restore succeeds (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R11",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "P7 producer",
+        "detail": "no pinned input declares who produces P7; zero producers invented (no heuristic, no name inference)"
+      }
+    ]
+  }
+}

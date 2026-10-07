@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "lockfile-rows.v2",
+  "repos": [
+    {
+      "repo": "billing",
+      "rows": [
+        {
+          "packageId": "Contoso.Payments",
+          "type": "direct",
+          "version": "1.0.0",
+          "names": "Newtonsoft.Json",
+          "lockfile": "src/Api/packages.lock.json",
+          "tfm": "net8.0"
+        },
+        {
+          "packageId": "Newtonsoft.Json",
+          "type": "transitive",
+          "version": "13.0.3",
+          "via": "Contoso.Payments",
+          "lockfile": "src/Api/packages.lock.json",
+          "tfm": "net8.0"
+        }
+      ]
+    },
+    {
+      "repo": "shipping",
+      "rows": [
+        {
+          "packageId": "Contoso.Payments",
+          "type": "direct",
+          "version": "2.0.0",
+          "names": "Newtonsoft.Json",
+          "lockfile": "src/Worker/packages.lock.json",
+          "tfm": "net8.0"
+        },
+        {
+          "packageId": "Newtonsoft.Json",
+          "type": "transitive",
+          "version": "12.0.3",
+          "via": "Contoso.Payments",
+          "lockfile": "src/Worker/packages.lock.json",
+          "tfm": "net8.0"
+        }
+      ]
+    }
+  ]
+}

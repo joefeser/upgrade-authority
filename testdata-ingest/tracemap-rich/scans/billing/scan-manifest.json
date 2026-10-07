@@ -1,0 +1,33 @@
+{
+  "scanId": "scan-9c85a194134527db1a47",
+  "repoName": "billing",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "5e1358d4dd17770f2d96b6faad675cb02ffc487c",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-03T16:28:43.520004+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Api/Api.csproj"
+  ],
+  "targetFrameworks": [
+    "net8.0"
+  ],
+  "knownGaps": [
+    "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "ff90168efa009d2d5ac5051821bf5623",
+  "gitRootHash": "ff90168efa009d2d5ac5051821bf5623",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "360b75430f3c8a497fc15e72818e47447a3e692f4a1d8ec0979055d6e0358924"
+}

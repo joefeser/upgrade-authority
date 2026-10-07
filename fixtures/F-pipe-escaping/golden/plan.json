@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P1",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.2.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P1 (delta target)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R2",
+      "classification": "affected",
+      "reasons": [
+        "OBSERVED packages.config reference to P1 (R2/src/Legacy|Dir/packages.config) — observed edge is positive evidence of affected-ness; coverage gaps (R2/src/pipe\ncase) qualify additional unknown work, they do not erase the observed edge"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "scan-coverage"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P1"
+          ],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "ready",
+      "prerequisites": [
+        "R1 publishes P1 >= 1.2.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R2",
+          "packages": [],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "packages.config consumer — edit path is packages.config; unscanned pipe\ncase area may surface additional work (tracked as a gap)"
+          ]
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "R2 coverage",
+        "detail": "R2/src/pipe\ncase not scanned — R2 still affected and scheduled on its observed edge; additional edges/work in the unscanned area remain unknown"
+      }
+    ]
+  }
+}

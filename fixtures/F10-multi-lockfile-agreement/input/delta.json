@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/example/f10-delta-source.git",
+  "sourceCommitSha": "f10b000000000000000000000000000000000002",
+  "changes": [
+    { "id": "pkg-serilog", "packageName": "Serilog", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "3.1.1", "newVersion": "4.0.0" }
+  ]
+}

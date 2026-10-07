@@ -1,0 +1,128 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P5",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "2.0.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "producer claim for P5 (claim A of contradiction C1) — BOTH claims retained; neither outranks the other for scheduling"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R6",
+      "classification": "affected",
+      "reasons": [
+        "producer claim for P5 (claim B of contradiction C1) — BOTH claims retained"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R7",
+      "classification": "affected",
+      "reasons": [
+        "direct reference to P5 (R7/src/Downstream.csproj)",
+        "downstream of a CONTRADICTED producer — appears only in a provisional wave blocked on C1; no firm prerequisite on either claim"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "provisional",
+      "blockedOn": "C1",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P5"
+          ],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "candidate producer — provisional pending C1 resolution"
+          ]
+        },
+        {
+          "repo": "R6",
+          "packages": [
+            "P5"
+          ],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "candidate producer — provisional pending C1 resolution"
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "provisional",
+      "blockedOn": "C1",
+      "prerequisites": [
+        "C1 resolved: authoritative producer of P5 determined by human decision; then P5 2.0.0 published (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R7",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [
+      {
+        "id": "C1",
+        "subject": "P5 producer",
+        "claims": [
+          {
+            "repo": "R1",
+            "packageId": "P5"
+          },
+          {
+            "repo": "R6",
+            "packageId": "P5"
+          }
+        ],
+        "downstreamProvisional": [
+          "R7"
+        ]
+      }
+    ],
+    "gaps": []
+  }
+}

@@ -1,0 +1,12 @@
+--- a/Directory.Packages.props
++++ b/Directory.Packages.props
+@@ -1,2 +1,2 @@
+ <Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup>
+-<ItemGroup><PackageVersion Include="Contoso.Core" Version="1.0.0" /><PackageVersion Include="Serilog" Version="3.1.1" /></ItemGroup></Project>
++<ItemGroup><PackageVersion Include="Contoso.Core" Version="1.1.0" /><PackageVersion Include="Serilog" Version="3.1.1" /></ItemGroup></Project>
+--- a/src/Worker/Worker.csproj
++++ b/src/Worker/Worker.csproj
+@@ -1,2 +1,2 @@
+ <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFrameworks>net8.0;net48</TargetFrameworks></PropertyGroup>
+-<ItemGroup><PackageReference Include="Contoso.Core" VersionOverride="0.9.0" /></ItemGroup></Project>
++<ItemGroup><PackageReference Include="Contoso.Core" VersionOverride="1.1.0" /></ItemGroup></Project>

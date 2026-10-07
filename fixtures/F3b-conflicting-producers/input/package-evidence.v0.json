@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    { "repo": "R7", "packageId": "P5", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packagereference", "constraintSource": "Project", "tfm": "net8.0", "commitSha": "f3b0000000000000000000000000000000000001", "path": "R7/src/Downstream.csproj" }
+  ],
+  "scanCoverage": [
+    { "repo": "R1", "status": "complete" },
+    { "repo": "R6", "status": "complete" },
+    { "repo": "R7", "status": "complete" }
+  ]
+}

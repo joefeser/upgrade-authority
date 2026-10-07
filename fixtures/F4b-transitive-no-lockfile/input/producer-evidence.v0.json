@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "producers": [
+    { "repo": "R1", "packageId": "P2", "producedVersion": "1.0.0" },
+    { "repo": "R2", "packageId": "I1", "producedVersion": "1.1.0" }
+  ]
+}

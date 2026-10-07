@@ -1,0 +1,138 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P2",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.6.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P2 (delta target); unit = P1..P4, basis assumed-same-repo"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R2",
+      "classification": "affected",
+      "reasons": [
+        "direct reference to P2 (R2/src/Integration.csproj)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R3",
+      "classification": "affected",
+      "reasons": [
+        "consumes I1 produced by R2; R2 is affected — unit ripple: R3 must rebuild/bump to consume the republished I1",
+        "transitive CONTENT exposure to P2 via I1 remains UNKNOWN (no lockfile) — recorded as a gap, never as not-affected"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P1",
+            "P2",
+            "P3",
+            "P4"
+          ],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "current publication state cited from producer-evidence.v0 (fixture-declared)"
+          ],
+          "publicationStatus": {
+            "P1": "published",
+            "P2": "unpublished",
+            "P3": "unpublished",
+            "P4": "unpublished"
+          }
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "conditional",
+      "condition": "awaiting publication of P2: producer-evidence.v0 declares P2 publicationStatus = unpublished — R2's wave can never be 'ready' while the sidecar says unpublished",
+      "prerequisites": [
+        "R1 publishes P2 (cite: producer-evidence.v0 P2 publicationStatus = unpublished; stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R2",
+          "packages": [
+            "I1"
+          ],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "R3 scheduled in wave 3 on the ripple obligation; its P2 content-exposure stays a gap"
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "status": "conditional",
+      "condition": "awaiting publication of P2: producer-evidence.v0 declares P2 publicationStatus = unpublished — R3's wave can never be 'ready' while the sidecar says unpublished",
+      "prerequisites": [
+        "R2 publishes I1 rebuilt against P2 1.6.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R3",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "I1 -> P2 dependency edge",
+        "detail": "R2's own reference to P2 is evidenced, but I1's manifest dependency on P2 is a future rung (nuspec-in-index); only R3's lockfile (absent here) could evidence the consumer-side path"
+      },
+      {
+        "subject": "R3 content exposure",
+        "detail": "no lockfile-rows for R3; whether P2 itself flows into R3 via I1 is unresolved — ripple obligation stands (affected), content exposure stays unknown (gap), never not-affected"
+      }
+    ]
+  }
+}

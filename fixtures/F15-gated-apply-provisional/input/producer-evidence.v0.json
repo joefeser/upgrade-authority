@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "producers": [
+    { "repo": "teamX", "packageId": "Bogus.Pin", "producedVersion": "1.0.0" },
+    { "repo": "teamY", "packageId": "Bogus.Pin", "producedVersion": "1.5.0" }
+  ]
+}

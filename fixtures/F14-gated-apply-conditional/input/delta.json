@@ -1,0 +1,6 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/example/f14-delta.git",
+  "sourceCommitSha": "f14b000000000000000000000000000000000002",
+  "changes": [ { "id": "bp", "packageName": "Bogus.Pin", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.0.0", "newVersion": "2.0.0" } ]
+}

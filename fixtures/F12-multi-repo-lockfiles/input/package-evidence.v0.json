@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "tracemap-ingest",
+  "facts": [
+    {
+      "repo": "billing",
+      "packageId": "Contoso.Payments",
+      "declaredConstraint": "1.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 7,
+      "projects": [
+        "src/Api/Api.csproj"
+      ],
+      "commitSha": "5e1358d4dd17770f2d96b6faad675cb02ffc487c",
+      "path": "src/Api/Api.csproj"
+    },
+    {
+      "repo": "shipping",
+      "packageId": "Contoso.Payments",
+      "declaredConstraint": "2.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 7,
+      "projects": [
+        "src/Worker/Worker.csproj"
+      ],
+      "commitSha": "cc05747ca4cdc2f2cdd38699cf6e0585d485c516",
+      "path": "src/Worker/Worker.csproj"
+    }
+  ],
+  "scanCoverage": [
+    {
+      "repo": "billing",
+      "status": "complete",
+      "gaps": [],
+      "notes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    },
+    {
+      "repo": "shipping",
+      "status": "complete",
+      "gaps": [],
+      "notes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    }
+  ]
+}

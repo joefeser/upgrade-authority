@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    {
+      "repo": "R1",
+      "packageId": "Bogus.Pin",
+      "declaredConstraint": "1.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 2,
+      "projects": ["src/App.csproj"],
+      "commitSha": "f14a000000000000000000000000000000000001",
+      "path": "src/App.csproj"
+    }
+  ],
+  "scanCoverage": [ { "repo": "R1", "status": "complete" } ]
+}

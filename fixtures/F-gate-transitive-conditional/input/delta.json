@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/example/f-gate-delta-source.git",
+  "sourceCommitSha": "fgb0000000000000000000000000000000000003",
+  "changes": [
+    { "id": "pkg-p2", "packageName": "P2", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.0.0", "newVersion": "1.6.0" }
+  ]
+}

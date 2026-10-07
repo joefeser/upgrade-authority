@@ -1,0 +1,448 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "upgrade-authority/plan.schema.v1.json",
+  "title": "upgrade-authority ImpactPlan v1",
+  "description": "Golden/output contract for V0 impact plans (SPEC-000 §2.5). Every field normative; producers must not drop uncertainty fields.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "delta",
+    "repos",
+    "waves",
+    "uncertainty"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "plan.v1"
+    },
+    "delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageName",
+        "ecosystem",
+        "changeType",
+        "oldVersion",
+        "newVersion"
+      ],
+      "properties": {
+        "packageName": {
+          "type": "string"
+        },
+        "ecosystem": {
+          "type": "string"
+        },
+        "changeType": {
+          "type": "string"
+        },
+        "oldVersion": {
+          "type": "string"
+        },
+        "newVersion": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string",
+          "description": "e.g. 'public advisory surface (attribution only — no scanner ingestion in V0)' — only when an input evidences it"
+        }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/repoClassification"
+      }
+    },
+    "waves": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/wave"
+      }
+    },
+    "stop": {
+      "$ref": "#/$defs/stop"
+    },
+    "uncertainty": {
+      "$ref": "#/$defs/uncertainty"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "stop"
+        ]
+      },
+      "then": {
+        "properties": {
+          "waves": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "classification": {
+      "enum": [
+        "affected",
+        "not-affected",
+        "unknown"
+      ]
+    },
+    "repoClassification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "classification",
+        "reasons",
+        "ownership",
+        "actionType",
+        "evidenceKinds",
+        "confidence"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "classification": {
+          "$ref": "#/$defs/classification"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "ownership": {
+          "enum": [
+            "self",
+            "external",
+            "unknown"
+          ]
+        },
+        "actionType": {
+          "enum": [
+            "executable",
+            "external-request-await",
+            "none",
+            "unknown"
+          ]
+        },
+        "evidenceKinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "scanNotes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ownership": {
+                "const": "external"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "actionType": {
+                "const": "external-request-await"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "confidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rung",
+        "corroboration"
+      ],
+      "properties": {
+        "rung": {
+          "enum": [
+            "receipt",
+            "manifest",
+            "evaluated",
+            "declared",
+            "fixture-declared"
+          ]
+        },
+        "corroboration": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "count of independent sources (distinct repo+commit+rule)"
+        }
+      }
+    },
+    "wave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "status",
+        "releaseUnits"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "provisional",
+            "conditional"
+          ]
+        },
+        "blockedOn": {
+          "type": "string",
+          "description": "contradiction id, when status=provisional"
+        },
+        "condition": {
+          "type": "string",
+          "description": "what unblocks, when status=conditional"
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "stated publication/restore prerequisites; never claimed verified live"
+        },
+        "releaseUnits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/releaseUnit"
+          },
+          "minItems": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "provisional"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "blockedOn"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "conditional"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "condition"
+            ]
+          }
+        }
+      ]
+    },
+    "releaseUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "packages",
+        "basis"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0,
+          "description": "packages this unit publishes; empty for consumer-only repos"
+        },
+        "basis": {
+          "enum": [
+            "assumed-same-repo",
+            "evidenced"
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "publicationStatus": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "published",
+              "unpublished",
+              "unknown"
+            ]
+          }
+        }
+      }
+    },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "detail"
+      ],
+      "properties": {
+        "reason": {
+          "enum": [
+            "CYCLE_DETECTED",
+            "HUMAN_DECISION_REQUIRED"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "cyclePath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "CYCLE_DETECTED"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "cyclePath"
+            ]
+          }
+        }
+      ]
+    },
+    "uncertainty": {
+      "type": "object",
+      "required": [
+        "contradictions",
+        "gaps"
+      ],
+      "properties": {
+        "contradictions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "subject",
+              "claims"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "claims": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "repo",
+                    "packageId"
+                  ],
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "packageId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "downstreamProvisional": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "subject",
+              "detail"
+            ],
+            "properties": {
+              "subject": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "subject",
+              "detail"
+            ],
+            "properties": {
+              "subject": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  }
+}

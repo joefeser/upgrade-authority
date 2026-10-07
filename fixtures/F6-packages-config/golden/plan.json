@@ -1,0 +1,111 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P1",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.2.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P1 (delta target)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R8",
+      "classification": "affected",
+      "reasons": [
+        "packages.config reference to P1 (R8/src/Legacy/packages.config, net48) — legacy format ingested as a first-class edge"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "RB",
+      "classification": "affected",
+      "reasons": [
+        "OBSERVED packages.config reference to P1 (RB/src/Web/packages.config) — observed edge is positive evidence of affected-ness; coverage gaps (RB/src/legacy-vb) qualify additional unknown work, they do not erase the observed edge"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "scan-coverage"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P1"
+          ],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "ready",
+      "prerequisites": [
+        "R1 publishes P1 >= 1.2.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R8",
+          "packages": [],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "packages.config consumer — edit path is packages.config, not PackageReference"
+          ]
+        },
+        {
+          "repo": "RB",
+          "packages": [],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "packages.config consumer — edit path is packages.config; unscanned legacy-vb area may surface additional work (tracked as a gap)"
+          ]
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "RB coverage",
+        "detail": "RB/src/legacy-vb not scanned — RB still affected and scheduled on its observed edge; additional edges/work in the unscanned area remain unknown"
+      }
+    ]
+  }
+}

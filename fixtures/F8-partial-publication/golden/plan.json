@@ -1,0 +1,130 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P3",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.5.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P3 (delta target); unit = P1..P8, basis assumed-same-repo"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R2",
+      "classification": "affected",
+      "reasons": [
+        "direct references to P1 and P3; the delta targets P3"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R10",
+      "classification": "affected",
+      "reasons": [
+        "direct reference to P6 (same release unit as the delta target — unit-level republish affects P6 consumers)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "R1",
+          "packages": [
+            "P1",
+            "P2",
+            "P3",
+            "P4",
+            "P5",
+            "P6",
+            "P7",
+            "P8"
+          ],
+          "basis": "assumed-same-repo",
+          "notes": [
+            "current publication state cited from producer-evidence.v0 (fixture-declared)"
+          ],
+          "publicationStatus": {
+            "P1": "published",
+            "P2": "published",
+            "P3": "published",
+            "P4": "published",
+            "P5": "unpublished",
+            "P6": "unpublished",
+            "P7": "unpublished",
+            "P8": "unpublished"
+          }
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "ready",
+      "prerequisites": [
+        "R1 publishes P3 >= 1.5.0 (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R2",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "status": "conditional",
+      "condition": "awaiting publication of P6: producer-evidence.v0 declares P6 publicationStatus = unpublished — R10's wave can never be 'ready' while the sidecar says unpublished",
+      "prerequisites": [
+        "R1 publishes P6 (cite: producer-evidence.v0 P6 publicationStatus = unpublished; stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "R10",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": []
+  }
+}

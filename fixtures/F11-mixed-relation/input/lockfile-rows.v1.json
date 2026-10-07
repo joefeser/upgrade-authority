@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "lockfile-rows.v1",
+  "repo": "R11",
+  "rows": [
+    { "packageId": "Bogus.Null", "type": "direct", "version": null, "lockfile": "src/LibA/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Bogus.Parent", "type": "direct", "version": "1.0.0", "names": "Bogus.Target", "lockfile": "src/LibB/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Bogus.Target", "type": "direct", "version": "1.0.0", "lockfile": "src/LibA/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Bogus.Target", "type": "transitive", "version": "2.0.0", "via": "Bogus.Parent", "lockfile": "src/LibB/packages.lock.json", "tfm": "net8.0" }
+  ]
+}

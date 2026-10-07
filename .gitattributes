@@ -1,0 +1,4 @@
+fixtures/** text eol=lf
+docs/** text eol=lf
+*.mjs text eol=lf
+*.cs text eol=auto

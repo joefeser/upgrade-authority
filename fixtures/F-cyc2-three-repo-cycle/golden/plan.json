@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "P2",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "1.0.0",
+    "newVersion": "1.1.0"
+  },
+  "repos": [
+    {
+      "repo": "R1",
+      "classification": "affected",
+      "reasons": [
+        "produces P2 (delta target); also consumes P13 produced by R9 — participant in release cycle CYC-1"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R5",
+      "classification": "affected",
+      "reasons": [
+        "consumes P2 and produces P12 consumed by R9 — participant in release cycle CYC-1"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "R9",
+      "classification": "affected",
+      "reasons": [
+        "consumes P12 and produces P13 consumed by R1 — participant in release cycle CYC-1"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [],
+  "stop": {
+    "reason": "CYCLE_DETECTED",
+    "detail": "repo-level release cycle detected: R1 produces P2 consumed by R5, while R5 produces P12 consumed by R9, while R9 produces P13 consumed by R1. V0 detects and refuses: no wave order is emitted. Bootstrap/intermediate-version resolution is a human-reviewed decision (SPEC-003).",
+    "cyclePath": [
+      "R1",
+      "P2",
+      "R5",
+      "P12",
+      "R9",
+      "P13",
+      "R1"
+    ]
+  },
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": []
+  }
+}

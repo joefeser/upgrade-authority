@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    { "repo": "R11", "packageId": "P7", "declaredConstraint": "[1.0.0,2.0.0)", "format": "packagereference", "constraintSource": "Project", "tfm": "net8.0", "commitSha": "f3a0000000000000000000000000000000000001", "path": "R11/src/App.csproj" }
+  ],
+  "scanCoverage": [
+    { "repo": "R11", "status": "complete" }
+  ]
+}

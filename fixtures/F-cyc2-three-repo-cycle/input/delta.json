@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/example/f-cyc2-delta-source.git",
+  "sourceCommitSha": "cc2b000000000000000000000000000000000004",
+  "changes": [
+    { "id": "pkg-p2", "packageName": "P2", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.0.0", "newVersion": "1.1.0" }
+  ]
+}

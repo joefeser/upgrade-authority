@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "Newtonsoft.Json",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "12.0.3",
+    "newVersion": "13.0.3"
+  },
+  "repos": [
+    {
+      "repo": "billing",
+      "classification": "affected",
+      "reasons": [
+        "transitive path billing -> Contoso.Payments -> Newtonsoft.Json evidenced by billing's lockfile rows (Newtonsoft.Json transitive via Contoso.Payments)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v2"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      },
+      "scanNotes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    },
+    {
+      "repo": "shipping",
+      "classification": "affected",
+      "reasons": [
+        "transitive path shipping -> Contoso.Payments -> Newtonsoft.Json evidenced by shipping's lockfile rows (Newtonsoft.Json transitive via Contoso.Payments)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v2"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      },
+      "scanNotes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [
+        "Newtonsoft.Json 13.0.3 available from the public feed (Newtonsoft.Json declared external via producer-evidence.v0; stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "billing",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        },
+        {
+          "repo": "shipping",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "Newtonsoft.Json producer",
+        "detail": "Newtonsoft.Json is declared external via producer-evidence.v0 externalPackages — attribution is evidence-backed; no scanner/advisory input is claimed (V0 does not ingest scanners)"
+      }
+    ]
+  }
+}

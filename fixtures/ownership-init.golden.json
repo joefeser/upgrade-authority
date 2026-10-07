@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "ownership.v0",
+  "selfTeamId": "team-a",
+  "ownerships": [
+    {
+      "repo": "billing",
+      "team": "team-a"
+    },
+    {
+      "repo": "cleanrepo",
+      "team": "team-a"
+    },
+    {
+      "repo": "corelib",
+      "team": "team-a"
+    },
+    {
+      "repo": "legacy",
+      "team": "team-a"
+    },
+    {
+      "repo": "shipping",
+      "team": "team-a"
+    },
+    {
+      "repo": "svc",
+      "team": "team-a"
+    }
+  ],
+  "mirrors": []
+}

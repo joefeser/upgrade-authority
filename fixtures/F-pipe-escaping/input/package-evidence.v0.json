@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    {
+      "repo": "R2",
+      "packageId": "P1",
+      "declaredConstraint": "[1.0.0,2.0.0)",
+      "format": "packages.config",
+      "constraintSource": "packages.config",
+      "tfm": "net48",
+      "commitSha": "fp00000000000000000000000000000000000001",
+      "path": "R2/src/Legacy|Dir/packages.config"
+    }
+  ],
+  "scanCoverage": [
+    {
+      "repo": "R1",
+      "status": "complete"
+    },
+    {
+      "repo": "R2",
+      "status": "gaps",
+      "gaps": [
+        "R2/src/pipe\ncase not scanned (pipe | test)"
+      ]
+    }
+  ]
+}

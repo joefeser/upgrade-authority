@@ -1,0 +1,33 @@
+{
+  "scanId": "scan-5a481eda6fd2e220dd58",
+  "repoName": "legacy",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "e7a6b6670d327014a27325ac0a6a0132333ab04d",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-03T16:28:36.713803+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Web/Web.csproj"
+  ],
+  "targetFrameworks": [],
+  "knownGaps": [
+    "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+    "Workspace diagnostic category: SdkResolutionFailed. Native output was redacted.",
+    "Workspace diagnostic category: UncategorizedWorkspaceFailure. Native output was redacted."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "16b42b5ef57b847ed71f17c16e2356a0",
+  "gitRootHash": "16b42b5ef57b847ed71f17c16e2356a0",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "133fecbd7685ae704c2a5d228e7e03ebe6ce3fb81f2c252fd02de7adfa6a6147"
+}

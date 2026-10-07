@@ -1,0 +1,32 @@
+# Spec queue — 4 ahead of the builder (working model per Joe, 2026-10-02)
+
+Specs land on `spec/*` branches, get agent-reviewed (Codex/Kiro via Joe-ferried briefs), merge to `dev`, then build. The queue stays ~4 specs ahead so the builder never starves. **Reviews follow [REVIEW-DOCTRINE.md](REVIEW-DOCTRINE.md): round 1 is the full fight, round 2 verifies fixes, round 3 is the exception — then Joe decides. Zero new blockers/majors ends review early.**
+
+| # | Spec | Status | One-liner |
+|---|---|---|---|
+| SPEC-000 | V0 definition and scope | **SHIPPED 2026-10-02** — 3-round review converged (round1 TRIAGE → round2 ROUND2 → round3 VERDICT), merged via PR #1 | What V0 is/isn't; sanitized corpus F1–F-cyc; acceptance; Friday-2026-10-09 milestone |
+| SPEC-001 | Evidence ingestion and graph model | **SHIPPED 2026-10-02** — same review, merged via PR #1 | Consume tracemap evidence + producer-evidence.v0/ownership.v0 sidecars; entities; single V0 evidence rung; uncertainty first-class; HACP consideration |
+| SPEC-002 | Producer map and ownership fusion | **SHIPPED 2026-10-02** — merged via PR #3 | Fusion rules 1–10 (identity, claims, contradictions, externalPackages, ownership, publication, units, edges, observed-edge, zero-refs) |
+| SPEC-003 | Impact plan and wave ordering | **SHIPPED 2026-10-02** — merged via PR #3 | Classification rules, wave statuses, cycle stop, byte-exact determinism contract (templates T1–T7, array ordering) |
+| SPEC-004 | Markdown report and CLI surface | **SHIPPED 2026-10-03** — merged via PR #5 | Deterministic report.md from plan.json; ua report command; F1 golden hand-authored, 14 generated (flagged for review) |
+| SPEC-005 | Tracemap ingest converter | **SHIPPED 2026-10-03** — 3-round arc (R1 REWORK → R2/R3 FIX THEN SHIP), merged via PR #6 | `ua ingest <scan-dir> --out <fixture-dir>`: real tracemap scan output → planner input; honest coverage (B1); per-repo gap attribution (B4). (The pre-PR6 queue's "demonstrated-case acceptance harness" placeholder was absorbed into the corpus + selftest + fidelity-rule machinery, PR #2.) |
+| SPEC-006+ | Mock-feed ingest simulator (D020), scanner correlation, campaign state | backlog | Later phases per planning log |
+| SPEC-016 | --sanitized — shareable console output | **draft — round 1 review (brief-027, PR #36); Joe-requested** | global flag wraps stdout+stderr in a redactor (paths/UNC→[path:leaf#h8], non-allowlisted URLs/scp→[url#h8], emails, UA_REDACT proprietary-name list); stable hashes for correlation; file artifacts untouched | 
+| SPEC-015 | Gap scope — package-relevant gaps; compile health as notes | **draft — round 1 review (brief-025, PR #30); Joe-approved rule 2026-10-04** | one structural classifier (Gap \| Note); notes ride scanCoverage → PlanRepo.scanNotes → report 'Scan notes' section; status derives from gaps only; F9/F12/F13 fidelity-logged churn (billing/shipping reach complete) |
+| SPEC-014 | ua ownership — estate-scale ownership.v0 generation | **draft — round 1 review (brief-023, PR #26)** | init/update from the scan set; manual assignments sacred; teams never invented (flags = human decisions); byte-deterministic canonical output |
+| SPEC-013 | --github-api GHE override for ua push --pr | **draft — round 1 review (brief-021, PR #22)** | one flag + GITHUB_API_URL; origin validation host-aware; bare-host informational (never silent guessing); dry-run shows the endpoint; real-GHE validation deferred until an instance exists |
+| SPEC-012 | Findings UX — from-version marking, trailer once/repo, rule-c coverage gaps | **draft — round 1 review (brief-019, PR #20)** | T10 resolutions mark the delta's oldVersion; T10a once per repo; lockfile-evidenced repos get coverage gaps (G2); F9/F12/F13 fidelity-logged golden changes; Kiro #4 declared moot (apply owns edit sites) |
+| SPEC-011 | --scans-root estate-scale ingest | **draft — round 1 review (brief-017, PR #18)** | one command ingests a scans tree (depth-1 discovery, name-ordered, broken children warn-not-block); byte-equality with explicit dirs machine-checked |
+| SPEC-010 | ua push — apply execution (branches, commits, PRs) | **SHIPPED 2026-10-03** — rounds 1-2 (PR #15) + implementation (PR #16) | executes verified patches: deterministic branch per wave, worktree commits with gate/prereq text, opt-in GitHub PR (GITHUB_TOKEN, github.com), typed refusals exit 7, dry-run goldens, local-only default |
+| SPEC-009 | ua apply v1 — dry-run edit generation | **draft — round 1 review (brief-013, PR #13)** | apply.v1 manifest: evidence-gated edit sites (E1–E4: direct ref / CPM pin / VersionOverride / packages.config), verified unified diffs vs `--repo`, typed refusal exit 6; no git/PRs (SPEC-010) |
+| SPEC-008 | Multi-repo lockfile ingest | **draft — round 1 review (brief-011, PR #11; evidence = PR #10's committed billing+shipping scans)** | lockfile-rows.v2 (repos[] envelope); exit 2 retired; findings stay per-repo (cross-repo differences are the waves' job, not findings); F12 from real two-repo ingest |
+| SPEC-007 | Multi-TFM lockfile rows + version-disagreement findings | **SHIPPED 2026-10-03** — rounds 1-2 converged, merged via PR #7 | lockfile-rows.v1 keyed by (repo, lockfile, tfm, packageId); cross-lockfile/cross-TFM version disagreements become findings (T10), not typed errors; kills the exit-4 refusal on real multi-project estates like the committed svc scan |
+
+**Next-spec candidates — findings UX (from Kiro's PR #8 post-merge verification, 2026-10-03; dispositions in `docs/reviews/pr8/kiro-postmerge.md`):**
+- Findings say which side is the delta's `oldVersion` ("Worker is on the delta's from-version; Api already drifted ahead") — pure function of evidence already in the plan.
+- Root-cause linking: Worker's `VersionOverride="0.9.0"` causes both svc findings, but tracemap doesn't index `PackageVersion`/`VersionOverride` (same tracemap slice suggested in PR #6) — plan can't connect them until it does. **Joe's call on the tracemap work.**
+- Unit line should say when the edit site is not evidenced (CPM central vs override ambiguous).
+- T10a trailer once per repo, not repeated on every finding (noise at estate scale).
+- Multi-repo lockfile ingest (exit 2) still gated on a real multi-lockfile-repo estate scan.
+
+**Queue discipline:** a spec must be reviewable faster than the code it precedes (guardrail, Session 12 §11.1).

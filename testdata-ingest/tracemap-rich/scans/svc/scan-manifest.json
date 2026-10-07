@@ -1,0 +1,38 @@
+{
+  "scanId": "scan-5cea33d5aae7285444e1",
+  "repoName": "svc",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "34ef184b551d2d532568b435de895a4d6e0b68b1",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-03T16:28:33.605024+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Api/Api.csproj",
+    "src/Worker/Worker.csproj"
+  ],
+  "targetFrameworks": [
+    "net48",
+    "net8.0"
+  ],
+  "knownGaps": [
+    "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+    "NuGet lockfile analysis reported \u0060packages-lock-group-unsupported\u0060.",
+    "Workspace diagnostic category: SdkResolutionFailed. Native output was redacted.",
+    "Workspace diagnostic category: UncategorizedWorkspaceFailure. Native output was redacted."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "4a35f1e00037ea60a23100bc2cd7f0a6",
+  "gitRootHash": "4a35f1e00037ea60a23100bc2cd7f0a6",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "2383a1fec58fdfccf13180ec447e5ba99583f287396f0d1ee4c4e1ede007c1fc"
+}

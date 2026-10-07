@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    { "repo": "R9", "packageId": "P1", "declaredConstraint": "1.0.0", "format": "cpm", "constraintSource": "Directory.Packages.props", "tfm": "net8.0", "projects": ["R9/src/ProjA", "R9/src/ProjB"], "commitSha": "f7a0000000000000000000000000000000000001", "path": "R9/Directory.Packages.props" },
+    { "repo": "R9", "packageId": "P1", "declaredConstraint": "1.0.0", "format": "cpm", "constraintSource": "VersionOverride", "tfm": "net8.0", "projects": ["R9/src/ProjC"], "commitSha": "f7a0000000000000000000000000000000000001", "path": "R9/src/ProjC/ProjC.csproj" }
+  ],
+  "scanCoverage": [
+    { "repo": "R1", "status": "complete" },
+    { "repo": "R9", "status": "complete" }
+  ]
+}

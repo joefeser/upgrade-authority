@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "lockfile-rows.v1",
+  "repo": "R-neg",
+  "rows": [
+    { "packageId": "Logging.Lib", "type": "direct", "version": "2.0.0", "names": "Newtonsoft.Json", "lockfile": "src/LibA/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Logging.Lib", "type": "direct", "version": "2.0.0", "names": "Newtonsoft.Json", "lockfile": "src/LibB/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Newtonsoft.Json", "type": "transitive", "version": "13.0.1", "via": "Logging.Lib", "lockfile": "src/LibA/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Newtonsoft.Json", "type": "transitive", "version": "13.0.1", "via": "Logging.Lib", "lockfile": "src/LibB/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Polly", "type": "direct", "version": "8.0.0", "lockfile": "src/LibA/packages.lock.json", "tfm": "net8.0" },
+    { "packageId": "Polly", "type": "direct", "version": "8.0.0", "lockfile": "src/LibA/packages.lock.json", "tfm": "net48" }
+  ]
+}

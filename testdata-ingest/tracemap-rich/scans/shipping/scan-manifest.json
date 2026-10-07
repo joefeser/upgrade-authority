@@ -1,0 +1,33 @@
+{
+  "scanId": "scan-b5de970f892825ae1a88",
+  "repoName": "shipping",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "cc05747ca4cdc2f2cdd38699cf6e0585d485c516",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-03T16:28:46.357442+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Worker/Worker.csproj"
+  ],
+  "targetFrameworks": [
+    "net8.0"
+  ],
+  "knownGaps": [
+    "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "d7e69e0ba8d9c2d9a98630a70c520f78",
+  "gitRootHash": "d7e69e0ba8d9c2d9a98630a70c520f78",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "790603fbcf958a946059147a176e449c70bc3512a5e9fdef84e73a46d965de12"
+}

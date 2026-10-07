@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [],
+  "scanCoverage": [
+    {
+      "repo": "R11",
+      "status": "gaps",
+      "gaps": [
+        "resolved version not evidenced: Bogus.Null"
+      ]
+    }
+  ]
+}

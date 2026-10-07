@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "externalPackages": [
+    { "packageId": "N1", "note": "declared external (public/third-party): no private producer expected — evidence for the attribution, not an inference from absence" }
+  ],
+  "producers": [
+    { "repo": "R1", "packageId": "P1", "producedVersion": "1.0.0" }
+  ]
+}
