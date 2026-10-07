@@ -87,10 +87,34 @@ node tools/validate-fixtures.mjs   # expect: ALL GOLDENS PASS (23)  [needs node;
 
 ## 4. Real estate (optional, the exciting one)
 
-If you can export real tracemap scans to a folder (`scans\<repo>\facts.ndjson` + scan-manifest.json):
+**Coming from a folder of repo checkouts? ua never reads repos directly — tracemap is the scanner.**
+The step between "my repos" and `ua ingest` is a tracemap scan per repo (each repo must be a git
+repo with at least one commit — tracemap records the SHA; real checkouts already are):
+
+```powershell
+mkdir C:\ua-estate\scans
+$repos = Get-ChildItem C:\path\to\repos -Directory
+foreach ($r in $repos) {
+  dotnet run --project C:\path\to\tracemap\src\dotnet\TraceMap.Cli -- scan --repo $r.FullName --out C:\ua-estate\scans\$($r.Name)
+}
+```
+
+Start with 2–3 repos, not the whole estate. Then the three sidecar files ingest requires
+(multi-repo runs refuse implicit sidecars on purpose — one repo's stray file must not speak for all):
+
+- **ownership** — generate it, don't hand-write:
+  `ua ownership init --scans-root C:\ua-estate\scans --self <team> --all-self --out C:\ua-estate\ownership.v0.json`
+  (then hand-edit any repos that are actually another team's; `--unassigned` gives a checklist instead)
+- **producer** — minimal file is fine: producers INSIDE the estate are discovered from the scans
+  themselves; only packages from outside it (public-feed packages) get listed:
+  `'{"schemaVersion":"producer-evidence.v0","externalPackages":[{"packageId":"Newtonsoft.Json"}]}' | Out-File C:\ua-estate\producer-evidence.v0.json -Encoding utf8`
+- **delta** — the one genuinely hand-written file: which package, old version → new version:
+  `{"version":"package-delta.v1","sourceRepo":"https://example.invalid/x.git","sourceCommitSha":"0000000000000000000000000000000000000000","changes":[{"id":"nj","packageName":"Newtonsoft.Json","ecosystem":"nuget","changeType":"updated","oldVersion":"12.0.3","newVersion":"13.0.3"}]}`
+
+With scan output and sidecars in place:
 
 ```
-ua ingest --scans-root <that-folder> --out C:\estate --producer <sidecar> --ownership <sidecar> --delta <sidecar>
+ua ingest --scans-root C:\ua-estate\scans --out C:\estate --producer C:\ua-estate\producer-evidence.v0.json --ownership C:\ua-estate\ownership.v0.json --delta C:\ua-estate\delta.json
 ua plan C:\estate > estate-plan.json
 ua report C:\estate > estate-report.md
 ```
@@ -122,7 +146,11 @@ the corpus already pins today's behavior byte-exactly.
 
 ## Known gaps (honest list, all logged)
 
-- Producer-side facts need the sidecar file (tracemap emits none) — B1(b) is your call.
-- No ownership.v0 at estate scale yet (the file format is trivial; generating it is a work item).
+- Going from a repos root to a report is manual today (scan loop + sidecar bootstrap above);
+  a one-command `scan-estate` wrapper is the queued convenience.
+- Producer evidence inside the estate is scan-discovered (PackageProduced); the sidecar remains
+  for external/public-feed packages and hand-declared producers.
+- No ownership.v0 at full-estate scale exists yet — `ua ownership init` generates the skeleton;
+  the actual team assignments at estate scale are a human work item.
 - `ua push --pr` against real GitHub Enterprise is untested against a live GHE (github.com verified
   via the throwaway-repo run; the override is stub-tested offline).
