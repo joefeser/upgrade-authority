@@ -39,8 +39,10 @@ ua ingest --scans-root testdata-ingest/tracemap-rich/scans --out C:\ua-demo `
   --ownership testdata-ingest/tracemap-rich/sidecars/ownership.v0.json `
   --delta testdata-ingest/tracemap-rich/sidecars/delta.json
 
-ua plan C:\ua-demo > plan.json        # open in an editor
-ua report C:\ua-demo > report.md      # open this one — it's the human view
+ua plan C:\ua-demo | Out-File plan.json -Encoding utf8    # open in an editor
+ua report C:\ua-demo | Out-File report.md -Encoding utf8  # open this one — it's the human view
+# (Windows PowerShell 5.1: run `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` once per
+#  window FIRST — plain `>` decodes the tool's UTF-8 with the legacy codepage and mangles the → and —)
 ```
 
 What you should see in report.md (the things worth eyeballing):
@@ -115,8 +117,8 @@ With scan output and sidecars in place:
 
 ```
 ua ingest --scans-root C:\ua-estate\scans --out C:\estate --producer C:\ua-estate\producer-evidence.v0.json --ownership C:\ua-estate\ownership.v0.json --delta C:\ua-estate\delta.json
-ua plan C:\estate > estate-plan.json
-ua report C:\estate > estate-report.md
+ua plan C:\estate | Out-File estate-plan.json -Encoding utf8
+ua report C:\estate | Out-File estate-report.md -Encoding utf8
 ```
 
 Note: sidecars must be explicit for multi-repo runs (one repo's stray sidecar file can't silently
