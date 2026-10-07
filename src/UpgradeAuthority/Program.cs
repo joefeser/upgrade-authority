@@ -1270,6 +1270,26 @@ public static class Program
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL sanitized: {ex.Message}"); }
         finally { Redact.Enabled = false; }
 
+        // stdout encoding contract: report/plan must arrive as UTF-8 bytes even when stdout is a pipe
+        // (Windows defaults redirected console output to the OEM codepage — a real work-machine
+        // report.md came out garbled; Main forces UTF-8, this case pins it through a real child pipe)
+        try
+        {
+            var exe = Environment.ProcessPath ?? throw new Exception("ProcessPath unavailable");
+            var f9 = Path.Combine(fixturesRoot, "F9-multi-lockfile-disagreement");
+            var psi = new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, UseShellExecute = false };
+            psi.ArgumentList.Add("report"); psi.ArgumentList.Add(f9);
+            psi.StandardOutputEncoding = System.Text.Encoding.Latin1; // byte-transparent: what the pipe carried, as chars
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            var raw = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(30000);
+            if (p.ExitCode != 0) throw new Exception($"child report exited {p.ExitCode}");
+            var arrow = "\u00E2\u0086\u0092"; // UTF-8 bytes e2 86 92 seen through Latin1 glasses
+            if (!raw.Contains("# Impact plan:") || !raw.Contains(arrow)) throw new Exception("piped stdout is not UTF-8 (the → did not arrive as bytes e2 86 92)");
+            Console.WriteLine("ok   stdout-utf8-redirected (→ survives a pipe as e2 86 92)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL stdout-utf8-redirected: {ex.Message}"); }
+
         // working-tree EOL guard: a CRLF checkout (core.autocrlf=true on Windows) converts unpinned
         // text files and silently breaks byte-exact apply goldens (seen on a real work machine: apply-F13).
         // Checks tracked files (the checkout); falls back to a walk that skips build-output dirs when no git.
