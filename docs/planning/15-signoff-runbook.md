@@ -97,9 +97,10 @@ repo with at least one commit — tracemap records the SHA; real checkouts alrea
 mkdir C:\ua-estate\scans
 
 # build tracemap ONCE — `dotnet run` re-checks/rebuilds per invocation (minutes each at estate scale).
-# If the $cli path 404s on your tracemap checkout:  dir C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release -Recurse -Filter *.dll
+# The assembly is named tracemap.dll (project folder is TraceMap.Cli). If the $cli path 404s:
+#   dir C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release -Recurse -Filter tracemap.dll
 dotnet build C:\path\to\tracemap\src\dotnet\TraceMap.Cli -c Release
-$cli  = "C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\TraceMap.Cli.dll"
+$cli  = "C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
 $root = "C:\path\to\repos"
 
 # scan every repo under $root — resume-safe: repos with an existing facts.ndjson are skipped,
