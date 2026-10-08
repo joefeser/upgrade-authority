@@ -116,6 +116,9 @@ foreach ($r in $repos) {
   Write-Host "scan  $($r.Name)"
   dotnet $cli scan --repo $r.FullName --out $out
 }
+# after the loop (or any time): what is still missing? Failed/interrupted repos appear here;
+# ingest continues past them with visible warnings — gaps, never invisible absences
+$repos | Where-Object { !(Test-Path "C:\ua-estate\scans\$($_.Name)\facts.ndjson") } | Select-Object Name
 ```
 
 Start with 2–3 repos, not the whole estate. Then the three sidecar files ingest requires
@@ -127,10 +130,12 @@ Start with 2–3 repos, not the whole estate. Then the three sidecar files inges
 - **producer** — minimal file is fine: producers INSIDE the estate are discovered from the scans
   themselves; only packages from outside it (public-feed packages) get listed:
   `'{"schemaVersion":"producer-evidence.v0","externalPackages":[{"packageId":"Newtonsoft.Json"}]}' | Out-File C:\ua-estate\producer-evidence.v0.json -Encoding utf8`
-- **delta** — the one genuinely hand-written file: which package, old version → new version:
-  `{"version":"package-delta.v1","sourceRepo":"https://example.invalid/x.git","sourceCommitSha":"0000000000000000000000000000000000000000","changes":[{"id":"nj","packageName":"Newtonsoft.Json","ecosystem":"nuget","changeType":"updated","oldVersion":"12.0.3","newVersion":"13.0.3"}]}`
+- **delta** — the one genuinely hand-written file: which package, old version → new version.
+  **Smoke the whole pipeline first with the sample delta below, then swap in your real target —
+  the real delta IS your real use case:**
+  `'{"version":"package-delta.v1","sourceRepo":"https://example.invalid/x.git","sourceCommitSha":"0000000000000000000000000000000000000000","changes":[{"id":"nj","packageName":"Newtonsoft.Json","ecosystem":"nuget","changeType":"updated","oldVersion":"12.0.3","newVersion":"13.0.3"}]}' | Out-File C:\ua-estate\delta.json -Encoding utf8`
 
-With scan output and sidecars in place:
+With scan output and sidecars in place (PowerShell 5.1: set `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` once per window before capturing plan/report):
 
 ```
 ua ingest --scans-root C:\ua-estate\scans --out C:\estate --producer C:\ua-estate\producer-evidence.v0.json --ownership C:\ua-estate\ownership.v0.json --delta C:\ua-estate\delta.json
