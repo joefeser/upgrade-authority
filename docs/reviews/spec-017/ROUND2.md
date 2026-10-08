@@ -21,3 +21,19 @@ Round 1 = full fight (2 reviewer stand-ins, 2 blockers + 12 majors/major-overlap
 pass); round 2 = delta verification only. Quorum caveat stands: Codex/Baz/Qodo/Sourcery did not review
 (this environment has none of their CLIs); Joe may re-run the external quorum on the PR — the brief is
 `docs/reviews/spec-017/ROUND1.md` + the spec. Proceed to implementation.
+
+## Addendum — external reviewers on the implementation PR (public PR #2, 2026-10-08)
+
+The public branch was opened as PR #2 (joefeser/upgrade-authority), where the external reviewers ARE
+installed — closing the quorum gap retroactively on the code:
+
+| Reviewer | Outcome |
+|---|---|
+| **Baz** (doctrine-rev preferred verifier) | check **pass** (8m); summary-only comment, **zero findings**, zero inline comments — nothing to triage, no dismissal receipts needed |
+| **Sourcery** | rate-limited (7-day diff budget exhausted) — posted a descriptive Reviewer's Guide (accurate sequence/flow diagrams), no findings |
+| **Qodo** | billing-blocked (out of credits) — no review, matches the doctrine's cost note |
+| CI (build + 116-case selftest + validator + public-clean gate) | **green** |
+
+Doctrine §5 status for this round: Baz pass + coordinator disposition; Codex absent (no CLI in the
+authoring environment; the PR is the standing surface for a Codex pass if Joe ferries one).
+
