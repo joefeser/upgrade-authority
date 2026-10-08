@@ -104,7 +104,11 @@ $cli  = "C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracema
 $root = "C:\path\to\repos"
 
 # scan every repo under $root — resume-safe: repos with an existing facts.ndjson are skipped,
-# so Ctrl+C any time and re-run the block to continue where it left off
+# so Ctrl+C any time and re-run the block to continue where it left off.
+# Noisy folders (SQL migrations, packages/) can be trimmed per repo with repeatable globs:
+#   dotnet $cli scan ... --exclude "SqlMigrations/**" --exclude "packages/**"
+# (also the cure for tracemap's SourceSnapshotChangedDuringScan on repos where something
+#  touches a watched file mid-scan — the check re-hashes file CONTENT, git-clean is not enough)
 $repos = Get-ChildItem $root -Directory
 foreach ($r in $repos) {
   $out = "C:\ua-estate\scans\$($r.Name)"
