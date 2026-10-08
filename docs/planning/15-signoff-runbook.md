@@ -90,6 +90,9 @@ node tools/validate-fixtures.mjs   # expect: ALL GOLDENS PASS (23)  [needs node;
 ## 4. Real estate (optional, the exciting one)
 
 **Coming from a folder of repo checkouts? ua never reads repos directly — tracemap is the scanner.**
+
+### Step 1 — scan your repos (SKIP if `C:\ua-estate\scans` is already populated)
+
 The step between "my repos" and `ua ingest` is a tracemap scan per repo (each repo must be a git
 repo with at least one commit — tracemap records the SHA; real checkouts already are):
 
@@ -121,8 +124,14 @@ foreach ($r in $repos) {
 $repos | Where-Object { !(Test-Path "C:\ua-estate\scans\$($_.Name)\facts.ndjson") } | Select-Object Name
 ```
 
-Start with 2–3 repos, not the whole estate. Then the three sidecar files ingest requires
-(multi-repo runs refuse implicit sidecars on purpose — one repo's stray file must not speak for all):
+Start with 2–3 repos, not the whole estate (for a FIRST dry run — if your scans folder is already
+populated, skip straight to Step 2 below).
+
+**Where are you? Step 1 = scan (above). Step 2 = sidecars. Step 3 = ingest → plan → report.**
+
+### Step 2 — the three sidecar files ingest requires
+
+(Multi-repo runs refuse implicit sidecars on purpose — one repo's stray file must not speak for all.)
 
 - **ownership** — generate it, don't hand-write:
   `ua ownership init --scans-root C:\ua-estate\scans --self <team> --all-self --out C:\ua-estate\ownership.v0.json`
@@ -135,12 +144,16 @@ Start with 2–3 repos, not the whole estate. Then the three sidecar files inges
   the real delta IS your real use case:**
   `'{"version":"package-delta.v1","sourceRepo":"https://example.invalid/x.git","sourceCommitSha":"0000000000000000000000000000000000000000","changes":[{"id":"nj","packageName":"Newtonsoft.Json","ecosystem":"nuget","changeType":"updated","oldVersion":"12.0.3","newVersion":"13.0.3"}]}' | Out-File C:\ua-estate\delta.json -Encoding utf8`
 
-With scan output and sidecars in place (PowerShell 5.1: set `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` once per window before capturing plan/report):
+### Step 3 — ingest, then plan and report
 
-```
+(PowerShell 5.1: set `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` once per window
+before capturing plan/report — plain `>` mangles the UTF-8 arrow/em-dash.)
+
+```powershell
 ua ingest --scans-root C:\ua-estate\scans --out C:\estate --producer C:\ua-estate\producer-evidence.v0.json --ownership C:\ua-estate\ownership.v0.json --delta C:\ua-estate\delta.json
-ua plan C:\estate | Out-File estate-plan.json -Encoding utf8
-ua report C:\estate | Out-File estate-report.md -Encoding utf8
+ua plan C:\estate | Out-File C:\ua-estate\plan.json -Encoding utf8
+ua report C:\estate | Out-File C:\ua-estate\report.md -Encoding utf8
+notepad C:\ua-estate\report.md
 ```
 
 Note: sidecars must be explicit for multi-repo runs (one repo's stray sidecar file can't silently
