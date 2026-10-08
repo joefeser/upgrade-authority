@@ -11,11 +11,14 @@ public static class Ownership
     public enum Mode { AllSelf, Team, Unassigned }
     public enum NewMode { NewSelf, NewTeam, NewUnassigned }
 
-    public static int Init(string[] scanDirs, string? scansRoot, string selfTeam, string modeFlag, string? teamArg, string outFile)
+    public static int Init(string[] scanDirs, string? scansRoot, string selfTeam, string modeFlag, string? teamArg, string outFile, string? scopePath = null)
     {
         var (mode, err) = ParseMode(modeFlag, teamArg, selfTeam);
         if (err is not null) { Console.Error.WriteLine($"error: {err}"); return 1; }
-        var dirs = ResolveDirs(scanDirs, scansRoot);
+        var (scope, scopeRc) = Scope.LoadForCli(scopePath);
+        if (scopeRc != 0) return scopeRc;
+        WarnExplicitOutOfScope(scanDirs, scope);
+        var dirs = ResolveDirs(scanDirs, scansRoot, scope);
         if (dirs is null) return 1;
         var (repos, enumErr) = Ingest.EnumerateRepoKeysChecked(dirs);
         if (enumErr is not null) { Console.Error.WriteLine($"error: {enumErr}"); return 1; } // uningestable scans never yield ownership files
@@ -35,7 +38,7 @@ public static class Ownership
         return 0;
     }
 
-    public static int Update(string[] scanDirs, string? scansRoot, string existingFile, string newModeFlag, string? newTeamArg, string selfTeamOverride, string outFile)
+    public static int Update(string[] scanDirs, string? scansRoot, string existingFile, string newModeFlag, string? newTeamArg, string selfTeamOverride, string outFile, string? scopePath = null)
     {
         if (!File.Exists(existingFile)) { Console.Error.WriteLine($"error: --existing file not found: {existingFile}"); return 1; }
         OwnershipFile existing;
@@ -47,7 +50,10 @@ public static class Ownership
         var (mode, err) = ParseNewMode(newModeFlag, newTeamArg, selfTeam);
         if (err is not null) { Console.Error.WriteLine($"error: {err}"); return 1; }
 
-        var dirs = ResolveDirs(scanDirs, scansRoot);
+        var (scope, scopeRc) = Scope.LoadForCli(scopePath);
+        if (scopeRc != 0) return scopeRc;
+        WarnExplicitOutOfScope(scanDirs, scope);
+        var dirs = ResolveDirs(scanDirs, scansRoot, scope);
         if (dirs is null) return 1;
         var (discovered, enumErr2) = Ingest.EnumerateRepoKeysChecked(dirs);
         if (enumErr2 is not null) { Console.Error.WriteLine($"error: {enumErr2}"); return 1; }
@@ -128,12 +134,23 @@ public static class Ownership
         _ => (default, $"unknown new-repo mode '{flag}' (new-self | new-team | new-unassigned)"),
     };
 
-    static string[]? ResolveDirs(string[] scanDirs, string? scansRoot)
+    // SPEC-017 §3: explicit dirs are deliberate acts — warned when out of scope, never filtered.
+    static void WarnExplicitOutOfScope(string[] scanDirs, EstateScope? scope)
+    {
+        if (scope is null) return;
+        foreach (var d in scanDirs)
+            if (!Scope.IsInScope(Path.GetFileName(d.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), scope))
+                Console.Error.WriteLine($"warning: {Path.GetFileName(d)} is out of scope by config — included because explicit");
+    }
+
+    static string[]? ResolveDirs(string[] scanDirs, string? scansRoot, EstateScope? scope = null)
     {
         // EXACTLY ingest's discovery rules (SPEC-011/014): explicit dirs first; discovered children must
         // have facts.ndjson; manifest-only children warn + skip; alternate snapshots of an already-seen
         // repo skip (deliberate combination = explicit dirs). Alternate detection uses repo KEYS (the
         // shared identity), not raw repoName — snapshots that differ in remoteUrl spelling are distinct.
+        // SPEC-017: dot-prefixed children are ignored (swap leftovers); scope-excluded children skip
+        // but still register their keys for alternate detection.
         if (scansRoot is null) return scanDirs.Length > 0 ? scanDirs : null;
         if (!Directory.Exists(scansRoot)) { Console.Error.WriteLine($"error: --scans-root directory not found: {scansRoot}"); return null; }
         var list = scanDirs.ToList();
@@ -145,6 +162,16 @@ public static class Ownership
         }
         foreach (var child in Directory.GetDirectories(Path.GetFullPath(scansRoot)).OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal))
         {
+            var childName = Path.GetFileName(child);
+            if (childName.StartsWith('.')) { Console.Error.WriteLine($"note: {childName} ignored (dot-prefixed — swap/temp dir, not a scan)"); continue; }
+            if (scope is not null && !Scope.IsInScope(childName, scope))
+            {
+                var (xkeys, xerr) = Ingest.EnumerateRepoKeysChecked(new[] { child });
+                if (xerr is not null) { Console.Error.WriteLine($"error: {xerr}"); return null; }
+                foreach (var k in xkeys) seenKeys.Add(k); // excluded children still register for alternate detection
+                Console.Error.WriteLine($"note: {childName} skipped by discovery (out of scope by config)");
+                continue;
+            }
             if (!File.Exists(Path.Combine(child, "facts.ndjson")))
             {
                 if (File.Exists(Path.Combine(child, "scan-manifest.json")))

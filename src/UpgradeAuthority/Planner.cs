@@ -10,6 +10,7 @@ public sealed class Engine
 {
     readonly ProducerEvidence _pe; readonly OwnershipFile _ow; readonly PackageEvidence _px;
     readonly DeltaChange _c; readonly List<LockfileRows> _lockRepos = new(); // SPEC-008: 0..n lockfile repos (one entry per repo)
+    readonly EstateScope? _scope; // SPEC-017: optional estate scope echo
     string _lockKind = "lockfile-rows.v0"; // evidence kind cites the input's actual schemaVersion (SPEC-007 §5.6)
 
     readonly Dictionary<string, List<string>> _produced = new();
@@ -36,6 +37,15 @@ public sealed class Engine
         return r.TrimEnd('/');
     }
 
+    // SPEC-017 §5: the plan echoes the config — deduped, ordinal (permutation-stable); the config's
+    // own order never reaches the plan. Null when there is no scope input (zero churn for existing fixtures).
+    PlanScope? BuildScope() => _scope is null ? null : new PlanScope
+    {
+        Mode = _scope.EffectiveInclude is null ? "exclude" : "include",
+        IncludedCount = _scope.EffectiveInclude?.Count,
+        OutOfScope = _scope.EffectiveExclude is { Count: > 0 } e ? e.OrderBy(x => x, StringComparer.Ordinal).ToList() : null,
+    };
+
     static string Norm(string repo)
     {
         // Full identity is preserved (org-a/service != org-b/service). A short/alias spelling
@@ -46,11 +56,11 @@ public sealed class Engine
 
     static readonly List<(string Repo, string Pkg)> _noDeps = new();
 
-    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos)
+    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos, EstateScope? scope = null)
     {
         if (delta.Changes.Count != 1)
             throw new UaException($"rejected: package-delta.v1 must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)");
-        _c = delta.Changes[0]; _pe = pe; _ow = ow; _px = px;
+        _c = delta.Changes[0]; _pe = pe; _ow = ow; _px = px; _scope = scope;
         foreach (var e in pe.ExternalPackages) _external.Add(e.PackageId);
         foreach (var p in pe.Producers)
         {
@@ -362,6 +372,7 @@ public sealed class Engine
         var plan = new Plan { Waves = waves, Uncertainty = new PlanUncertainty() };
         plan.Delta = new PlanDelta { PackageName = Target, Ecosystem = _c.Ecosystem, ChangeType = _c.ChangeType, OldVersion = _c.OldVersion, NewVersion = _c.NewVersion };
         plan.Repos = ordered.Select(r => BuildRepo(r, letters.GetValueOrDefault(r, new List<char>()), classification, producers, externalTarget, producerGated)).ToList();
+        plan.Scope = BuildScope(); // SPEC-017 §5: null unless a scope input exists
 
         if (contradiction)
             plan.Uncertainty.Contradictions.Add(new PlanContradiction
@@ -431,6 +442,7 @@ public sealed class Engine
         var p = new Plan
         {
             Delta = new PlanDelta { PackageName = Target, Ecosystem = _c.Ecosystem, ChangeType = _c.ChangeType, OldVersion = _c.OldVersion, NewVersion = _c.NewVersion },
+            Scope = BuildScope(), // SPEC-017 §5: stop plans tell the whole truth too (rev3 corollary parity)
             Stop = new PlanStop
             {
                 Reason = "CYCLE_DETECTED",

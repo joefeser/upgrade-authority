@@ -138,9 +138,19 @@ public sealed class Plan
     public string SchemaVersion = "plan.v1";
     public PlanDelta Delta = new();
     public List<PlanRepo> Repos = new();
+    public PlanScope? Scope; // SPEC-017: emitted only when a scope input exists (echo of config, never a coverage claim)
     public List<PlanWave> Waves = new();
     public PlanStop? Stop;
     public PlanUncertainty Uncertainty = new();
+}
+
+// SPEC-017 §5: the estate scope echo. outOfScope omitted when empty (exclude-mode with no
+// exclude names cannot occur — it validates to no scope); includedCount only in include mode.
+public sealed class PlanScope
+{
+    public string Mode = "exclude";
+    public int? IncludedCount;
+    public List<string>? OutOfScope;
 }
 
 public sealed class PlanDelta

@@ -15,10 +15,11 @@ import { templateRank } from "./templates.mjs";
 const EVIDENCE_ORDER = ["package-evidence.v0", "producer-evidence.v0", "lockfile-rows.v0", "lockfile-rows.v1", "lockfile-rows.v2", "ownership.v0", "scan-coverage"];
 
 const KEY_ORDER = {
-  root: ["schemaVersion", "delta", "repos", "waves", "stop", "uncertainty"],
+  root: ["schemaVersion", "delta", "repos", "scope", "waves", "stop", "uncertainty"],
   delta: ["packageName", "ecosystem", "changeType", "oldVersion", "newVersion", "origin"],
   repo: ["repo", "classification", "reasons", "ownership", "actionType", "evidenceKinds", "confidence"],
   confidence: ["rung", "corroboration"],
+  scope: ["mode", "includedCount", "outOfScope"], // SPEC-017: estate scope echo (after repos)
   wave: ["index", "status", "blockedOn", "condition", "prerequisites", "releaseUnits"],
   unit: ["repo", "packages", "basis", "notes", "publicationStatus"],
   stop: ["reason", "detail", "cyclePath"],
@@ -49,6 +50,7 @@ function order(value, table) {
 export function toCanonical(g) {
   g = order(g, "root");
   if (g.delta) g.delta = order(g.delta, "delta");
+  if (g.scope) g.scope = order(g.scope, "scope");
   g.repos = (g.repos ?? []).map(r => {
     r = order(r, "repo");
     if (r.confidence) r.confidence = order(r.confidence, "confidence");

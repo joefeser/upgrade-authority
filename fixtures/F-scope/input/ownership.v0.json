@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "ownership.v0",
+  "selfTeamId": "team-a",
+  "ownerships": [
+    { "repo": "R3", "team": "team-a" },
+    { "repo": "R4", "team": "team-b" },
+    { "repo": "RX", "team": "team-a" }
+  ]
+}

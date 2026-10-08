@@ -54,6 +54,9 @@
         "$ref": "#/$defs/repoClassification"
       }
     },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
     "waves": {
       "type": "array",
       "items": {
@@ -89,6 +92,51 @@
         "affected",
         "not-affected",
         "unknown"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "description": "SPEC-017 §5: echo of the estate-scope.v0 config — names-as-configured, never a coverage claim. Key order: mode, includedCount?, outOfScope?",
+      "properties": {
+        "mode": {
+          "enum": [
+            "include",
+            "exclude"
+          ]
+        },
+        "includedCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "the config's deduped include count (include mode only)"
+        },
+        "outOfScope": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "the configured exclude list, deduped + ordinal; omitted when empty"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "include"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "includedCount"
+            ]
+          }
+        }
       ]
     },
     "repoClassification": {

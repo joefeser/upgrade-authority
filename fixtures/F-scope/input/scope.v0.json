@@ -1,0 +1,4 @@
+{
+  "schemaVersion": "estate-scope.v0",
+  "exclude": ["archived", "spikes"]
+}

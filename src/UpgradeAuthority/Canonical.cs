@@ -23,6 +23,7 @@ public static class Canonical
         Str(sb, ind + 1, "repos"); sb.Append(": ");
         if (p.Repos.Count == 0) { sb.Append("[]"); } else { sb.Append("[").Append('\n'); for (int i = 0; i < p.Repos.Count; i++) { Pad(sb, ind + 2); WriteRepo(sb, p.Repos[i], ind + 2); sb.Append(i < p.Repos.Count - 1 ? "," : "").Append('\n'); } Pad(sb, ind + 1); sb.Append(']'); }
         sb.Append(",").Append('\n');
+        if (p.Scope != null) { Str(sb, ind + 1, "scope"); sb.Append(": "); WriteScope(sb, p.Scope, ind + 1); sb.Append(",").Append('\n'); }
         Str(sb, ind + 1, "waves"); sb.Append(": ");
         if (p.Waves.Count == 0) { sb.Append("[]"); } else { sb.Append("[").Append('\n'); for (int i = 0; i < p.Waves.Count; i++) { Pad(sb, ind + 2); WriteWave(sb, p.Waves[i], ind + 2); sb.Append(i < p.Waves.Count - 1 ? "," : "").Append('\n'); } Pad(sb, ind + 1); sb.Append(']'); }
         sb.Append(",").Append('\n');
@@ -63,6 +64,15 @@ public static class Canonical
             sb.Append(",").Append('\n');
             Str(sb, ind + 1, "scanNotes"); sb.Append(": "); StrArr(sb, r.ScanNotes, ind + 1);
         }
+        sb.Append('\n'); Pad(sb, ind); sb.Append('}');
+    }
+
+    static void WriteScope(StringBuilder sb, PlanScope s, int ind)
+    {
+        sb.Append('{').Append('\n');
+        Str(sb, ind + 1, "mode"); sb.Append(": "); Str(sb, s.Mode);
+        if (s.IncludedCount is { } n) { sb.Append(",").Append('\n'); Str(sb, ind + 1, "includedCount"); sb.Append(": ").Append(n); }
+        if (s.OutOfScope is { Count: > 0 }) { sb.Append(",").Append('\n'); Str(sb, ind + 1, "outOfScope"); sb.Append(": "); StrArr(sb, s.OutOfScope, ind + 1); }
         sb.Append('\n'); Pad(sb, ind); sb.Append('}');
     }
 

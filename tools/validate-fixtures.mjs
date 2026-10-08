@@ -31,6 +31,15 @@ for (const d of dirs) {
   const errs = [];
   if (g.schemaVersion !== "plan.v1") errs.push("schemaVersion");
   for (const k of ["delta", "repos", "waves", "uncertainty"]) if (!(k in g)) errs.push("missing " + k);
+  // SPEC-017 §5: optional scope echo — mode include|exclude; outOfScope is a string array when
+  // present (omitted when empty); include mode carries an integer includedCount
+  if (g.scope !== undefined) {
+    if (!["include", "exclude"].includes(g.scope?.mode)) errs.push("scope mode " + g.scope?.mode);
+    if (g.scope?.outOfScope !== undefined && (!Array.isArray(g.scope.outOfScope) || g.scope.outOfScope.some(x => typeof x !== "string")))
+      errs.push("scope outOfScope shape");
+    if (g.scope?.mode === "include" && !Number.isInteger(g.scope?.includedCount)) errs.push("scope includedCount");
+    if (g.scope?.mode === "exclude" && g.scope?.includedCount !== undefined) errs.push("scope includedCount in exclude mode");
+  }
   if (!g.delta?.packageName || !g.delta?.newVersion) errs.push("delta fields");
   (g.repos ?? []).forEach(r => {
     for (const k of ["classification", "reasons", "ownership", "actionType", "evidenceKinds", "confidence"])
