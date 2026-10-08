@@ -1112,6 +1112,57 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL b1b-producer-from-scan: {ex.Message}"); }
 
+        // unknown-repo visibility (2026-10-08 real-estate finding): repos with gaps and no observed edge
+        // classify UNKNOWN and must still appear in repos[] and the summary — silence is not safety
+        try
+        {
+            var richU = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
+            var fixtureU = Path.Combine(Path.GetTempPath(), "ua-unk-" + Guid.NewGuid().ToString("N")[..8]);
+            var ownU = Path.Combine(Path.GetTempPath(), "ua-unk-own-" + Guid.NewGuid().ToString("N")[..8]);
+            File.WriteAllText(ownU, "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"svc\",\"team\":\"team-a\"},{\"repo\":\"legacy\",\"team\":\"team-a\"}]}");
+            var prodU = Path.Combine(Path.GetTempPath(), "ua-unk-prod-" + Guid.NewGuid().ToString("N")[..8]);
+            File.WriteAllText(prodU, "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[]}");
+            if (Ingest.Run(new[] { Path.Combine(richU, "scans", "svc"), Path.Combine(richU, "scans", "legacy") }, fixtureU, prodU, ownU, Path.Combine(richU, "sidecars-apply", "delta.json")) != 0) throw new Exception("svc/legacy ingest failed");
+            var planU = LoadEngine(fixtureU).BuildPlan();
+            var unk = planU.Repos.FirstOrDefault(r => r.Repo == "legacy");
+            if (unk is null) throw new Exception("legacy (gaps, no edge) is missing from repos[] — unknown repos must be visible");
+            if (unk.Classification != "unknown") throw new Exception($"legacy classification expected unknown, got {unk.Classification}");
+            if (planU.Waves.SelectMany(w => w.ReleaseUnits).Any(u2 => u2.Repo == "legacy")) throw new Exception("unknown repos are never scheduled");
+            var reportU = Report.Render(planU);
+            if (!reportU.Contains("1 unknown")) throw new Exception("report summary must count the unknown repo");
+            Console.WriteLine("ok   unknown-repo-visibility (gaps + no edge => repos[] and summary, never silence)"); pass++;
+            Directory.Delete(fixtureU, true); File.Delete(ownU); File.Delete(prodU);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL unknown-repo-visibility: {ex.Message}"); }
+
+        // rev3 corollary (Codex P2 on PR #39): a CYCLE-STOP plan must not hide unknown repos either
+        try
+        {
+            var fcyc = Path.Combine(fixturesRoot, "F-cyc-cycle-refusal");
+            var sCyc = Path.Combine(Path.GetTempPath(), "ua-cycunk-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(Path.Combine(sCyc, "input"));
+            foreach (var f in Directory.GetFiles(Path.Combine(fcyc, "input"))) File.Copy(f, Path.Combine(sCyc, "input", Path.GetFileName(f)));
+            var ow = Path.Combine(sCyc, "input", "ownership.v0.json");
+            var own = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(ow))!;
+            own["ownerships"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse(@"{ ""repo"": ""R-unk"", ""team"": ""team-a"" }")!);
+            File.WriteAllText(ow, own.ToJsonString());
+            var pePath = Path.Combine(sCyc, "input", "package-evidence.v0.json");
+            var pe = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(pePath))!;
+            if (pe["scanCoverage"] is null) pe["scanCoverage"] = new System.Text.Json.Nodes.JsonArray();
+            pe["scanCoverage"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse(@"{ ""repo"": ""R-unk"", ""status"": ""gaps"", ""gaps"": [""synthetic gap""], ""notes"": [""synthetic scan note""] }")!);
+            File.WriteAllText(pePath, pe.ToJsonString());
+            var planC = LoadEngine(sCyc).BuildPlan();
+            if (planC.Stop is null || planC.Stop.Reason != "CYCLE_DETECTED") throw new Exception("expected cycle stop");
+            var unkC = planC.Repos.FirstOrDefault(r => r.Repo == "R-unk");
+            if (unkC is null || unkC.Classification != "unknown") throw new Exception("cycle-stop plan must still show the unknown repo (rev3 corollary)");
+            if (unkC.ScanNotes is not { Count: > 0 } || !unkC.ScanNotes.Contains("synthetic scan note")) throw new Exception("cycle-stop unknown entries must carry scanNotes (SPEC-015 parity with BuildRepo)");
+            var repC = Report.Render(planC);
+            if (!repC.Contains("1 unknown")) throw new Exception("cycle-stop report summary must count the unknown repo");
+            Console.WriteLine("ok   unknown-repo-visibility-cycle (stop plans tell the whole truth too)"); pass++;
+            Directory.Delete(sCyc, true);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL unknown-repo-visibility-cycle: {ex.Message}"); }
+
         // SPEC-015: package-relevant gaps vs compile-health notes — classifier + committed-scan outcomes
         try
         {

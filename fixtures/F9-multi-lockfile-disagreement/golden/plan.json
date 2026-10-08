@@ -31,6 +31,38 @@
         "analysisLevel: Level1SemanticAnalysisReduced",
         "scan buildStatus: FailedOrPartial"
       ]
+    },
+    {
+      "repo": "corelib",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "unknown",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "legacy",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
     }
   ],
   "waves": [

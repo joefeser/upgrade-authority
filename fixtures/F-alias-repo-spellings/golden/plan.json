@@ -59,6 +59,22 @@
       }
     },
     {
+      "repo": "r1",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "unknown",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
       "repo": "RU",
       "classification": "not-affected",
       "reasons": [

@@ -22,6 +22,14 @@ Specs land on `spec/*` branches, get agent-reviewed (Codex/Kiro via Joe-ferried 
 | SPEC-008 | Multi-repo lockfile ingest | **draft — round 1 review (brief-011, PR #11; evidence = PR #10's committed billing+shipping scans)** | lockfile-rows.v2 (repos[] envelope); exit 2 retired; findings stay per-repo (cross-repo differences are the waves' job, not findings); F12 from real two-repo ingest |
 | SPEC-007 | Multi-TFM lockfile rows + version-disagreement findings | **SHIPPED 2026-10-03** — rounds 1-2 converged, merged via PR #7 | lockfile-rows.v1 keyed by (repo, lockfile, tfm, packageId); cross-lockfile/cross-TFM version disagreements become findings (T10), not typed errors; kills the exit-4 refusal on real multi-project estates like the committed svc scan |
 
+**NORTH-STAR CAMPAIGN FLOW (Joe, 2026-10-08 — stated end-to-end after the first real plan; the V1 roadmap):**
+1. Ensure repos are on latest origin/main or dev — *(new: freshness precondition; pairs with SHA-cached scans below)*
+2. Determine the chain of updates — **exists** (fused graph + wave ordering; proven on a real 130-repo estate)
+3. Determine ALL packages that need updating — **THE REAL GAP: outdated discovery.** Delta is hand-written today; "what's outdated" needs feed truth (latest versions), a new evidence source V0 deliberately excluded ("stated, not verified live"). Needs its own spec; pairs with the samplerepos/ folder-feed harness (known latest versions, offline, deterministic). Likely V1 shape: per-package deltas generated from a drift report + orchestrated deepest-layer-first (multi-change planning stays deferred).
+4. Determine how to update in waves — **exists**
+5. Push a branch to origin and create a PR — **exists** (`ua push --pr`, never merges). Auto-merge "when my manager agrees" (longer term) = a HUMAN DECISION WITH AUTHORITY — the HACP/who-decides model; treat as a decision record in the campaign layer, not a config flag.
+6. Continue the wave of updates through the dependency layers — **design-talk tier** (campaign orchestration across days = the artifact-memory coordination plane / WITS layer).
+
 **Next-spec candidates — estate UX (Joe-requested 2026-10-07, work-machine validation session):**
 - `ua scan-estate` wrapper: repos root → tracemap scan loop (build once, invoke the exe per repo — `dotnet run` recompiles per invocation) → sidecar bootstrap (ownership init, minimal producer, delta template) → ingest → plan → report. One command in, one clean report out. Includes `--out <file>` on `plan`/`report` (PowerShell 5.1 redirection mangles the UTF-8 `→`/`—` — two paper cuts in one session).
 - **SHA-cached incremental scans:** wrapper compares each repo's `git rev-parse HEAD` to the cached scan's `commitSha`; unchanged → reuse existing facts.ndjson (scans folder IS the cache — no DB needed for daily "what changed today"; ingest re-reads everything, it's the cheap part). Daily runs re-scan only movers.

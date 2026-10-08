@@ -2,7 +2,7 @@
 
 ## Summary
 - Delta: P1 updated 1.0.0 → 1.2.0 (nuget)
-- Repositories: 3 affected · 1 not-affected · 0 unknown
+- Repositories: 3 affected · 1 not-affected · 1 unknown
 - Waves: 3 (3 ready, 0 conditional, 0 provisional)
 
 ## Waves
@@ -29,6 +29,7 @@
 | R1 | affected | self | executable | producer-evidence.v0 | fixture-declared ×1 | produces P1 (delta target) via producer-evidence.v0; release unit R1 = P1..P8 |
 | R2 | affected | self | executable | package-evidence.v0 | declared ×1 | direct references to P1 and P3; the delta targets P1 |
 | R3 | affected | self | executable | package-evidence.v0, producer-evidence.v0 | declared ×1 | consumes I1 produced by R2; R2 is affected — unit ripple: R3 must rebuild/bump to consume the republished I1; transitive CONTENT exposure to P1 via I1 remains UNKNOWN (no lockfile) — recorded as a gap, never as not-affected |
+| r1 | unknown | unknown | unknown | package-evidence.v0 | declared ×1 | classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence |
 | RU | not-affected | self | none | package-evidence.v0, lockfile-rows.v0, scan-coverage | declared ×2 | positive evidence: complete scan coverage AND RU's own lockfile closure (X9 direct, no P1 row) — transitive exposure ruled out by lockfile evidence, not by absence-of-match |
 
 ## Uncertainty

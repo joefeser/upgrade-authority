@@ -1,6 +1,6 @@
 # SPEC-003 — Impact plan and wave ordering
 
-**Status:** revision 2 — round-1 consolidated fixes applied (quorum batch: Qodo 7 High + Codex 11 P1/2 P2; golden changes GC1–GC7 recorded in `docs/reviews/pr3-round1/GOLDEN-CHANGES.md`)
+**Status:** revision 3 — amendment: classification-`unknown` repos are visible in `repos[]` (2026-10-08 real-estate finding; previously silently dropped, producing a false `0 unknown` summary). Revision 2: round-1 consolidated fixes (quorum batch: Qodo 7 High + Codex 11 P1/2 P2; golden changes GC1–GC7 in `docs/reviews/pr3-round1/GOLDEN-CHANGES.md`)
 **Author:** ZCode (coordinator)
 **Date:** 2026-10-02
 **Depends on:** SPEC-002 (fused graph) · SPEC-000 §2.4 (plan semantics) · fixture corpus (merged — normative, byte-exact)
@@ -32,14 +32,14 @@ V0 plans are **single-change**: a `package-delta.v1` with more than one entry in
 ## 3. Wave construction, ordering, partitioning
 
 1. **Repo dependency DAG:** consumer of a package produced by repo X ⇒ depends on X's release unit. Ripple chains (rule 2d) define the same edges.
-2. **Cycle ⇒ typed stop:** `CYCLE_DETECTED`, `cyclePath` (repo→package→…→start, beginning at the delta-target producer, minItems 2), `waves: []`. No auto-bootstrap ever (F-cyc; resolution is a human decision, future spec).
+2. **Cycle ⇒ typed stop:** `CYCLE_DETECTED`, `cyclePath` (repo→package→…→start, beginning at the delta-target producer, minItems 2), `waves: []`. No auto-bootstrap ever (F-cyc; resolution is a human decision, future spec). Rev 3 corollary: the stopped plan's `repos[]` still enumerates affected repos AND classification-unknown repos — a stop is not a license to hide unclassified state.
 3. **Depth:** each scheduled unit's depth = 1 + max(depth of its dependency units) among scheduled units (roots = 1).
 4. **Status:**
    - `ready` — the wave's prerequisites are *availability statements* (producer publishes, rebuilds, external-feed availability). Restore/feed checks are stated, not verified (F1, F4a/b, F5, F6, F7, F8 wave 2 — including F5's external-feed prerequisite: availability ≠ gating).
    - `conditional` — gated on something the plan cannot sequence: external team release (T6), publicationStatus `unpublished` for a needed package (T7), or unknown producer (T8).
    - `provisional` — downstream of a contradiction; `blockedOn: <C-id>`; no claim outranks another (F3b).
 5. **Partitioning (deterministic layering):** waves are ordered by (status rank: ready=0, conditional=1, provisional=2; then depth). All units at the same (rank, depth) share one wave, sorted by repo name within it. (F8: R2 ready-depth-2 = wave 2; R10 conditional-depth-2 = wave 3. F6: R8+RB ready-depth-2 = one wave 2.)
-6. **Unscheduled repos:** only repos whose **ownership is unknown** (RM in F2) and `not-affected` repos appear in `repos[]` but never in waves. `actionType: "unknown"` repos ARE scheduled — into conditional/provisional waves (F3a R11, F3b all).
+6. **Unscheduled repos:** only repos whose **ownership is unknown** (RM in F2), **classification-`unknown` repos** (rev 3: gaps or unresolved exposure with no observed edge — visible in `repos[]` with their reason, never scheduled, never silently dropped), and `not-affected` repos appear in `repos[]` but never in waves. `actionType: "unknown"` repos ARE scheduled — into conditional/provisional waves (F3a R11, F3b all).
 7. **Parallelism:** the (rank, depth) layering above is V0's only concurrency statement; anything deeper is future work.
 
 ## 4. Determinism contract (byte-exact goldens)
@@ -62,7 +62,7 @@ V0 plans are **single-change**: a `package-delta.v1` with more than one entry in
    Selection: a wave's `prerequisites` = the availability statements for its gates, in fixed template order [T1, T4, T5, T6a, T7a, T8a, T9]. `condition` = the single gating statement (T6/T7/T8), or `blockedOn` for provisional. Wave 1 carries T5 only when the delta target is external (F5). T2/T3 (restore checks) do not exist — availability statements carry "stated, not verified live" (GC2). A conditional wave chained on an earlier external gate reuses T6 as its condition (F2 wave 2). **Enforcement:** `tools/validate-fixtures.mjs` maps every prerequisite/condition string in every golden to exactly one template (acceptance 9) — a string matching zero or multiple templates is a failure.
 
 2. **Array ordering — every array (machine-enforced: `tools/canonicalize-goldens.mjs` sorts waves by index, releaseUnits by repo, prerequisites by template rank, contradictions by id, plus GC9/GC11 rules; the validator enforces `repos[]` wave-schedule order against the plan's own waves, since that order is semantic):**
-   - `repos[]`: wave-schedule order — (status rank of first containing wave, wave index, repo name) — then unscheduled affected (`actionType: unknown`, ownership-known) by name, then ownership-unknown by name, then `not-affected` by name.
+   - `repos[]`: wave-schedule order — (status rank of first containing wave, wave index, repo name) — then unscheduled affected (`actionType: unknown`, ownership-known) by name, then ownership-unknown by name, then classification-unknown by name (rev 3), then `not-affected` by name.
    - `reasons[]`: classification-rule order (a, b, c, d), then qualifier notes (edge/gap/ownership) in that fixed order.
    - `evidenceKinds[]`: canonical order [package-evidence.v0, producer-evidence.v0, lockfile-rows.v0, ownership.v0, scan-coverage], deduplicated (GC9 — matches the corpus).
    - `prerequisites[]`: template-id order (§4.1 list). `waves[]`: by index. `releaseUnits` within a wave: repo name.

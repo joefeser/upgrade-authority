@@ -222,21 +222,11 @@ public sealed class Engine
             if (ds.Count > 0) deps[repo] = ds;
         }
 
-        // ---- F-cyc: cycle among affected repos -> typed refusal ----
-        var cycle = FindCycle(affected, deps);
-        if (cycle is not null)
-        {
-            var cp = CyclePlan(cycle, affected, letters);
-            var cycleFindings = BuildFindings(); // findings are input observations (SPEC-007 §6): they surface even in a stop plan
-            if (cycleFindings.Count > 0) cp.Uncertainty.Findings = cycleFindings;
-            return cp;
-        }
-
-        // ---- affected packages (what can flow toward consumers) ----
+        // ---- affected packages + classification (before cycle handling: rev3 unknown visibility
+        // applies to cycle-stop plans too — the stop must not hide unclassified repos) ----
         var affectedPkgs = new HashSet<string> { Target };
         foreach (var r in affected) foreach (var p2 in ProducedOf(r)) affectedPkgs.Add(p2);
 
-        // ---- classification ----
         var classification = new Dictionary<string, string>();
         foreach (var repo in AllRepos())
         {
@@ -245,6 +235,16 @@ public sealed class Engine
             bool hasLock = _lockRows.ContainsKey(repo);
             bool touches = FactsOf(repo).Any(f => affectedPkgs.Contains(f.PackageId)) || LockOf(repo).Any(r => affectedPkgs.Contains(r.PackageId));
             classification[repo] = complete && hasLock && !touches ? "not-affected" : "unknown";
+        }
+
+        // ---- F-cyc: cycle among affected repos -> typed refusal ----
+        var cycle = FindCycle(affected, deps);
+        if (cycle is not null)
+        {
+            var cp = CyclePlan(cycle, affected, letters, classification);
+            var cycleFindings = BuildFindings(); // findings are input observations (SPEC-007 §6): they surface even in a stop plan
+            if (cycleFindings.Count > 0) cp.Uncertainty.Findings = cycleFindings;
+            return cp;
         }
 
         var scheduled = affected.Where(r => OwnershipOf(r) != "unknown").ToList();
@@ -356,6 +356,7 @@ public sealed class Engine
         var ordered = waves.SelectMany(w => w.ReleaseUnits.Select(u => u.Repo))
             .OrderBy(r => firstWave[r]).ThenBy(r => r, StringComparer.Ordinal).ToList();
         ordered.AddRange(affected.Where(r => !scheduled.Contains(r)).OrderBy(r => r, StringComparer.Ordinal));
+        ordered.AddRange(AllRepos().Where(r => classification[r] == "unknown").OrderBy(r => r, StringComparer.Ordinal)); // SPEC-003 rev3: unknown repos are visible, never silently dropped (2026-10-08 real-estate finding)
         ordered.AddRange(AllRepos().Where(r => classification[r] == "not-affected").OrderBy(r => r, StringComparer.Ordinal));
 
         var plan = new Plan { Waves = waves, Uncertainty = new PlanUncertainty() };
@@ -423,7 +424,7 @@ public sealed class Engine
         return full;
     }
 
-    Plan CyclePlan(List<string> path, HashSet<string> affected, Dictionary<string, List<char>> letters)
+    Plan CyclePlan(List<string> path, HashSet<string> affected, Dictionary<string, List<char>> letters, Dictionary<string, string> classification)
     {
         string cycleId = "CYC-1";
         var participants = new HashSet<string>(path.Where((_, i) => i % 2 == 0));
@@ -468,6 +469,24 @@ public sealed class Engine
                 e.EvidenceKinds = letters.GetValueOrDefault(repo, new List<char>()).Contains('a')
                     ? new List<string> { "producer-evidence.v0" } : new List<string> { "package-evidence.v0" };
             }
+            p.Repos.Add(e);
+        }
+        // SPEC-003 rev3: a stopped plan still tells the whole truth — classification-unknown
+        // repos are visible here too, never hidden behind the cycle refusal
+        foreach (var repo in AllRepos().Where(r => classification.GetValueOrDefault(r) == "unknown").OrderBy(r => r, StringComparer.Ordinal))
+        {
+            var e = new PlanRepo
+            {
+                Repo = repo,
+                Classification = "unknown",
+                Ownership = OwnershipOf(repo),
+                ActionType = "unknown",
+                Reasons = new List<string> { "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence" },
+                EvidenceKinds = new List<string> { "package-evidence.v0" },
+                Confidence = ("declared", 1),
+            };
+            var cycleNotesU = _coverage.GetValueOrDefault(repo)?.Notes;
+            if (cycleNotesU is { Count: > 0 }) e.ScanNotes = cycleNotesU.OrderBy(n => n, StringComparer.Ordinal).ToList(); // SPEC-015 parity with BuildRepo (Baz round-2)
             p.Repos.Add(e);
         }
         return p;
