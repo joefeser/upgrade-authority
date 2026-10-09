@@ -129,3 +129,11 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | Baz | Producer corroborator reason recomputed from unfiltered rows; mislabeled deps.json as "lockfile" | medium | **Accepted** | Corroborator + evidence-kind from the gated rows |
 | Baz | Incomplete `provenance:{}` shells counted as provable build evidence | medium | **Accepted** | LockProvable requires a non-empty manifestSha256 |
 | Baz | Unreadable-status guard ran after the fetch | medium | **Accepted** | Guard moved before any mutation, fetch included |
+
+## Round 14 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C43 | `Reason ??=` dropped the missing-scanner cause when a rescue had already set a reason | P2 | **Accepted** | Append (rescue provenance preserved AND the cause present) |
+| C44 | `"repo": null` freshness entries crashed TryGetValue before the typed check | P2 | **Accepted** | Null/empty checked first (UaException) |
+| Baz | `manifestSha256: null` provenance crashed `.Length`; malformed/legacy provenance shapes undefined | medium | **Accepted** | Load-time fail-closed: an incomplete provenance object is a typed row error (all-or-nothing); the gate also uses IsNullOrEmpty |

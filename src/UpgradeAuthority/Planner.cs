@@ -137,7 +137,7 @@ public sealed class Engine
     // edges, not-affected closure) only when fresh — stale/absent rows stay visible for suspicion
     // (touches) and findings (input observations) but prove nothing in either direction.
     bool DepsFresh(string repo) => _depsFreshness.GetValueOrDefault(repo) is "fresh" or "fresh-by-build";
-    List<LockRow> LockProvable(string repo) => LockOf(repo).Where(r => r.Provenance is null || (DepsFresh(repo) && r.Provenance.ManifestSha256.Length > 0)).ToList(); // Baz r13: incomplete provenance ({} shells) is never proof
+    List<LockRow> LockProvable(string repo) => LockOf(repo).Where(r => r.Provenance is null || (DepsFresh(repo) && !string.IsNullOrEmpty(r.Provenance.ManifestSha256))).ToList(); // Baz r13/r14: incomplete provenance ({} shells, null hashes) is never proof and never crashes
     bool HasStaleDepsRow(string repo, HashSet<string> pkgs) => LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo) && pkgs.Contains(r.PackageId));
     List<string> ProducedOf(string repo) => _produced.GetValueOrDefault(repo, new List<string>());
 

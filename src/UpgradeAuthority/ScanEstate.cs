@@ -338,7 +338,7 @@ public static class ScanEstate
         if (plannedScans.Count > 0 && tracemapDll is null && scanner is null)
         {
             Console.Error.WriteLine($"error: {plannedScans.Count} repo(s) need a scan — pass --tracemap <path-to-tracemap.dll>");
-            foreach (var u40 in plannedScans) { u40.Entry.Status = "skipped"; u40.Entry.BuildFreshness = null; u40.Entry.Reason ??= "scan not run (--tracemap missing)"; } // C40 r13: never persist "scanned" for work that never ran
+            foreach (var u40 in plannedScans) { u40.Entry.Status = "skipped"; u40.Entry.BuildFreshness = null; u40.Entry.Reason = u40.Entry.Reason is null ? "scan not run (--tracemap missing)" : $"{u40.Entry.Reason}; scan not run (--tracemap missing)"; } // C40/C43 r14: rescue provenance preserved AND the missing-scanner cause appended
             WriteManifest(); // C14 r4: a rescue that already moved the operator's WIP MUST be recorded durably even on this exit
             return 1;
         }

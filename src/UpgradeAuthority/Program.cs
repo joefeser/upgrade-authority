@@ -389,6 +389,8 @@ public static class Program
             {
                 if (fe is null)
                     throw new UaException("malformed input build-freshness.v0.json: null repos[] element — every entry must be an object");
+                if (string.IsNullOrEmpty(fe.Repo))
+                    throw new UaException("malformed input build-freshness.v0.json: empty or null repo — every entry needs one"); // C44 r14: null reaches TryGetValue BEFORE the old check and crashes
                 if (seenFreshness.TryGetValue(fe.Repo, out var prior))
                 {
                     if (prior != fe.Freshness)
@@ -398,8 +400,6 @@ public static class Program
                 seenFreshness[fe.Repo] = fe.Freshness;
                 if (fe.Freshness is not ("fresh" or "stale" or "none" or "fresh-by-build"))
                     throw new UaException($"malformed input build-freshness.v0.json: repo '{fe.Repo}' freshness '{fe.Freshness}' not in fresh|stale|none|fresh-by-build");
-                if (string.IsNullOrEmpty(fe.Repo))
-                    throw new UaException("malformed input build-freshness.v0.json: empty repo");
             }
             freshnessFile = parsed;
         }
@@ -432,6 +432,8 @@ public static class Program
                 throw new UaException($"malformed input {name}: row for '{r.PackageId}' is missing its '{(r.Lockfile is null ? "lockfile" : "tfm")}' key — row identity is (repo, lockfile, tfm, packageId)");
             if (v1 && r.Lockfile == "")
                 throw new UaException($"malformed input {name}: row for '{r.PackageId}' has an empty lockfile path — a resolution group needs its lockfile identity (empty tfm is legal, empty lockfile is not)");
+            if (r.Provenance is not null && string.IsNullOrEmpty(r.Provenance.ManifestSha256))
+                throw new UaException($"malformed input {name}: row for '{r.PackageId}' carries an incomplete provenance (manifestSha256 null/empty) — build-output evidence is all-or-nothing; remove the provenance or supply it fully"); // Baz r14: fail-closed at load, never mid-plan
             var key = v1 ? $"{r.PackageId.ToLowerInvariant()}\0{r.Lockfile}\0{r.Tfm}" : r.PackageId.ToLowerInvariant(); // NuGet ids are case-insensitive (Kiro post-merge hardening): case variants are the same key, and SameRow then rejects them (fields differ)
             if (seen.TryGetValue(key, out var prev))
             {
