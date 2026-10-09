@@ -25,6 +25,10 @@ public sealed class ProducerEntry
     [JsonPropertyName("producedVersion")] public string? ProducedVersion { get; set; }
     [JsonPropertyName("publicationStatus")] public string? PublicationStatus { get; set; }
     [JsonPropertyName("evidenceNote")] public string? EvidenceNote { get; set; }
+    // SPEC-020 §2: recorded ONCE at fusion time (sidecar ⇒ operator-declared, PackageProduced fact ⇒
+    // project-declared, the future tracemap CI fact ⇒ ci-defined). Absent ⇒ the entry predates this
+    // spec — classified by the in-band marker (EvidenceNote "tracemap PackageProduced (…)").
+    [JsonPropertyName("provenance")] public string? Provenance { get; set; }
 }
 
 public sealed class OwnershipFile

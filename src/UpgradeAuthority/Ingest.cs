@@ -465,7 +465,7 @@ public static class Ingest
             if (f.Properties is not null && f.Properties.TryGetValue("version", out var pvEl) && pvEl.ValueKind != JsonValueKind.String)
             { pv = null; ingestGaps.Add($"PackageProduced fact {f.FactId}: version unevidenced (hashed/unsafe) — {pkg}"); repoIngestGaps.Add((key, $"producer version unevidenced: {pkg}")); }
             var srcName = Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "";
-            producedProducers.Add(new ProducerEntry { Repo = key, PackageId = pkg!, ProducedVersion = string.IsNullOrEmpty(pv) ? null : pv, EvidenceNote = $"tracemap PackageProduced ({srcName})" });
+            producedProducers.Add(new ProducerEntry { Repo = key, PackageId = pkg!, ProducedVersion = string.IsNullOrEmpty(pv) ? null : pv, EvidenceNote = $"tracemap PackageProduced ({srcName})", Provenance = "project-declared" }); // SPEC-020 §2: recorded at fusion, never reconstructed
         }
 
         if (multiDirMissing.Count > 0 || !producerSatisfiedByScan)
@@ -711,6 +711,14 @@ public static class Ingest
         string.CompareOrdinal(Ord(a.PackageId) + "\0" + Ord(a.Lockfile) + "\0" + Ord(a.Tfm) + "\0" + Ord(a.Version),
                                Ord(b.PackageId) + "\0" + Ord(b.Lockfile) + "\0" + Ord(b.Tfm) + "\0" + Ord(b.Version));
 
+    // SPEC-020 §2: pre-spec entries carry no provenance field — the in-band EvidenceNote marker the
+    // scan-append path writes is the fallback classifier. Anything else in the sidecar is operator truth.
+    internal static string MarkerProvenance(ProducerEntry p)
+        => p.EvidenceNote is not null
+           && p.EvidenceNote.StartsWith("tracemap PackageProduced (", StringComparison.Ordinal)
+           && p.EvidenceNote.EndsWith(")", StringComparison.Ordinal)
+            ? "project-declared" : "operator-declared";
+
     // CopyValidated + scan-produced producer merge: sidecar wins on (repo, package); scan entries
     // append (ordinal by repo then package). Emitting is deterministic.
     static int CopyValidatedProducer(string? src, string dst, string schemaVersion, List<string> gaps, List<ProducerEntry> produced)
@@ -721,6 +729,9 @@ public static class Ingest
         try { existing = JsonSerializer.Deserialize<ProducerEvidence>(File.ReadAllText(dst), JsonOpts) ?? new ProducerEvidence(); }
         catch (JsonException) { return rc; } // placeholder written by CopyValidated — parseable by construction
         existing.Producers ??= new List<ProducerEntry>();
+        // SPEC-020 §2: provenance recorded ONCE, here — sidecar entries get the operator stamp
+        // (pre-spec entries classify via the in-band marker); an explicitly recorded value wins.
+        foreach (var p in existing.Producers) p.Provenance ??= MarkerProvenance(p);
         // NuGet ids are case-insensitive: repo key ordinal, package id ignore-case
         var byKey = existing.Producers
             .GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant()))
@@ -733,7 +744,7 @@ public static class Ingest
             if (byKey.TryGetValue(k, out var dup))
             {
                 if (dup.ProducedVersion != p.ProducedVersion && p.ProducedVersion is not null)
-                    Console.Error.WriteLine($"warning: producer conflict for {k.Item1}/{p.PackageId} — sidecar '{dup.ProducedVersion ?? "unevidenced"}' vs scan '{p.ProducedVersion}'; sidecar kept (scan evidence is declaration-only)");
+                    Console.Error.WriteLine($"warning: producer conflict for {k.Item1}/{p.PackageId} — sidecar '{dup.ProducedVersion ?? "unevidenced"}' ({dup.Provenance ?? MarkerProvenance(dup)}) vs scan '{p.ProducedVersion}' ({p.Provenance}); sidecar kept (scan evidence is declaration-only)");
                 continue;
             }
             var caseVariantEntry = existing.Producers.FirstOrDefault(x2 => string.Equals(NormBasic(x2.Repo), k.Item1, StringComparison.OrdinalIgnoreCase) && string.Equals(x2.PackageId, p.PackageId, StringComparison.OrdinalIgnoreCase));

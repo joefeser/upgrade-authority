@@ -218,6 +218,60 @@ for (const d of dirs) {
       } catch (e) { errs.push("drift.v1 parse"); }
     }
   }
+  // SPEC-020: registry.v1 goldens — structural contract. ord is STRICT like drift's: unknown keys
+  // drop out of the rendering, so an out-of-shape golden fails the byte comparison, not silently passes.
+  {
+    const regPath = join(fixturesDir, d, "golden", "registry.v1.json");
+    if (existsSync(regPath)) {
+      try {
+        const regText = readFileSync(regPath, "utf8");
+        const rg = JSON.parse(regText);
+        const ord = (o, keys) => { const r = {}; for (const k of keys) if (k in o) r[k] = o[k]; return r; };
+        const canon = {
+          schemaVersion: rg.schemaVersion,
+          producers: (rg.producers ?? []).map(p => ord(p, ["repo", "packageId", "producedVersion", "provenance"])),
+          boundary: ord(rg.boundary ?? {}, ["internalPackages", "externalPackages", "unknownPackages", "anomalies"]),
+          provenanceSummary: ord(rg.provenanceSummary ?? {}, ["projectDeclared", "operatorDeclared", "ciDefined", "note"]),
+        };
+        canon.boundary.anomalies = ord(canon.boundary.anomalies ?? {}, ["producedAndDeclaredExternal"]);
+        if (regText !== JSON.stringify(canon, null, 2) + "\n") errs.push("registry non-canonical serialization bytes (closed key set)");
+        if (rg.schemaVersion !== "registry.v1") errs.push("registry schemaVersion");
+        const provs = new Set(["project-declared", "operator-declared", "ci-defined"]);
+        const producers = rg.producers ?? [];
+        const prodKeys = producers.map(p => [p.repo, p.packageId]);
+        const ordCmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+        if (JSON.stringify(prodKeys) !== JSON.stringify([...prodKeys].sort((a, b) => ordCmp(a[0], b[0]) || ordCmp(a[1], b[1]))))
+          errs.push("registry producers not ordinal by (repo, packageId)");
+        for (const p of producers) {
+          if (!provs.has(p.provenance)) errs.push("registry provenance " + p.provenance);
+          if (!p.repo || !p.packageId) errs.push("registry producer identity");
+          if (p.producedVersion !== undefined && typeof p.producedVersion !== "string") errs.push("registry producedVersion shape");
+        }
+        const b = rg.boundary ?? {};
+        const sorted = a => JSON.stringify(a) === JSON.stringify([...a].sort(ordCmp));
+        for (const k of ["internalPackages", "externalPackages", "unknownPackages"]) {
+          if (!Array.isArray(b[k]) || b[k].some(x => typeof x !== "string")) errs.push("registry boundary " + k + " shape");
+          if (sorted(b[k] ?? []) !== true) errs.push("registry " + k + " not ordinal-sorted");
+          const seen = new Set();
+          for (const x of b[k] ?? []) { const l = x.toLowerCase(); if (seen.has(l)) errs.push(`registry ${k} lists one case-variant identity twice (${x})`); seen.add(l); }
+        }
+        // pairwise disjointness under case-insensitive identity (SPEC-020 finding 20-5: pairwise, never the vacuous triple)
+        const lower = a => new Set((a ?? []).map(x => x.toLowerCase()));
+        const [iL, eL, uL] = [lower(b.internalPackages), lower(b.externalPackages), lower(b.unknownPackages)];
+        for (const [nm, s1, s2] of [["internal/external", iL, eL], ["internal/unknown", iL, uL], ["external/unknown", eL, uL]])
+          for (const x of s1) if (s2.has(x)) errs.push(`registry boundary not pairwise disjoint (${nm}): ${x}`);
+        const anomalies = b.anomalies?.producedAndDeclaredExternal;
+        if (!Array.isArray(anomalies) || sorted(anomalies) !== true) errs.push("registry anomalies shape/order");
+        for (const a of anomalies ?? []) if (!iL.has(a.toLowerCase())) errs.push(`registry anomaly ${a} not in internalPackages (produced ⊆ internal)`);
+        const s = rg.provenanceSummary ?? {};
+        const counts = { "project-declared": 0, "operator-declared": 0, "ci-defined": 0 };
+        for (const p of producers) if (provs.has(p.provenance)) counts[p.provenance]++;
+        for (const [k, want] of [["projectDeclared", counts["project-declared"]], ["operatorDeclared", counts["operator-declared"]], ["ciDefined", counts["ci-defined"]]])
+          if (!Number.isInteger(s[k]) || s[k] < 0 || s[k] !== want) errs.push("registry provenanceSummary " + k + " does not match producers[]");
+        if (typeof s.note !== "string" || !s.note) errs.push("registry summary note");
+      } catch { errs.push("registry.v1 parse"); }
+    }
+  }
   if (errs.length) { console.log(`FAIL ${d}: ${errs.join("; ")}`); fails++; }
   else console.log(`ok   ${d}`);
 }

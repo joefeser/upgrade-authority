@@ -151,6 +151,18 @@ public static class Program
                 else WriteArtifactFile(outFileD, canonical);
                 return 0;
             }
+            if (args.Length >= 2 && args[0] == "registry")
+            {
+                // SPEC-020: estate producer registry — the us-vs-the-internet boundary (registry.v1)
+                int? badFlagR2 = ValueFlagError(args, "--out", "-o");
+                if (badFlagR2 is not null) { Console.Error.WriteLine($"error: {args[badFlagR2.Value]} requires a value"); return 1; }
+                var outFileR2 = GetOpt(args, "--out") ?? GetOpt(args, "-o");
+                var (canonicalR2, rcR2) = Registry.Run(args[1]);
+                if (rcR2 != 0) return rcR2;
+                if (outFileR2 is null) WriteCanonical(() => Console.Write(canonicalR2), outWriter);
+                else WriteArtifactFile(outFileR2, canonicalR2);
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
@@ -188,7 +200,7 @@ public static class Program
                 return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-            Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -2332,6 +2344,214 @@ public static class Program
             Console.WriteLine("ok   drift-permutation-swap-plan (order-independent bytes; candidate plans the expected set)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL drift-permutation-swap-plan: {ex.Message}"); }
+
+        // SPEC-020 acceptance 1/4/5: F-registry golden bytes, determinism, the pinned boundary table
+        try
+        {
+            var fr = Path.Combine(fixturesRoot, "F-registry");
+            var (canonR1, rcR1) = Registry.Run(fr);
+            if (rcR1 != 0 || canonR1 is null) throw new Exception($"registry exited {rcR1}");
+            if (canonR1 != File.ReadAllText(Path.Combine(fr, "golden", "registry.v1.json"))) throw new Exception("registry.v1 differs from golden");
+            var (canonR2, rcR2) = Registry.Run(fr);
+            if (rcR2 != 0 || canonR2 != canonR1) throw new Exception("registry not deterministic");
+            var docR = JsonDocument.Parse(canonR1).RootElement;
+            if (docR.GetProperty("schemaVersion").GetString() != "registry.v1") throw new Exception("schemaVersion wrong");
+            var prodsR = docR.GetProperty("producers");
+            if (prodsR.GetArrayLength() != 1) throw new Exception($"expected exactly the corelib producer, got {prodsR.GetArrayLength()}");
+            var p0 = prodsR[0];
+            if (p0.GetProperty("repo").GetString() != "corelib" || p0.GetProperty("packageId").GetString() != "Contoso.Core"
+                || p0.GetProperty("producedVersion").GetString() != "1.0.0" || p0.GetProperty("provenance").GetString() != "project-declared")
+                throw new Exception("corelib producer row wrong (the corpus's only PackageProduced fact): " + p0.GetRawText());
+            var bR = docR.GetProperty("boundary");
+            List<string> L(string name) => bR.GetProperty(name).EnumerateArray().Select(x => x.GetString()!).ToList();
+            if (!L("internalPackages").SequenceEqual(new[] { "Contoso.Core" })) throw new Exception("internalPackages wrong: " + string.Join(",", L("internalPackages")));
+            if (!L("externalPackages").SequenceEqual(new[] { "Newtonsoft.Json" })) throw new Exception("externalPackages wrong: " + string.Join(",", L("externalPackages")));
+            if (!L("unknownPackages").SequenceEqual(new[] { "Contoso.Payments", "Serilog" })) throw new Exception("unknownPackages wrong: " + string.Join(",", L("unknownPackages")));
+            if (bR.GetProperty("anomalies").GetProperty("producedAndDeclaredExternal").GetArrayLength() != 0) throw new Exception("no anomalies expected in the b1b shape");
+            var sumR = docR.GetProperty("provenanceSummary");
+            if (sumR.GetProperty("projectDeclared").GetInt32() != 1 || sumR.GetProperty("operatorDeclared").GetInt32() != 0
+                || sumR.GetProperty("ciDefined").GetInt32() != 0 || string.IsNullOrEmpty(sumR.GetProperty("note").GetString()))
+                throw new Exception("provenanceSummary wrong: " + sumR.GetRawText());
+            Console.WriteLine("ok   registry-golden (F-registry bytes + determinism + pinned boundary table)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-golden: {ex.Message}"); }
+
+        // SPEC-020 acceptance 2: operator override — one entry, operator-declared, both provenances named in the warning
+        try
+        {
+            var richO = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
+            var sideO = Path.Combine(Path.GetTempPath(), "ua-rg-o-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(sideO);
+            File.WriteAllText(Path.Combine(sideO, "producer.json"),
+                "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[{\"packageId\":\"Newtonsoft.Json\"}],\"producers\":[{\"repo\":\"corelib\",\"packageId\":\"Contoso.Core\",\"producedVersion\":\"2.0.0\"}]}");
+            File.WriteAllText(Path.Combine(sideO, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"corelib\",\"team\":\"team-a\"},{\"repo\":\"svc\",\"team\":\"team-a\"}]}");
+            File.Copy(Path.Combine(richO, "sidecars-estate2", "delta.json"), Path.Combine(sideO, "delta.json"));
+            var outO = Path.Combine(Path.GetTempPath(), "ua-rg-oo-" + Guid.NewGuid().ToString("N")[..8]);
+            var errPrevO = Console.Error;
+            var swO = new System.IO.StringWriter();
+            int rcO;
+            try { Console.SetError(swO); rcO = Ingest.Run(new[] { Path.Combine(richO, "scans", "corelib"), Path.Combine(richO, "scans", "svc") }, outO, Path.Combine(sideO, "producer.json"), Path.Combine(sideO, "ownership.json"), Path.Combine(sideO, "delta.json")); }
+            finally { Console.SetError(errPrevO); }
+            if (rcO != 0) throw new Exception($"ingest exited {rcO}");
+            var warnO = swO.ToString();
+            if (!warnO.Contains("producer conflict") || !warnO.Contains("operator-declared") || !warnO.Contains("project-declared"))
+                throw new Exception("fusion warning must name both provenances (weaker source noted): " + warnO);
+            var (canonO, rcO2) = Registry.Run(outO);
+            if (rcO2 != 0 || canonO is null) throw new Exception($"registry exited {rcO2}");
+            var docO = JsonDocument.Parse(canonO).RootElement;
+            var prodsO = docO.GetProperty("producers");
+            if (prodsO.GetArrayLength() != 1) throw new Exception($"operator override must yield ONE entry, got {prodsO.GetArrayLength()}");
+            var e0 = prodsO[0];
+            if (e0.GetProperty("provenance").GetString() != "operator-declared" || e0.GetProperty("producedVersion").GetString() != "2.0.0")
+                throw new Exception("sidecar wins with operator-declared: " + e0.GetRawText());
+            var sumO = docO.GetProperty("provenanceSummary");
+            if (sumO.GetProperty("operatorDeclared").GetInt32() != 1 || sumO.GetProperty("projectDeclared").GetInt32() != 0)
+                throw new Exception("provenanceSummary counts wrong after override: " + sumO.GetRawText());
+            Directory.Delete(outO, true); Directory.Delete(sideO, true);
+            Console.WriteLine("ok   registry-operator-override (one entry, operator-declared, warning names both provenances)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-operator-override: {ex.Message}"); }
+
+        // SPEC-020 finding 20-2: produced∩declared-external is SURFACED, never silently resolved
+        try
+        {
+            var frA = Path.Combine(fixturesRoot, "F-registry");
+            var scratchA = Path.Combine(Path.GetTempPath(), "ua-rg-a-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(frA, scratchA);
+            var peAPath = Path.Combine(scratchA, "input", "producer-evidence.v0.json");
+            var peA = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(peAPath))!;
+            peA["externalPackages"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("{\"packageId\":\"Contoso.Core\"}")!);
+            File.WriteAllText(peAPath, peA.ToJsonString());
+            var (canonA, rcA) = Registry.Run(scratchA);
+            if (rcA != 0) throw new Exception($"anomaly run exited {rcA} — anomalies are report content, not failures");
+            var docA = JsonDocument.Parse(canonA!).RootElement;
+            var bA = docA.GetProperty("boundary");
+            var anomalyA = bA.GetProperty("anomalies").GetProperty("producedAndDeclaredExternal").EnumerateArray().Select(x => x.GetString()).ToList();
+            if (!anomalyA.SequenceEqual(new[] { "Contoso.Core" })) throw new Exception("anomaly must surface Contoso.Core: " + string.Join(",", anomalyA));
+            List<string> LA(string name) => bA.GetProperty(name).EnumerateArray().Select(x => x.GetString()!).ToList();
+            if (!LA("internalPackages").Contains("Contoso.Core")) throw new Exception("produced package must stay internal");
+            if (LA("externalPackages").Any(x => x.Equals("Contoso.Core", StringComparison.OrdinalIgnoreCase))) throw new Exception("external = declared AND NOT produced — the overlap must not land there");
+            if (!LA("externalPackages").SequenceEqual(new[] { "Newtonsoft.Json" })) throw new Exception("externalPackages wrong under anomaly: " + string.Join(",", LA("externalPackages")));
+            Directory.Delete(scratchA, true);
+            Console.WriteLine("ok   registry-anomaly (produced∩external surfaced in anomalies, lists stay disjoint)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-anomaly: {ex.Message}"); }
+
+        // SPEC-020 finding 20-1/20-3: marker fallback, case-insensitive identity, null-version rows, unconsumed echoes
+        try
+        {
+            var frI = Path.Combine(fixturesRoot, "F-registry");
+            string ScratchPe(string name)
+            {
+                var s = Path.Combine(Path.GetTempPath(), "ua-rg-i-" + name + "-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(frI, s);
+                return s;
+            }
+            // pre-spec entry, marker present ⇒ project-declared; marker absent ⇒ operator-declared
+            var sM = ScratchPe("marker");
+            var peM = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sM, "input", "producer-evidence.v0.json")))!;
+            peM["producers"]![0]!.AsObject().Remove("provenance");
+            File.WriteAllText(Path.Combine(sM, "input", "producer-evidence.v0.json"), peM.ToJsonString());
+            var (cM, rcM) = Registry.Run(sM);
+            if (rcM != 0 || JsonDocument.Parse(cM!).RootElement.GetProperty("producers")[0].GetProperty("provenance").GetString() != "project-declared")
+                throw new Exception("in-band marker must classify a pre-spec entry project-declared");
+            peM["producers"]![0]!.AsObject().Remove("evidenceNote");
+            File.WriteAllText(Path.Combine(sM, "input", "producer-evidence.v0.json"), peM.ToJsonString());
+            var (cM2, rcM2) = Registry.Run(sM);
+            if (rcM2 != 0 || JsonDocument.Parse(cM2!).RootElement.GetProperty("producers")[0].GetProperty("provenance").GetString() != "operator-declared")
+                throw new Exception("marker-less pre-spec entry must classify operator-declared");
+            peM["producers"]![0]!["provenance"] = "banana";
+            File.WriteAllText(Path.Combine(sM, "input", "producer-evidence.v0.json"), peM.ToJsonString());
+            if (Registry.Run(sM).Item2 != 3) throw new Exception("unknown provenance value must be a typed refusal (exit 3)");
+            Directory.Delete(sM, true);
+            // case-insensitive identity: lockfile spelling wins; null-version rows still count; unconsumed externals echo
+            var sC = ScratchPe("casing");
+            var peC = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sC, "input", "producer-evidence.v0.json")))!;
+            peC["externalPackages"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("{\"packageId\":\"newtonsoft.json\"}")!); // case-variant of the consumed spelling
+            peC["externalPackages"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("{\"packageId\":\"Never.Consumed\"}")!); // never consumed — echoed
+            File.WriteAllText(Path.Combine(sC, "input", "producer-evidence.v0.json"), peC.ToJsonString());
+            var lockC = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sC, "input", "lockfile-rows.v2.json")))!;
+            foreach (var repC in lockC["repos"]!.AsArray())
+                if (repC!["repo"]!.GetValue<string>() == "svc")
+                    foreach (var rowC in repC["rows"]!.AsArray())
+                    {
+                        var idC = rowC!["packageId"]!.GetValue<string>();
+                        if (idC == "Contoso.Core") rowC["packageId"] = "contoso.core"; // case-variant consumption
+                        if (idC == "Serilog") rowC["version"] = null; // null-version row: the packageId is still evidence
+                    }
+            File.WriteAllText(Path.Combine(sC, "input", "lockfile-rows.v2.json"), lockC.ToJsonString());
+            var (cC, rcC) = Registry.Run(sC);
+            if (rcC != 0) throw new Exception($"casing run exited {rcC}");
+            var bC = JsonDocument.Parse(cC!).RootElement.GetProperty("boundary");
+            List<string> LC(string name) => bC.GetProperty(name).EnumerateArray().Select(x => x.GetString()!).ToList();
+            var internalC = LC("internalPackages");
+            if (internalC.Count != 1 || internalC[0] != "contoso.core")
+                throw new Exception($"case-variant consumption must merge to ONE internal entry with the lockfile spelling: {string.Join(",", internalC)}");
+            var externalC = LC("externalPackages");
+            if (!externalC.SequenceEqual(new[] { "Never.Consumed", "Newtonsoft.Json" }))
+                throw new Exception($"case-variant declaration must merge to the estate spelling + echo the unconsumed: {string.Join(",", externalC)}");
+            if (!LC("unknownPackages").Contains("Serilog")) throw new Exception("null-version lockfile row must still count as consumption");
+            Directory.Delete(sC, true);
+            Console.WriteLine("ok   registry-identity (marker fallback; case-insensitive joins; null-version rows; unconsumed echo)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-identity: {ex.Message}"); }
+
+        // SPEC-020 acceptance 3/5: CLI contract — --out bytes, no BOM, sanitized identical, refusals, permutation
+        try
+        {
+            var exeR = Environment.ProcessPath ?? throw new Exception("ProcessPath unavailable");
+            var frX = Path.Combine(fixturesRoot, "F-registry");
+            var outX = Path.Combine(Path.GetTempPath(), "ua-rg-out.tmp");
+            var psiOutX = new System.Diagnostics.ProcessStartInfo(exeR) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
+            psiOutX.ArgumentList.Add("registry"); psiOutX.ArgumentList.Add(frX); psiOutX.ArgumentList.Add("--out"); psiOutX.ArgumentList.Add(outX);
+            psiOutX.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            using (var p = System.Diagnostics.Process.Start(psiOutX)!)
+            {
+                var so = p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(30000);
+                if (p.ExitCode != 0 || so.Length != 0) throw new Exception($"registry --out exited {p.ExitCode}, stdout {so.Length} chars");
+            }
+            var psiCapX = new System.Diagnostics.ProcessStartInfo(exeR) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
+            psiCapX.ArgumentList.Add("registry"); psiCapX.ArgumentList.Add(frX);
+            psiCapX.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            string stdoutCapX;
+            using (var p = System.Diagnostics.Process.Start(psiCapX)!)
+            { stdoutCapX = p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(30000); }
+            if (!File.ReadAllBytes(outX).SequenceEqual(new System.Text.UTF8Encoding(false).GetBytes(stdoutCapX))) throw new Exception("--out file differs from stdout bytes");
+            if (File.ReadAllBytes(outX).Take(3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF })) throw new Exception("--out file has a BOM");
+            File.Delete(outX);
+            var psiSanX = new System.Diagnostics.ProcessStartInfo(exeR) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
+            psiSanX.ArgumentList.Add("registry"); psiSanX.ArgumentList.Add(frX); psiSanX.ArgumentList.Add("--sanitized");
+            psiSanX.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            string stdoutSanX;
+            using (var p = System.Diagnostics.Process.Start(psiSanX)!)
+            { stdoutSanX = p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(30000); }
+            if (stdoutSanX != stdoutCapX) throw new Exception("--sanitized registry stdout differs from canonical");
+            if (Main(new[] { "registry", frX, "--out" }) != 1) throw new Exception("bare trailing --out must exit 1");
+            if (Main(new[] { "registry", frX, "-o" }) != 1) throw new Exception("bare trailing -o must exit 1");
+            // delta = loader precondition (same as drift); missing input ⇒ typed 3
+            var sX = Path.Combine(Path.GetTempPath(), "ua-rg-x-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(frX, sX);
+            File.Delete(Path.Combine(sX, "input", "delta.json"));
+            if (Registry.Run(sX).Item2 != 3) throw new Exception("delta-less fixture must exit 3");
+            File.Delete(Path.Combine(sX, "input", "producer-evidence.v0.json"));
+            if (Registry.Run(sX).Item2 != 3) throw new Exception("missing producer-evidence must exit 3");
+            Directory.Delete(sX, true);
+            // permutation: reversed input arrays never reach the bytes
+            var sP = Path.Combine(Path.GetTempPath(), "ua-rg-p-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(Path.Combine(sP, "input"));
+            foreach (var f in Directory.GetFiles(Path.Combine(frX, "input"))) File.Copy(f, Path.Combine(sP, "input", Path.GetFileName(f)));
+            foreach (var f in Directory.GetFiles(Path.Combine(sP, "input")))
+            {
+                var doc = JsonDocument.Parse(File.ReadAllText(f));
+                File.WriteAllText(f, CanonicalJson(doc.RootElement));
+            }
+            var (canonP, rcP) = Registry.Run(sP);
+            if (rcP != 0 || canonP != File.ReadAllText(Path.Combine(frX, "golden", "registry.v1.json")))
+                throw new Exception("registry bytes depend on input array order");
+            Directory.Delete(sP, true);
+            Console.WriteLine("ok   registry-cli-contract (--out==stdout no BOM; sanitized identical; refusals; permutation)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-cli-contract: {ex.Message}"); }
 
         // SPEC-019: deps.json evidence + estate refresh + parallel scans
         try
