@@ -55,3 +55,14 @@ confirmed all seven round-1 fixes addressed; the NEW findings:
 Also from Baz's thread-replies: the pipe-drain fix was noted as "reads not awaited before disposal —
 cleanup only partially robust" → drain tasks now observed with a bounded wait (exit code remains the
 contract). Selftest stays 117 cases (extensions, no new case); goldens untouched.
+
+## Round 3 — Codex follow-up on the round-2 head (2026-10-09)
+
+Baz's re-review of the round-2 fixes: **all eight round-2 findings confirmed addressed in-thread,
+zero new findings, check pass (7m41s)**. Codex's delta review of the same head produced one finding:
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C3 | The scheme-less scrub required a DOTTED host — scp-style single-label hosts (`secret-token@git:org/repo.git`, SSH aliases like `ghe:`) survived into the manifest | P1 | **Accepted** | Lookahead broadened to `userinfo@host` followed by dot OR colon (the scp `host:` form — the same single-label-host reality SPEC-016 R1b documented); single-label and alias-shaped cases pinned in selftest |
+
+Verification method fixed for good: full comment-set inventory by ID, no timestamp filters.

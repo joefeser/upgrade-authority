@@ -1998,6 +1998,11 @@ public static class Program
             // Codex P1: USERNAME-ONLY userinfo (PAT-as-username, no colon) must scrub too
             var pat15 = ScanEstate.TrimReason("fatal: unable to access 'https://ghp_Pr0vIdEnCe123@git.example.com/org/repo.git/': auth failed");
             if (pat15.Contains("ghp_") || !pat15.Contains("***@git.example.com")) throw new Exception($"username-only PAT not scrubbed: {pat15}");
+            // Codex r3 P1: scp-style SINGLE-LABEL hosts (alias@git:org/repo — no dot in the host) must scrub too
+            var scpSingle15 = ScanEstate.TrimReason("secret-token@git:org/repo.git: Permission denied (publickey)");
+            if (scpSingle15.Contains("secret-token") || !scpSingle15.Contains("***@git:")) throw new Exception($"single-label scp host not scrubbed: {scpSingle15}");
+            var scpSingleB15 = ScanEstate.TrimReason("fatal: 's3cr3t-alias@ghe: Could not read from remote repository'");
+            if (scpSingleB15.Contains("s3cr3t-alias") || !scpSingleB15.Contains("***@ghe:")) throw new Exception($"single-label alias host not scrubbed: {scpSingleB15}");
             // Codex P2: IsSwapDir tests BOTH markers independently (embedded .tmp- in a repo name
             // must not mask a real .old-<hex8> suffix)
             if (!Ingest.IsSwapDir(".foo.tmp-copy.old-deadbeef")) throw new Exception("embedded .tmp- masked the .old- marker");

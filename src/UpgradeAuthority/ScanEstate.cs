@@ -372,7 +372,7 @@ public static class ScanEstate
         var scrubbed = System.Text.RegularExpressions.Regex.Replace(firstLine,
             @"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^\s/@]+@", "$1***@"); // scheme://ANY-userinfo@ (token or user:pass)
         scrubbed = System.Text.RegularExpressions.Regex.Replace(scrubbed,
-            @"\b[^\s/@]+@(?=[a-zA-Z0-9.\-]+\.)", "***@"); // scheme-less userinfo@host (scp-style, token-bearing)
+            @"\b[^\s/@]+@(?=[a-zA-Z0-9.\-]+[.:])", "***@"); // scheme-less userinfo@host — dotted OR scp-style single-label `host:` (PR #2 Codex r3: `token@git:org/repo` is a real alias shape, SPEC-016 R1b precedent)
         return scrubbed.Length <= 200 ? scrubbed : scrubbed[..200];
     }
 
