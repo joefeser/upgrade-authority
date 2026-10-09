@@ -13,6 +13,7 @@ public sealed class Engine
     readonly EstateScope? _scope; // SPEC-017: optional estate scope echo
     readonly Dictionary<string, string> _depsFreshness = new(); // SPEC-019 §5.3: repo -> fresh|stale|none|fresh-by-build; absent entry = conservative
     HashSet<string>? _affectedPkgsForReasons; // set in BuildPlan before BuildRepo runs (stale-reason scope)
+    BuildFreshnessFile? _pendingFreshness; // ctor staging: applied once mirrors are loaded
     string _lockKind = "lockfile-rows.v0"; // evidence kind cites the input's actual schemaVersion (SPEC-007 §5.6)
 
     readonly Dictionary<string, List<string>> _produced = new();
@@ -67,7 +68,7 @@ public sealed class Engine
         if (delta.Changes.Count != 1)
             throw new UaException($"rejected: package-delta.v1 must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)");
         _c = delta.Changes[0]; _pe = pe; _ow = ow; _px = px; _scope = scope;
-        if (buildFreshness is not null) foreach (var e in buildFreshness.Repos) _depsFreshness[e.Repo] = e.Freshness;
+        _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
         foreach (var e in pe.ExternalPackages) _external.Add(e.PackageId);
         foreach (var p in pe.Producers)
         {
@@ -80,6 +81,11 @@ public sealed class Engine
         }
         foreach (var kv in _produced) kv.Value.Sort(new NaturalComparer());
         _mirrors.Clear();
+        if (_pendingFreshness is not null) // SPEC-019: normalize freshness keys through the SAME identity as every input (Codex P2)
+        {
+            foreach (var e in _pendingFreshness.Repos) _depsFreshness[Norm(e.Repo)] = e.Freshness;
+            _pendingFreshness = null;
+        }
         foreach (var m in ow.Mirrors)
         {
             var canonical = NormBasic(m.Canonical);
@@ -130,7 +136,7 @@ public sealed class Engine
     IEnumerable<string> ConsumersOf(string pkg)
     {
         foreach (var (repo, facts) in _facts) if (facts.Any(f => f.PackageId == pkg)) yield return repo;
-        foreach (var (repo, rows) in _lockRows) if (rows.Any(r => r.PackageId == pkg && r.Type == "direct")) yield return repo;
+        foreach (var (repo, rows) in _lockRows) if (LockProvable(repo).Any(r => r.PackageId == pkg && r.Type == "direct")) yield return repo; // SPEC-019: provable rows only
     }
 
     IEnumerable<string> AllRepos()
@@ -216,7 +222,7 @@ public sealed class Engine
         _dEdge.Clear(); // causative ripple edge per consumer (this plan's closure)
         foreach (var r in producers) { affected.Add(r); AddRule(r, 'a'); }
         foreach (var (repo, facts) in _facts.Where(kv => kv.Value.Any(f => f.PackageId == Target))) { affected.Add(repo); AddRule(repo, 'b'); }
-        foreach (var lf in _lockRepos.Where(l => l.Rows.Any(r => r.PackageId == Target && r.Type == "transitive"))) { affected.Add(lf.Repo); AddRule(lf.Repo, 'c'); }
+        foreach (var lf in _lockRepos.Where(l => LockProvable(l.Repo).Any(r => r.PackageId == Target && r.Type == "transitive"))) { affected.Add(lf.Repo); AddRule(lf.Repo, 'c'); } // SPEC-019: freshness-gated — stale build output never schedules work
         for (bool changed = true; changed;)
         {
             changed = false;

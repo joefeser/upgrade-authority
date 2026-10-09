@@ -2380,6 +2380,22 @@ public static class Program
                 if (!rr19.Reasons.Any(x => x.Contains(want19) || (mode19 == "none" && x.Contains("never not-affected")))) throw new Exception($"{mode19}: reason wrong: {string.Join(" | ", rr19.Reasons)}");
                 Directory.Delete(sc19, true);
             }
+            // Codex P1 (PR4 r1): a STALE deps.json row carrying the TARGET must classify unknown, never
+            // schedule rule-c work and never throw on the filtered provable set
+            var scT19 = Path.Combine(Path.GetTempPath(), "ua-d19t-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fd19, scT19);
+            var pxT19 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scT19, "input", "package-evidence.v0.json")))!;
+            pxT19["facts"] = new System.Text.Json.Nodes.JsonArray(); // isolate rule-c: no csproj declaration, deps.json rows only
+            File.WriteAllText(Path.Combine(scT19, "input", "package-evidence.v0.json"), pxT19.ToJsonString());
+            var dT19 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scT19, "input", "delta.json")))!;
+            dT19["changes"]![0]!["packageName"] = "Newtonsoft.Json"; dT19["changes"]![0]!["oldVersion"] = "13.0.3"; dT19["changes"]![0]!["newVersion"] = "14.0.0";
+            File.WriteAllText(Path.Combine(scT19, "input", "delta.json"), dT19.ToJsonString());
+            File.WriteAllText(Path.Combine(scT19, "input", "build-freshness.v0.json"), "{\"schemaVersion\":\"build-freshness.v0\",\"repos\":[{\"repo\":\"repo\",\"freshness\":\"stale\"}]}");
+            var planT19 = LoadEngine(scT19).BuildPlan();
+            var rT19 = planT19.Repos.First(r => r.Repo == "repo");
+            if (rT19.Classification != "unknown" || planT19.Waves.SelectMany(w => w.ReleaseUnits).Any(u => u.Repo == "repo"))
+                throw new Exception($"stale target row: {rT19.Classification} + scheduled — must be unknown, never scheduled, never a crash");
+            Directory.Delete(scT19, true);
             var scAbs19 = Path.Combine(Path.GetTempPath(), "ua-d19a-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(fd19, scAbs19);
             File.Delete(Path.Combine(scAbs19, "input", "build-freshness.v0.json"));

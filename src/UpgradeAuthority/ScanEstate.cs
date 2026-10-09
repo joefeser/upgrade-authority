@@ -174,12 +174,11 @@ public static class ScanEstate
                 // All worktrees live under <worktreeRoot>/ua/ (the shared-root namespace; SPEC-019 §3.2).
                 var wtRoot = Path.Combine(Path.GetFullPath(worktreeRoot ?? Path.Combine(outDir, ".worktrees")), "ua");
                 SweepWorktreeLeftovers(repoPath, wtRoot, name);
-                Directory.CreateDirectory(wtRoot);
-                worktreePath = Path.Combine(wtRoot, $"{name}-{Guid.NewGuid().ToString("N")[..8]}");
-                if (Push.Git(repoPath, $"worktree add --detach \"{worktreePath}\" {trunk}", out _, out var wtErr) != 0)
-                { entries.Add(Skip($"worktree add failed: {TrimReason(wtErr)}")); continue; }
-                Push.Git(worktreePath, "rev-parse HEAD", out var wtHeadOut, out _);
-                headSha = wtHeadOut.Trim(); // the scanned sha is the trunk tip, not the checkout HEAD
+                // The satellite is created INSIDE the bounded worker (Codex P1): materializing N worktrees
+                // in the sequential pass would defeat --parallel's disk bound. The sha needs no satellite:
+                Push.Git(repoPath, $"rev-parse {trunk}", out var tipWt, out _);
+                headSha = tipWt.Trim(); // the scanned sha is the trunk tip, not the checkout HEAD
+                worktreePath = Path.Combine(wtRoot, $"{name}-PENDING"); // real path minted by the worker
                 // F5/F6 do not apply: the satellite is pristine by construction; staleScan stays false
             }
             else if (updateCheckouts)
@@ -270,7 +269,8 @@ public static class ScanEstate
                 && meta.ScanMode == (worktreeMode ? "worktree" : "in-place")
                 && meta.Trunk == trunk
                 && Ord(meta.BuildFreshness) == Ord(freshnessNow)
-                && (worktreeMode || Ord(meta.DepsFingerprint) == Ord(fingerprintNow)); // in-place: a rebuild with same HEAD changes the fingerprint ⇒ rescan (SPEC-019 §6)
+                && (worktreeMode || Ord(meta.DepsFingerprint) == Ord(fingerprintNow)) // in-place: a rebuild with same HEAD changes the fingerprint ⇒ rescan (SPEC-019 §6)
+                && !build; // Codex P2: --build is an explicit freshness-seeking action — it always executes (a pre-build cache match must not skip the requested build)
             if (reuse)
             {
                 Console.Error.WriteLine($"reuse  {name} (HEAD unchanged: {Sha7(headSha)})");
@@ -297,9 +297,24 @@ public static class ScanEstate
         {
             var (entry, repoPath, headSha, staleWaived, worktreePath, freshness, fingerprint, resolvedTrunk) = unit;
             var scanDir = Path.Combine(scansDir, entry.Name);
+            var wtRoot = Path.GetDirectoryName(worktreePath ?? ""); // namespace dir when in worktree mode
+            var satellite = worktreePath is not null ? Path.Combine(wtRoot ?? "", $"{entry.Name}-{Guid.NewGuid().ToString("N")[..8]}") : null;
             try
             {
-                var scanTarget = repoPath;
+                if (worktreePath is not null)
+                {
+                    if (Push.Git(repoPath, $"worktree add --detach \"{satellite}\" {resolvedTrunk}", out _, out var wtErr) != 0)
+                    {
+                        lock (gate)
+                        {
+                            entry.Status = "skipped";
+                            entry.Reason = $"worktree add failed: {TrimReason(wtErr)}";
+                            Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
+                        }
+                        return;
+                    }
+                }
+                var scanTarget = satellite ?? repoPath;
                 if (worktreePath is not null)
                 {
                     scanTarget = worktreePath;
@@ -354,10 +369,10 @@ public static class ScanEstate
                 var tmp = Path.Combine(scansDir, "." + entry.Name + ".tmp-" + Guid.NewGuid().ToString("N")[..8]);
                 var request = new ScanRequest { RepoPath = scanTarget, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes, RepoName = entry.Name, IndexDepsJson = indexDepsJson };
                 var rc = scanner is not null ? scanner(request) : DefaultRunner(request, tracemapDll!);
-                if (worktreePath is not null)
+                if (satellite is not null)
                 {
                     // satellite lifecycle: remove what we created, only what we created (§3.2 safety rules)
-                    Push.Git(repoPath, $"worktree remove --force \"{worktreePath}\"", out _, out _);
+                    Push.Git(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _);
                     Push.Git(repoPath, "worktree prune", out _, out _);
                 }
                 if (rc != 0 || !File.Exists(Path.Combine(tmp, "facts.ndjson")) || !File.Exists(Path.Combine(tmp, "scan-manifest.json")))
@@ -413,6 +428,14 @@ public static class ScanEstate
                     entry.Status = "skipped";
                     entry.Reason = $"scan worker failed: {TrimReason(ex.Message)}";
                     Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
+                }
+            }
+            finally
+            {
+                if (satellite is not null && Directory.Exists(satellite))
+                {
+                    Push.Git(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _); // every exit path cleans its own satellite (Codex P1)
+                    Push.Git(repoPath, "worktree prune", out _, out _);
                 }
             }
         })).ToArray();
