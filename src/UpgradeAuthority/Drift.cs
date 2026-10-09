@@ -88,9 +88,9 @@ public static class Drift
     {
         if (raw is null) return (null, $"feed file {displayName}: unparseable", 5);
         if (raw.SchemaVersion != "feed-versions.v1")
-            return (null, $"feed file {displayName}: schemaVersion mismatch — expected 'feed-versions.v1', got '{Esc(raw.SchemaVersion)}'", 5);
+            return (null, $"feed file {displayName}: schemaVersion mismatch — expected 'feed-versions.v1', got '{Esc(raw.SchemaVersion ?? "")}'", 5);
         if (raw.Source != "operator-provided" && raw.Source != "folder-feed")
-            return (null, $"feed file {displayName}: source must be 'operator-provided' or 'folder-feed', got '{Esc(raw.Source)}'", 5);
+            return (null, $"feed file {displayName}: source must be 'operator-provided' or 'folder-feed', got '{Esc(raw.Source ?? "")}'", 5);
         if (raw.Packages is null)
             return (null, $"feed file {displayName}: packages is null — a feed with no packages must not exist at all", 5);
         var byId = new Dictionary<string, FeedPackage>(StringComparer.OrdinalIgnoreCase);
@@ -103,7 +103,7 @@ public static class Drift
             if (byId.TryGetValue(p.PackageId, out var dup))
             {
                 if (dup.Version == p.Version) continue; // idempotent collapse
-                return (null, $"feed file {displayName}: '{Esc(p.PackageId)}' at two versions ({dup.Version} and {p.Version}) — the feed contradicts itself", 5);
+                return (null, $"feed file {displayName}: '{Esc(p.PackageId)}' at two versions ({Esc(dup.Version)} and {Esc(p.Version)}) — the feed contradicts itself", 5);
             }
             byId[p.PackageId] = p;
         }
@@ -136,7 +136,7 @@ public static class Drift
             if (byId.TryGetValue(id!, out var dup))
             {
                 if (dup.Version == version) continue; // identical (id, version) — case-variant filename duplicates collapse, matching the file form (PR #3 Codex round 1)
-                return (null, $"folder feed carries '{Esc(id!)}' at two versions ({dup.Version} in {dup.File} and {version} in {Path.GetFileName(file)}) — latest-selection needs prerelease ordering V0 refuses; keep one version per package or use --feed", 5);
+                return (null, $"folder feed carries '{Esc(id!)}' at two versions ({Esc(dup.Version)} in {Esc(dup.File)} and {Esc(version!)} in {Esc(Path.GetFileName(file))}) — latest-selection needs prerelease ordering V0 refuses; keep one version per package or use --feed", 5);
             }
             byId[id!] = (version!, Path.GetFileName(file));
         }
@@ -276,6 +276,10 @@ public static class Drift
     // ---- delta candidates ----
     static int EmitDeltas(DriftReport report, string dir)
     {
+        // The stale-set refusal runs BEFORE the no-behind early return: an all-current rerun must not
+        // leave a previously emitted candidate set masquerading as the latest result (PR #3 Codex r2).
+        if (Directory.Exists(dir) && Directory.EnumerateFileSystemEntries(dir).Any())
+        { var n = Directory.EnumerateFileSystemEntries(dir).Count(); Console.Error.WriteLine($"error: --emit-deltas directory is not empty: {dir} ({n} entr{(n == 1 ? "y" : "ies")}) — stale candidates must never sit beside a fresh set; clear it or pass a fresh directory"); return 3; }
         var behind = report.Packages.Where(p => p.Latest is not null && p.Installations.Any(i => i.Status == "behind")).ToList();
         if (behind.Count == 0) { Console.Error.WriteLine("note: no behind packages — nothing to emit (no directory created)"); return 0; }
         // Precompute and validate EVERY candidate before touching the destination: collisions and a
@@ -307,7 +311,7 @@ public static class Drift
                 staged.Add((file, JsonSerializer.Serialize(delta, WriteOpts).ReplaceLineEndings("\n") + "\n"));
             }
         if (Directory.Exists(dir) && Directory.EnumerateFileSystemEntries(dir).Any())
-        { Console.Error.WriteLine($"error: --emit-deltas directory is not empty: {dir} ({Directory.EnumerateFileSystemEntries(dir).Count()} entr{(Directory.EnumerateFileSystemEntries(dir).Count() == 1 ? "y" : "ies")}) — stale candidates must never sit beside a fresh set; clear it or pass a fresh directory"); return 3; }
+        { var n = Directory.EnumerateFileSystemEntries(dir).Count(); Console.Error.WriteLine($"error: --emit-deltas directory is not empty: {dir} ({n} entr{(n == 1 ? "y" : "ies")}) — stale candidates must never sit beside a fresh set; clear it or pass a fresh directory"); return 3; }
         Directory.CreateDirectory(dir); // iff >=1 candidate (spec §7)
         foreach (var (file, content) in staged)
             File.WriteAllText(Path.Combine(dir, file), content);

@@ -2152,6 +2152,8 @@ public static class Program
             if (Drift.Run(fd20, FeedPath("f2.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"weird\",\"packages\":[]}"), null, null).Item3 != 5) throw new Exception("bad source must exit 5");
             if (Drift.Run(fd20, FeedPath("f2n1.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":null}"), null, null).Item3 != 5) throw new Exception("packages:null must exit 5 (typed), not crash");
             if (Drift.Run(fd20, FeedPath("f2n2.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[null]}"), null, null).Item3 != 5) throw new Exception("null packages[] element must exit 5 (typed), not crash");
+            if (Drift.Run(fd20, FeedPath("f2n3.json", "{\"schemaVersion\":null,\"source\":null,\"packages\":[]}"), null, null).Item3 != 5) throw new Exception("null schemaVersion/source must exit 5 (typed), not crash");
+            if (Drift.Run(fd20, FeedPath("f2n4.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"X\",\"version\":\"1.0.0\"},{\"packageId\":\"x\",\"version\":\"2.0.0\"}]}"), null, null).Item3 != 5) throw new Exception("case-variant id at two versions must exit 5");
             if (Drift.Run(fd20, FeedPath("f3.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"serilog\",\"version\":\"4.0.0\"}]}"), null, null).Item3 != 5) throw new Exception("same id two versions must exit 5");
             var dupPath = FeedPath("f4.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"}]}");
             var (_, dupCanon, dupRc) = Drift.Run(fd20, dupPath, null, null);
@@ -2237,6 +2239,12 @@ public static class Program
             var emitDir21 = Path.Combine(Path.GetTempPath(), "ua-dr21e-" + Guid.NewGuid().ToString("N")[..8]);
             if (Drift.Run(fd21, feed21, null, emitDir21).Item3 != 0) throw new Exception("emit seed failed");
             if (Drift.Run(fd21, feed21, null, emitDir21).Item3 != 3) throw new Exception("re-emit into the non-empty dir must exit 3 (stale-set refusal)");
+            // all-current rerun must ALSO refuse the stale dir (the no-behind path checks the destination first)
+            var feedCur21 = Path.Combine(Path.GetTempPath(), "ua-dr21cur-" + Guid.NewGuid().ToString("N")[..8] + ".json");
+            File.WriteAllText(feedCur21, "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Contoso.Payments\",\"version\":\"1.0.0\"},{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"Newtonsoft.Json\",\"version\":\"13.0.3\"},{\"packageId\":\"Contoso.Core\",\"version\":\"1.0.0\"}]}");
+            if (Drift.Run(fd21, feedCur21, null, emitDir21).Item3 != 3)
+                throw new Exception("all-current rerun into the stale dir must exit 3 — no-behind must not skip the destination check");
+            File.Delete(feedCur21);
             Directory.Delete(emitDir21, true);
             // delta = loader precondition: deleted → exit 3 naming it; 2-change → exit 3; dual-fault (fixture+feed) → 3
             var scratch21 = Path.Combine(Path.GetTempPath(), "ua-dr21x-" + Guid.NewGuid().ToString("N")[..8]);

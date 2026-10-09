@@ -17,3 +17,15 @@ of the push; Baz's check passed while carrying inline findings (the known patter
 **Result:** 7 fixed, 1 deferred with receipt. Selftest stays 124 (case extensions); goldens unchanged
 (25); the emitted-delta goldens are byte-identical (the emit rework changed ordering of validation,
 not bytes). Spec §3/§7/§9 updated to match.
+
+
+## Round 2 (2026-10-09)
+
+Baz confirmed all round-1 fixes in-thread (9 addressed replies, check pass). New findings:
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C6 | The no-behind early return skipped the non-empty-destination check — an all-current rerun left stale candidates in place | P2 | **Accepted** | Destination check moved BEFORE the early return (spec §7 wording extended); pinned (all-current rerun into a populated dir exits 3) |
+| C7 | Esc gaps: conflict diagnostics wrote versions raw; folder-conflict wrote filenames raw; null schemaVersion/source NRE'd inside Esc | P2 | **Accepted** | Esc applied to every untrusted interpolation (versions, filenames); null metadata coalesced; typed exit 5 pinned for null schemaVersion/source and case-variant-two-versions |
+| Baz | Validator's ord() fallback preserved unknown drift keys (out-of-shape goldens could pass) | medium | **Accepted** | ord is STRICT (unknown keys dropped from the rendering ⇒ byte-compare fails); comment records why |
+| Baz | Unbounded staged memory in EmitDeltas | medium | **Dismissed (receipt)** | The tool is in-memory by design (Engine loads every fact/lockfile row before drift runs); staged candidates are strictly smaller than the already-loaded inventory. An arbitrary cap would be the first memory limit in a codebase that deliberately has none; estate-scale memory is the design-talk tier |

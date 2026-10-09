@@ -22,9 +22,11 @@ const root = new URL("..", import.meta.url).pathname;
 const fixturesDir = join(root, "fixtures");
 let fails = 0;
 
-// SPEC-018: drift.v1 canonical bytes (mirrors Drift.Write's fixed key order — the C# writer owns the shape)
+// SPEC-018: drift.v1 canonical bytes (mirrors Drift.Write's fixed key order — the C# writer owns the shape).
+// ord is STRICT: unknown keys are dropped from the rendering, so a golden carrying an out-of-shape
+// property fails the byte comparison instead of passing silently (PR #3 Baz round 2).
 function toDriftCanonicalText(d) {
-  const ord = (o, keys) => { const r = {}; for (const k of keys) if (k in o) r[k] = o[k]; for (const k of Object.keys(o)) if (!(k in r)) r[k] = o[k]; return r; };
+  const ord = (o, keys) => { const r = {}; for (const k of keys) if (k in o) r[k] = o[k]; return r; };
   d = ord(d, ["schemaVersion", "feed", "summary", "packages"]);
   d.feed = ord(d.feed ?? {}, ["source", "asOf", "packageCount"]);
   d.summary = ord(d.summary ?? {}, ["packagesObserved", "behind", "current", "ahead", "unclassified", "unknownFeedPackages"]);
