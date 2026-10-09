@@ -21,6 +21,22 @@ const rungs = new Set(["receipt", "manifest", "evaluated", "declared", "fixture-
 const root = new URL("..", import.meta.url).pathname;
 const fixturesDir = join(root, "fixtures");
 let fails = 0;
+
+// SPEC-018: drift.v1 canonical bytes (mirrors Drift.Write's fixed key order — the C# writer owns the shape)
+function toDriftCanonicalText(d) {
+  const ord = (o, keys) => { const r = {}; for (const k of keys) if (k in o) r[k] = o[k]; for (const k of Object.keys(o)) if (!(k in r)) r[k] = o[k]; return r; };
+  d = ord(d, ["schemaVersion", "feed", "summary", "packages"]);
+  d.feed = ord(d.feed ?? {}, ["source", "asOf", "packageCount"]);
+  d.summary = ord(d.summary ?? {}, ["packagesObserved", "behind", "current", "ahead", "unclassified", "unknownFeedPackages"]);
+  d.packages = (d.packages ?? []).map(p => {
+    p = ord(p, ["packageId", "latest", "statuses", "installations"]);
+    p.statuses = ord(p.statuses ?? {}, ["behind", "current", "ahead", "unclassified"]);
+    p.installations = (p.installations ?? []).map(i => ord(i, ["repo", "version", "evidence", "status", "reason"]));
+    return p;
+  });
+  return JSON.stringify(d, null, 2) + "\n";
+}
+
 const dirs = readdirSync(fixturesDir).filter(d => statSync(join(fixturesDir, d)).isDirectory());
 for (const d of dirs) {
   const p = join(fixturesDir, d, "golden", "plan.json");
@@ -141,6 +157,65 @@ for (const d of dirs) {
   }
   // Canonical serialization — in-memory comparison; the corpus is never mutated here.
   if (text !== toCanonicalText(g)) errs.push("non-canonical serialization bytes");
+  // SPEC-018: drift.v1 goldens — structural contract (the C# writer owns the bytes; selftest compares them)
+  {
+    const driftPath = join(fixturesDir, d, "golden", "drift.v1.json");
+    if (existsSync(driftPath)) {
+      try {
+        const driftText = readFileSync(driftPath, "utf8");
+        const dr = JSON.parse(driftText);
+        if (driftText !== toDriftCanonicalText(dr)) errs.push("drift non-canonical serialization bytes");
+        const statuses = new Set(["behind", "current", "ahead", "unclassified", "unknown-feed"]);
+        if (dr.schemaVersion !== "drift.v1") errs.push("drift schemaVersion");
+        if (!["operator-provided", "folder-feed"].includes(dr.feed?.source)) errs.push("drift feed source");
+        if (!Number.isInteger(dr.feed?.packageCount) || dr.feed.packageCount < 0) errs.push("drift packageCount");
+        for (const k of ["packagesObserved", "behind", "current", "ahead", "unclassified", "unknownFeedPackages"])
+          if (!Number.isInteger(dr.summary?.[k]) || dr.summary[k] < 0) errs.push("drift summary " + k);
+        const pkgs = dr.packages ?? [];
+        if (dr.summary.packagesObserved !== pkgs.length) errs.push("drift summary/packages mismatch");
+        const ids = pkgs.map(p => p.packageId);
+        if (JSON.stringify(ids) !== JSON.stringify([...ids].sort((a, b) => a < b ? -1 : a > b ? 1 : 0))) errs.push("drift packages not ordinal-sorted");
+        let nBehind = 0, nCurrent = 0, nAhead = 0, nUnc = 0, nUnknown = 0;
+        for (const p of pkgs) {
+          const rows = p.installations ?? [];
+          if (rows.length === 0) errs.push("drift package with no installations " + p.packageId);
+          const anyUnknown = rows.some(r => r.status === "unknown-feed");
+          if (anyUnknown && p.latest !== null) errs.push("drift unknown-feed package with a latest " + p.packageId);
+          if (!anyUnknown && p.latest == null) errs.push("drift known package without a latest " + p.packageId);
+          const rowKeys = rows.map(r => [r.repo, r.version]);
+          if (JSON.stringify(rowKeys) !== JSON.stringify([...rowKeys].sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])))) errs.push("drift installations not sorted " + p.packageId);
+          for (const r of rows) {
+            if (!statuses.has(r.status)) errs.push("drift row status " + r.status);
+            if (!["lockfile", "declared-pin"].includes(r.evidence)) errs.push("drift row evidence " + r.evidence);
+            if ((r.status === "unclassified") !== (r.reason != null)) errs.push("drift reason must ride unclassified rows only " + p.packageId);
+          }
+          nBehind += rows.filter(r => r.status === "behind").length;
+          nCurrent += rows.filter(r => r.status === "current").length;
+          nAhead += rows.filter(r => r.status === "ahead").length;
+          nUnc += rows.filter(r => r.status === "unclassified").length;
+          if (anyUnknown) nUnknown++;
+          for (const k of ["behind", "current", "ahead", "unclassified"])
+            if ((p.statuses?.[k] ?? -1) !== rows.filter(r => r.status === k).length) errs.push(`drift per-package statuses ${k} ${p.packageId}`);
+        }
+        if (dr.summary.behind !== nBehind || dr.summary.current !== nCurrent || dr.summary.ahead !== nAhead
+          || dr.summary.unclassified !== nUnc || dr.summary.unknownFeedPackages !== nUnknown)
+          errs.push("drift summary counts do not match packages[]");
+        const deltasDir = join(fixturesDir, d, "golden", "deltas");
+        if (existsSync(deltasDir)) {
+          for (const df of readdirSync(deltasDir).filter(f => f.endsWith(".delta.json"))) {
+            try {
+              const dd = JSON.parse(readFileSync(join(deltasDir, df), "utf8"));
+              if (dd.version !== "package-delta.v1" || dd.sourceCommitSha !== "0".repeat(40)) errs.push("drift delta envelope " + df);
+              if (dd.changes?.length !== 1) errs.push("drift delta single-change " + df);
+              const c = dd.changes?.[0];
+              if (c && (c.ecosystem !== "nuget" || c.changeType !== "updated" || !c.id?.startsWith("drift-") || !c.packageName || !c.oldVersion || !c.newVersion)) errs.push("drift delta change shape " + df);
+              if (c && !ids.includes(c.packageName)) errs.push("drift delta packageName not an observed estate spelling " + df);
+            } catch (e) { errs.push("drift delta parse " + df); }
+          }
+        }
+      } catch (e) { errs.push("drift.v1 parse"); }
+    }
+  }
   if (errs.length) { console.log(`FAIL ${d}: ${errs.join("; ")}`); fails++; }
   else console.log(`ok   ${d}`);
 }

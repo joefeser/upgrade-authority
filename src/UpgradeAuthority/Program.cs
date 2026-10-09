@@ -139,7 +139,7 @@ public static class Program
             if (args.Length >= 2 && args[0] == "drift")
             {
                 // SPEC-018: outdated discovery — installed inventory vs feed truth → drift.v1 (+ delta candidates)
-                foreach (var f in new[] { "--feed", "--folder-feed", "--out", "--emit-deltas" })
+                foreach (var f in new[] { "--feed", "--folder-feed", "--out", "-o", "--emit-deltas" })
                 {
                     int? bad = ValueFlagError(args, f);
                     if (bad is not null) { Console.Error.WriteLine($"error: {args[bad.Value]} requires a value"); return 1; }
@@ -2120,6 +2120,11 @@ public static class Program
             if (!nj19.GetProperty("installations").EnumerateArray().All(i => new[] { "current", "behind" }.Contains(i.GetProperty("status").GetString())))
                 throw new Exception("folder-derived latest must classify numeric Newtonsoft rows");
             if (Drift.Run(fd19, null, ff + "-absent", null).Item3 != 1) throw new Exception("missing folder-feed dir must exit 1");
+            var beforeCount19 = JsonDocument.Parse(Drift.Run(fd19, null, ff, null).Item2!).RootElement.GetProperty("feed").GetProperty("packageCount").GetInt32();
+            File.WriteAllText(Path.Combine(ff, "newtonsoft.json.13.0.3.nupkg"), "empty"); // case-variant SAME version -> collapses
+            if (Drift.Run(fd19, null, ff, null).Item3 != 0
+                || JsonDocument.Parse(Drift.Run(fd19, null, ff, null).Item2!).RootElement.GetProperty("feed").GetProperty("packageCount").GetInt32() != beforeCount19)
+                throw new Exception("case-variant same-version folder files must collapse (not refuse, not double-count)");
             File.WriteAllText(Path.Combine(ff, "Foo.1.2.0.nupkg"), "empty"); // second version of Foo
             if (Drift.Run(fd19, null, ff, null).Item3 != 5) throw new Exception("one id at two versions in a folder must exit 5");
             // parse-shape unit pins (greedy-longest, prerelease-with-dots, hyphen ids, numeric-ending ids)
@@ -2145,6 +2150,8 @@ public static class Program
             }
             if (Drift.Run(fd20, FeedPath("f1.json", "{\"schemaVersion\":\"feed-versions.v0\",\"packages\":[]}"), null, null).Item3 != 5) throw new Exception("schemaVersion mismatch must exit 5");
             if (Drift.Run(fd20, FeedPath("f2.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"weird\",\"packages\":[]}"), null, null).Item3 != 5) throw new Exception("bad source must exit 5");
+            if (Drift.Run(fd20, FeedPath("f2n1.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":null}"), null, null).Item3 != 5) throw new Exception("packages:null must exit 5 (typed), not crash");
+            if (Drift.Run(fd20, FeedPath("f2n2.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[null]}"), null, null).Item3 != 5) throw new Exception("null packages[] element must exit 5 (typed), not crash");
             if (Drift.Run(fd20, FeedPath("f3.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"serilog\",\"version\":\"4.0.0\"}]}"), null, null).Item3 != 5) throw new Exception("same id two versions must exit 5");
             var dupPath = FeedPath("f4.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"}]}");
             var (_, dupCanon, dupRc) = Drift.Run(fd20, dupPath, null, null);
@@ -2226,6 +2233,11 @@ public static class Program
             { stdoutSan = p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(30000); }
             if (stdoutSan != stdoutCap) throw new Exception("--sanitized drift stdout differs from canonical");
             if (Main(new[] { "drift", fd21, "--feed", feed21, "--out" }) != 1) throw new Exception("bare trailing --out must exit 1");
+            if (Main(new[] { "drift", fd21, "--feed", feed21, "-o" }) != 1) throw new Exception("bare trailing -o must exit 1");
+            var emitDir21 = Path.Combine(Path.GetTempPath(), "ua-dr21e-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Drift.Run(fd21, feed21, null, emitDir21).Item3 != 0) throw new Exception("emit seed failed");
+            if (Drift.Run(fd21, feed21, null, emitDir21).Item3 != 3) throw new Exception("re-emit into the non-empty dir must exit 3 (stale-set refusal)");
+            Directory.Delete(emitDir21, true);
             // delta = loader precondition: deleted → exit 3 naming it; 2-change → exit 3; dual-fault (fixture+feed) → 3
             var scratch21 = Path.Combine(Path.GetTempPath(), "ua-dr21x-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(fd21, scratch21);

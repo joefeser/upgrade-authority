@@ -88,23 +88,37 @@ public static class Drift
     {
         if (raw is null) return (null, $"feed file {displayName}: unparseable", 5);
         if (raw.SchemaVersion != "feed-versions.v1")
-            return (null, $"feed file {displayName}: schemaVersion mismatch — expected 'feed-versions.v1', got '{raw.SchemaVersion}'", 5);
+            return (null, $"feed file {displayName}: schemaVersion mismatch — expected 'feed-versions.v1', got '{Esc(raw.SchemaVersion)}'", 5);
         if (raw.Source != "operator-provided" && raw.Source != "folder-feed")
-            return (null, $"feed file {displayName}: source must be 'operator-provided' or 'folder-feed', got '{raw.Source}'", 5);
+            return (null, $"feed file {displayName}: source must be 'operator-provided' or 'folder-feed', got '{Esc(raw.Source)}'", 5);
+        if (raw.Packages is null)
+            return (null, $"feed file {displayName}: packages is null — a feed with no packages must not exist at all", 5);
         var byId = new Dictionary<string, FeedPackage>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in raw.Packages)
         {
+            if (p is null)
+                return (null, $"feed file {displayName}: null packages[] element — every entry must be an object", 5);
             if (string.IsNullOrEmpty(p.PackageId) || string.IsNullOrEmpty(p.Version))
                 return (null, $"feed file {displayName}: empty packageId or version — every entry needs both", 5);
             if (byId.TryGetValue(p.PackageId, out var dup))
             {
                 if (dup.Version == p.Version) continue; // idempotent collapse
-                return (null, $"feed file {displayName}: '{p.PackageId}' at two versions ({dup.Version} and {p.Version}) — the feed contradicts itself", 5);
+                return (null, $"feed file {displayName}: '{Esc(p.PackageId)}' at two versions ({dup.Version} and {p.Version}) — the feed contradicts itself", 5);
             }
             byId[p.PackageId] = p;
         }
         raw.Packages = byId.Values.OrderBy(p => p.PackageId, StringComparer.Ordinal).ToList();
         return (raw, null, 0);
+    }
+
+    // Untrusted values (feed fields, filenames) reach diagnostics verbatim; control characters would
+    // forge terminal/log line structure the redactor does not escape (PR #3 Baz round 1).
+    static string Esc(string s)
+    {
+        var sb = new StringBuilder();
+        foreach (var c in s)
+            sb.Append(c < 0x20 || c == 0x7f ? $"\\u{(int)c:x4}" : c);
+        return sb.ToString();
     }
 
     // ---- feed truth: folder form (flat, depth-1, *.nupkg; latest-only by construction) ----
@@ -118,9 +132,12 @@ public static class Drift
             var name = Path.GetFileName(file)[..^".nupkg".Length];
             var (id, version) = ParseNupkgName(name);
             if (id is null || version is null)
-            { Console.Error.WriteLine($"warning: {Path.GetFileName(file)} does not resolve as {{PackageId}}.{{version}} — skipped (never guessed)"); continue; }
+            { Console.Error.WriteLine($"warning: {Esc(Path.GetFileName(file))} does not resolve as {{PackageId}}.{{version}} — skipped (never guessed)"); continue; }
             if (byId.TryGetValue(id!, out var dup))
-                return (null, $"folder feed carries '{id}' at two versions ({dup.Version} in {dup.File} and {version} in {Path.GetFileName(file)}) — latest-selection needs prerelease ordering V0 refuses; keep one version per package or use --feed", 5);
+            {
+                if (dup.Version == version) continue; // identical (id, version) — case-variant filename duplicates collapse, matching the file form (PR #3 Codex round 1)
+                return (null, $"folder feed carries '{Esc(id!)}' at two versions ({dup.Version} in {dup.File} and {version} in {Path.GetFileName(file)}) — latest-selection needs prerelease ordering V0 refuses; keep one version per package or use --feed", 5);
+            }
             byId[id!] = (version!, Path.GetFileName(file));
         }
         feed.Packages = byId.Select(kv => new FeedPackage { PackageId = kv.Key, Version = kv.Value.Version }).OrderBy(p => p.PackageId, StringComparer.Ordinal).ToList();
@@ -261,14 +278,17 @@ public static class Drift
     {
         var behind = report.Packages.Where(p => p.Latest is not null && p.Installations.Any(i => i.Status == "behind")).ToList();
         if (behind.Count == 0) { Console.Error.WriteLine("note: no behind packages — nothing to emit (no directory created)"); return 0; }
+        // Precompute and validate EVERY candidate before touching the destination: collisions and a
+        // non-empty destination refuse up front, so a refusal never leaves partial or overwritten
+        // output and a stale candidate can never sit beside the new set (PR #3 round 1).
+        var staged = new List<(string File, string Content)>();
         var taken = new HashSet<string>(StringComparer.Ordinal);
         foreach (var pkg in behind)
-        {
             foreach (var from in pkg.Installations.Where(i => i.Status == "behind").Select(i => i.Version).Distinct(StringComparer.Ordinal))
             {
                 var file = $"{Safe(pkg.PackageId)}.{Safe(from)}.delta.json";
                 if (!taken.Add(file))
-                { Console.Error.WriteLine($"error: filename collision after sanitization — two distinct candidates map to {file}"); return 3; } // typed, names the file; both ids printed by the caller-side loop below
+                { Console.Error.WriteLine($"error: filename collision after sanitization — two distinct candidates map to {file}"); return 3; }
                 var delta = new DeltaFile
                 {
                     Version = "package-delta.v1",
@@ -284,11 +304,14 @@ public static class Drift
                         NewVersion = pkg.Latest!,
                     } },
                 };
-                Directory.CreateDirectory(dir);
-                File.WriteAllText(Path.Combine(dir, file), JsonSerializer.Serialize(delta, WriteOpts).ReplaceLineEndings("\n") + "\n");
+                staged.Add((file, JsonSerializer.Serialize(delta, WriteOpts).ReplaceLineEndings("\n") + "\n"));
             }
-        }
-        Console.Error.WriteLine($"note: {taken.Count} delta candidate(s) → {dir} (single-change, ready for ua plan; picking which to run is a human decision)");
+        if (Directory.Exists(dir) && Directory.EnumerateFileSystemEntries(dir).Any())
+        { Console.Error.WriteLine($"error: --emit-deltas directory is not empty: {dir} ({Directory.EnumerateFileSystemEntries(dir).Count()} entr{(Directory.EnumerateFileSystemEntries(dir).Count() == 1 ? "y" : "ies")}) — stale candidates must never sit beside a fresh set; clear it or pass a fresh directory"); return 3; }
+        Directory.CreateDirectory(dir); // iff >=1 candidate (spec §7)
+        foreach (var (file, content) in staged)
+            File.WriteAllText(Path.Combine(dir, file), content);
+        Console.Error.WriteLine($"note: {staged.Count} delta candidate(s) → {dir} (single-change, ready for ua plan; picking which to run is a human decision)");
         return 0;
     }
 
