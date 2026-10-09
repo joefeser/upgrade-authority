@@ -5,7 +5,10 @@
 `upgrade-authority` (the `ua` CLI) answers the question existing tooling leaves open: *a new version of a package exists — who has to move, in what order, and what exactly changes?* It builds an impact plan from real repo scans (via [tracemap](https://github.com/joefeser/tracemap)), orders the work into waves that respect producer/consumer relationships, generates the exact file edits as verified patches, and opens pull requests for the waves that carry edits (one repo checkout per push run). It never merges, never guesses, and never claims a fact it cannot trace to evidence.
 
 ```
-tracemap scan ×N repos
+ua scan-estate            # ONE command: freshness-check repos → cached tracemap scans →
+                           #   bootstrap sidecars → ingest → plan → report
+   (or, step by step:)
+   tracemap scan ×N repos
    → ua ownership init      # generate ownership.v0 from the scan set
    → ua ingest              # scans → planner inputs (multi-repo, estate-scale via --scans-root)
    → ua plan                # impact plan: who's affected, in what order, with uncertainty visible
@@ -37,7 +40,7 @@ git clone https://github.com/joefeser/upgrade-authority
 cd upgrade-authority
 dotnet build src/UpgradeAuthority        # ~5 s; no package restore beyond the SDK
 
-# full self-check: 90+ cases incl. real committed scan data (offline)
+# full self-check: 110+ cases incl. real committed scan data (offline)
 dotnet run --project src/UpgradeAuthority -- selftest
 
 # try it on the committed demo estate (real tracemap scans, sanitized)
@@ -56,10 +59,11 @@ Requires the .NET 10 SDK. Everything else is self-contained.
 
 | Command | What it does |
 |---|---|
-| `ua ingest` | Converts tracemap scan output (facts.ndjson + scan-manifest.json) into planner inputs. Multi-repo; `--scans-root <dir>` ingests a whole scans tree in one command. |
+| `ua scan-estate` | One command from a folder of repo checkouts to a report: freshness precondition (every scanned repo at its origin trunk tip, or visibly skipped), SHA-cached tracemap scans (the scans folder IS the cache — re-runs rescan only movers), sidecar bootstrap, then ingest → plan → report. `--scope <file>` declares repos out of scope (visible in the report, never silently dropped); `--exclude <glob>` passes tracemap folder exclusions through. |
+| `ua ingest` | Converts tracemap scan output (facts.ndjson + scan-manifest.json) into planner inputs. Multi-repo; `--scans-root <dir>` ingests a whole scans tree in one command; `--scope <file>` filters discovery with a visible scope statement in the plan. |
 | `ua ownership init/update` | Generates and maintains the ownership file (which team owns each repo) from the scan set — the last hand-maintained input, optional where scans declare producers. |
-| `ua plan` | The impact plan: three-state repo classification (affected / not-affected / unknown), waves with statuses and prerequisites, findings (evidenced version disagreements inside a repo). Byte-deterministic. |
-| `ua report` | Markdown rendering of the plan — waves, gates, evidence, gaps, findings, scan-health notes. |
+| `ua plan` | The impact plan: three-state repo classification (affected / not-affected / unknown), waves with statuses and prerequisites, findings (evidenced version disagreements inside a repo). Byte-deterministic; `--out <file>` writes canonical bytes directly (PowerShell 5.1-safe). |
+| `ua report` | Markdown rendering of the plan — waves, gates, evidence, gaps, findings, scan-health notes. `--out <file>` writes canonical bytes directly. |
 | `ua apply` | Derives edit sites from evidence (direct pins, CPM central pins, `VersionOverride`, packages.config), applies the upgrade-only policy (never downgrades), verifies each site against a checkout, emits per-wave unified diffs. |
 | `ua push` | Executes verified patches for one repo checkout per run (edit-bearing waves): branch per wave, gated commit messages, worktree-based (your checkout never switches branches), rollback on failure, optional PR via GitHub (`--pr`; github.com or `--github-api` for GitHub Enterprise). **Never merges.** |
 
@@ -76,13 +80,13 @@ See [docs/FEATURES.md](docs/FEATURES.md) for the full tour and [docs/COMPARISONS
 
 - [Features](docs/FEATURES.md) — the complete capability tour, organized by the pipeline
 - [Comparisons](docs/COMPARISONS.md) — us vs the existing tooling landscape
-- [Specs](docs/specs/) — every behavior is specified and reviewed before implementation (`SPEC-000`…`SPEC-015`)
-- [Fixture corpus](fixtures/MANIFEST.md) — 23 golden fixtures, byte-exact, including data from real scans
+- [Specs](docs/specs/) — every behavior is specified and reviewed before implementation (`SPEC-000`…`SPEC-017`)
+- [Fixture corpus](fixtures/MANIFEST.md) — 24 golden fixtures, byte-exact, including data from real scans
 - [Review history](docs/reviews/) — every review round, every finding, every disposition
 
 ## Status
 
-V0 feature-complete: the full chain above is implemented, specified, and pinned by a 100-case deterministic selftest that runs byte-exact on Windows, macOS, and Linux (checkout line endings are pinned by `.gitattributes`; a selftest guard fails loudly on a CRLF checkout). The fixture corpus includes real tracemap scan output for multi-project estates — central package management, version overrides, multi-TFM lockfiles, legacy `packages.config`, and producer/consumer graphs.
+V0 feature-complete: the full chain above is implemented, specified, and pinned by a 117-case deterministic selftest that runs byte-exact on Windows, macOS, and Linux (checkout line endings are pinned by `.gitattributes`; a selftest guard fails loudly on a CRLF checkout). The fixture corpus includes real tracemap scan output for multi-project estates — central package management, version overrides, multi-TFM lockfiles, legacy `packages.config`, and producer/consumer graphs.
 
 Roadmap sketches (not built): persistent storage behind the planner, an action queue for long-running campaigns, vulnerability-intelligence ingestion, multi-user operation with roles.
 

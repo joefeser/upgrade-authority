@@ -27,6 +27,18 @@ public static class Report
         if (p.Delta.Origin is not null) sb.Append(" — origin: ").Append(Text(p.Delta.Origin));
         sb.Append('\n');
         sb.Append("- Repositories: ").Append(affected).Append(" affected · ").Append(notAffected).Append(" not-affected · ").Append(unknown).Append(" unknown").Append('\n');
+        if (p.Scope != null) // SPEC-017 §5: config echo — out-of-scope repos claim no classification, never not-affected
+        {
+            var excluded = p.Scope.OutOfScope ?? new List<string>();
+            if (p.Scope.Mode == "include")
+            {
+                sb.Append("- Scope: include-mode — ").Append(p.Scope.IncludedCount ?? 0).Append(" repos in scope by config");
+                if (excluded.Count > 0) sb.Append(", ").Append(excluded.Count).Append(" out of scope by config: ").Append(string.Join(", ", excluded.Select(Text)));
+                sb.Append('\n');
+            }
+            else
+                sb.Append("- Scope: ").Append(excluded.Count).Append(" repos out of scope by config: ").Append(string.Join(", ", excluded.Select(Text))).Append('\n');
+        }
         if (p.Uncertainty.Findings is { Count: > 0 }) // SPEC-007: emitted only when findings exist — existing fixtures' bytes unchanged
             sb.Append("- Version disagreements: ").Append(p.Uncertainty.Findings.Count).Append(" — see Uncertainty").Append('\n');
         if (p.Stop is not null)

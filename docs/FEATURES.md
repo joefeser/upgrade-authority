@@ -1,6 +1,24 @@
 # Features — the complete tour
 
-Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 100-case selftest — including real tracemap scan data for the tricky cases.
+Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 117-case selftest — including real tracemap scan data for the tricky cases.
+
+## 0. Estate wrapper — `ua scan-estate`
+
+**What it does:** one command from a folder of repo checkouts to a report (absorbs the manual scan loop → sidecar bootstrap → ingest → plan → report sequence).
+
+- **Freshness precondition** — every repo is verified at its origin trunk tip (`origin/main`, else `origin/dev`) after a `git fetch`; behind/dirty/no-trunk/fetch-failed repos are skipped with a visible reason and recorded in `scan-estate.v1.json` (the run manifest). `--allow-stale` waives freshness (except non-git and no-origin repos); skips never fail the run.
+- **SHA-cached scans** — the scans folder IS the cache: a repo whose HEAD matches the cached scan's `commitSha` (and the scan conditions: `--exclude` globs, tracemap dll hash, staleness flag) is reused, never re-scanned. Daily runs re-scan only movers; a dirty `--allow-stale` scan never silently speaks for a later clean tree.
+- **Alternate-checkout dedupe** — two checkouts of one origin: the name-ordinal first wins, the later is visibly skipped (one scan per repo; combining snapshots stays a deliberate explicit act).
+- **Sidecar bootstrap** — `ownership init` (or `update` when the file exists — manual assignments sacred), a minimal producer sidecar listing the delta target, and a single-change delta template. Existing files are operator data and are never overwritten; the producer template derives its package from a pre-placed real `delta.json` when flags are absent.
+- **The chain** — ingest (explicit dirs, all sidecars explicit) → `plan.json` → `report.md`, all written into the out dir with canonical bytes.
+
+## 0b. Estate scope — `--scope <file>` (scan-estate / ingest / ownership)
+
+**What it does:** the operator declares repos out of scope (`estate-scope.v0`: `include`/`exclude` lists of repo folder names).
+
+- **Ignored ≠ not-affected** — out-of-scope repos carry no classification and never appear as `not-affected`; the report states them ("N repos out of scope by config: …", or include-mode's count), and `scan-estate.v1.json` names every observed out-of-scope repo. Never silently dropped.
+- **Applies at discovery** — scan loop, `ingest --scans-root`, and `ownership` discovery all filter by scope; excluded children still register for alternate-snapshot detection (excluding `svc` cannot let `svc-net48` sneak in). Explicit scan dirs are deliberate acts — warned, never filtered.
+- **Config contradictions are typed errors** — a name in both include and exclude, or `include: []` beside an exclude list, refuses rather than guessing. One shared validator: the same malformed file produces the same message at every surface.
 
 ## 1. Ingest — `ua ingest`
 
@@ -36,8 +54,9 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 
 ## 4. Reporting — `ua report`
 
-- Markdown rendering of the plan: summary, waves with prerequisites/conditions, a repositories table (classification, ownership, action, evidence kinds, confidence, reasons), uncertainty (contradictions, gaps, findings), and **Scan notes** (compile/build health — visible, informational, never blocking).
+- Markdown rendering of the plan: summary (including the scope statement when a scope config is in play), waves with prerequisites/conditions, a repositories table (classification, ownership, action, evidence kinds, confidence, reasons), uncertainty (contradictions, gaps, findings), and **Scan notes** (compile/build health — visible, informational, never blocking).
 - Escaping by construction — adversarial strings cannot forge tables or headings.
+- **`--out <file>` on plan and report** — canonical bytes written directly to the file, byte-identical to redirected stdout (UTF-8, no BOM): the cure for Windows PowerShell 5.1, where plain `>` and even `Out-File -Encoding utf8` mangle or BOM the UTF-8 `→`/`—`. A flag without a value is a typed error, never a silent stdout fallback.
 
 ## 5. Apply — `ua apply` (dry-run edit generation)
 
@@ -64,5 +83,5 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 ## 7. Engineering guarantees
 
 - **Zero dependencies** — a .NET 10 console tool with no NuGet packages; runs offline on macOS, Linux, and Windows (verified on an isolated, network-disabled Windows machine).
-- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-015`); the fixture corpus (23 goldens) pins behaviors byte-exactly, including real scan data; the 100-case selftest covers goldens, input-permutation invariance, and every typed refusal.
+- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-017`); the fixture corpus (24 goldens) pins behaviors byte-exactly, including real scan data; the 117-case selftest covers goldens, input-permutation invariance, and every typed refusal.
 - **Fidelity discipline** — golden changes require recorded, reviewed reasons (`docs/reviews/*/GOLDEN-CHANGES.md`); nothing is silently regenerated.

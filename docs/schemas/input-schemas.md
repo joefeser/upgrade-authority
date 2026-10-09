@@ -29,4 +29,8 @@ Golden fixtures under `fixtures/` consume exactly these five input shapes. All f
    `{ schemaVersion: "lockfile-rows.v2", repos: [ { repo, rows: [ <v1 row shape> ] } ] }`
    Row shape and rules are exactly v1 (§5a) applied per repo. `repos[]` sorted by repo name (ordinal); duplicate repo entries and empty `repos` are typed errors; two lockfile files of different versions present in one input dir is a typed error.
 
-Output contract: **`plan.schema.v1.json`** (JSON Schema 2020-12) — every golden `golden/plan.json` validates against it. SPEC-007 adds the optional `uncertainty.findings[]` array (`{ subject, detail }`, emitted only when non-empty).
+6. **`scope.v0.json`** (SPEC-017 §3, optional) — the estate scope declaration (operator-authored or copied verbatim by `ua ingest --scope`):
+   `{ schemaVersion: "estate-scope.v0", include?: [ repo-folder-names ], exclude?: [ repo-folder-names ] }`
+   Names are repo checkout folder names (= scan dir names); matching is exact, case-sensitive (ordinal). `include` present ⇒ only listed repos are in scope; `exclude` always subtracts; a name in both ⇒ typed error. Absent/empty arrays are dropped — a scope that validates to nothing behaves exactly like no scope input (no plan `scope` field, no report line). **Ignored ≠ not-affected**: out-of-scope repos carry no classification and appear as the report's scope statement (mode + include count + exclude names) — never as `not-affected`, never silently absent.
+
+Output contract: **`plan.schema.v1.json`** (JSON Schema 2020-12) — every golden `golden/plan.json` validates against it. SPEC-007 adds the optional `uncertainty.findings[]` array (`{ subject, detail }`, emitted only when non-empty). SPEC-017 adds the optional `scope` object (after `repos`; key order `mode`, `includedCount?`, `outOfScope?` — the config echo, deduped + ordinal).

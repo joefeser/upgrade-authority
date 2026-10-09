@@ -70,12 +70,22 @@ public static class Ingest
         return f.Repo ?? manifest?.RepoName ?? "unknown";
     }
 
-    public static int Run(string[] scanDirs, string outDir, string? producerPath, string? ownershipPath, string? deltaPath, string? scansRoot = null)
+    public static int Run(string[] scanDirs, string outDir, string? producerPath, string? ownershipPath, string? deltaPath, string? scansRoot = null, string? scopePath = null)
     {
         var ingestGaps = new List<string>(); // stderr warnings (flat)
         var repoIngestGaps = new List<(string Key, string Value)>(); // per-repo coverage gaps
         var estateIngestGaps = new List<string>(); // estate-wide (missing sidecars, etc.)
         var repoIngestNotes = new List<(string Key, string Value)>(); // per-repo coverage NOTES (SPEC-015: informational, never affect status)
+        // SPEC-017 §3: --scope — validated by the one shared validator; explicit dirs are deliberate
+        // acts and are never filtered (warned instead), discovery children are skipped but still
+        // register their repo name for alternate-snapshot detection (excluding svc must not let
+        // svc-net48 sneak in as the "first" snapshot).
+        var (scope, scopeRc) = Scope.LoadForCli(scopePath);
+        if (scopeRc != 0) return scopeRc;
+        if (scope is not null)
+            foreach (var d in scanDirs)
+                if (!Scope.IsInScope(Path.GetFileName(d.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), scope))
+                    Console.Error.WriteLine($"warning: {Path.GetFileName(d)} is out of scope by config — included because explicit");
         // SPEC-011 --scans-root: depth-1 discovery of child scan dirs (facts.ndjson present), name-ordered;
         // manifest-only children warn and are skipped; union with explicit dirs deduped by resolved path.
         if (scansRoot is not null)
@@ -92,6 +102,15 @@ public static class Ingest
             foreach (var child in Directory.GetDirectories(root).OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal))
             {
                 if (explicitSet.Contains(CanonicalDirPath(child))) continue;
+                var childName = Path.GetFileName(child);
+                if (IsSwapDir(childName)) { Console.Error.WriteLine($"note: {childName} ignored (scan-estate swap leftover, not a scan)"); continue; } // SPEC-017: .name.tmp-*/.name.old-* are never discovered; arbitrary dot-named scans stay discoverable (SPEC-011 contract, PR #2 Baz round 1)
+                if (scope is not null && !Scope.IsInScope(childName, scope))
+                {
+                    var rnX = TryReadRepoName(child);
+                    if (rnX is not null) seenRepoNames.Add(rnX); // excluded children still register for alternate detection
+                    Console.Error.WriteLine($"note: {childName} skipped by discovery (out of scope by config)");
+                    continue;
+                }
                 // An alternate snapshot of an already-discovered repo is not silently combinable —
                 // combining two commits of one repo is a deliberate act (explicit dirs), never discovery.
                 var rn = TryReadRepoName(child);
@@ -99,6 +118,8 @@ public static class Ingest
                 { Console.Error.WriteLine($"note: {Path.GetFileName(child)} skipped by discovery (alternate snapshot of '{rn}' — pass it explicitly to combine deliberately)"); continue; } // run-level discovery decision — stderr only (routing it into coverage notes would break SPEC-011 byte-equality: the explicit-dirs equivalent run has no such event)
                 if (File.Exists(Path.Combine(child, "facts.ndjson")))
                 {
+                    if (File.Exists(Path.Combine(child, "scope.v0.json")))
+                        Console.Error.WriteLine($"note: scope.v0.json found in scan dir {Path.GetFileName(child)} — ignored (pass --scope <file> explicitly; a stray file in a scan dir must not speak for the run)");
                     scanDirs = scanDirs.Append(child).ToArray();
                     var repoName = TryReadRepoName(child);
                     if (repoName is not null) seenRepoNames.Add(repoName);
@@ -497,6 +518,7 @@ public static class Ingest
             Path.Combine(inputDir, "ownership.v0.json"), "ownership.v0", ingestGaps);
         if (oResult != 0) return oResult;
         File.Copy(deltaFile, Path.Combine(inputDir, "delta.json"), true);
+        if (scopePath is not null) File.Copy(scopePath, Path.Combine(inputDir, "scope.v0.json"), true); // SPEC-017: verbatim copy; the flag's bytes win
 
 
 
@@ -519,6 +541,24 @@ public static class Ingest
         finally { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); }
         Console.Error.WriteLine($"ingested: {evidence.Values.Sum(v => v.Count)} consumer facts, {lockfiles.Values.Sum(v => v.Count)} lockfile rows, {repoKeys.Count} repos → {outDir}");
         return 0;
+    }
+
+    // SPEC-017: scan-estate's atomic-swap siblings (.name.tmp-xxxxxxxx / .name.old-xxxxxxxx — 8 hex).
+    // Deliberately NARROW: the rule exists to hide swap leftovers, not to redefine which children are
+    // scans — a dot-named child with facts.ndjson is still a scan per SPEC-011 (PR #2 Baz round 1).
+    // Each marker is tested INDEPENDENTLY: a repo named foo.tmp-copy leaves .foo.tmp-copy.old-deadbeef,
+    // and stopping at the embedded .tmp- would miss the real .old- suffix (PR #2 Codex P2).
+    internal static bool IsSwapDir(string name)
+    {
+        if (!name.StartsWith('.')) return false;
+        return MatchesSwapMarker(name, ".tmp-") || MatchesSwapMarker(name, ".old-");
+        static bool MatchesSwapMarker(string name, string marker)
+        {
+            var idx = name.LastIndexOf(marker, StringComparison.Ordinal);
+            if (idx < 0) return false;
+            var suffix = name[(idx + marker.Length)..];
+            return suffix.Length == 8 && suffix.All(Uri.IsHexDigit);
+        }
     }
 
     // repoName from a scan dir's manifest, if readable — for alternate-snapshot detection during discovery.

@@ -24,7 +24,7 @@ dotnet build src/UpgradeAuthority    # ~5s, zero packages, no network needed aft
 function ua { dotnet run --project src/UpgradeAuthority -- @args }   # optional convenience (PowerShell; bash is ua() { ... "$@"; })
 ```
 
-**No-build option:** a self-contained single-file binary also works (verified; the suite is now 100 cases) —
+**No-build option:** a self-contained single-file binary also works (verified; the suite is now 117 cases) —
 `dotnet publish src/UpgradeAuthority -c Release -r win-x64 --self-contained -p:PublishSingleFile=true`,
 then run `ua.exe` directly. Note `selftest` needs the repo checkout beside it (it reads
 `fixtures/` and `testdata-ingest/`); plan/report/apply/push/ingest only need their own arguments.
@@ -83,13 +83,45 @@ ua push .. (again)                                     # -> error: branch exists
 
 ```
 dotnet test isn't used — the tool self-checks:
-ua selftest        # expect: SELFTEST PASS (100 cases)
-node tools/validate-fixtures.mjs   # expect: ALL GOLDENS PASS (23)  [needs node; skip if absent]
+ua selftest        # expect: SELFTEST PASS (117 cases)
+node tools/validate-fixtures.mjs   # expect: ALL GOLDENS PASS (24)  [needs node; skip if absent]
 ```
 
 ## 4. Real estate (optional, the exciting one)
 
 **Coming from a folder of repo checkouts? ua never reads repos directly — tracemap is the scanner.**
+
+### Step 0 — the one-command path (`ua scan-estate`, new)
+
+Everything in Steps 1–3 below, in one command — with a freshness precondition (every repo verified
+at its origin trunk tip after a fetch, or visibly skipped) and SHA-cached scans (re-runs rescan only
+repos that moved; the scans folder IS the cache):
+
+```powershell
+# build tracemap ONCE (not per run — scan-estate invokes the dll directly):
+dotnet build C:\path\to\tracemap\src\dotnet\TraceMap.Cli -c Release
+$cli  = "C:\path\to\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+$root = "C:\path\to\repos"
+
+ua scan-estate --repos-root $root --out C:\ua-estate --tracemap $cli --self team-a `
+  --delta-package Newtonsoft.Json --delta-old 12.0.3 --delta-new 13.0.3
+# add --exclude "SqlMigrations/**" (repeatable, tracemap pass-through) for noisy folders
+# repos behind origin are skipped with a reason (--allow-stale to scan them anyway)
+# every run writes C:\ua-estate\report.md + plan.json + scan-estate.v1.json (the skip record)
+```
+
+First run: sidecars are bootstrapped (`ownership.v0.json` all-self, minimal producer listing the
+delta target, delta template). **Then own them**: hand-edit team assignments and swap in your real
+delta — existing files are never overwritten on re-runs; ownership grows via `update`. Some repos
+you don't care about? `--scope C:\ua-estate\scope.v0.json` with
+`'{"schemaVersion":"estate-scope.v0","exclude":["repo-i-dont-care-about"]}' | Out-File ... -Encoding utf8` —
+excluded repos appear in the report's scope statement, never silently dropped.
+
+Also new: `ua plan --out C:\ua-estate\plan.json` / `ua report --out C:\ua-estate\report.md` write
+canonical bytes directly — no more `[Console]::OutputEncoding` dance, no BOM from `Out-File`.
+
+The manual equivalent (Steps 1–3 below) remains the explicit path and the reference for what the
+wrapper does.
 
 ### Step 1 — scan your repos (SKIP if `C:\ua-estate\scans` is already populated)
 
