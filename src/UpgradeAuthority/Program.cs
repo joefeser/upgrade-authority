@@ -2009,6 +2009,11 @@ public static class Program
             if (scpUnder15.Contains("secret-token") || scpUnder15.Contains("my_ghe") || !scpUnder15.Contains("***@***:")) throw new Exception($"underscore alias not fully scrubbed: {scpUnder15}");
             var dotted15 = ScanEstate.TrimReason("fatal: 'user:pat@git.internal: Could not read'");
             if (!dotted15.Contains("***@git.internal:")) throw new Exception($"dotted host must survive (diagnostic value): {dotted15}");
+            // Codex r5: scheme-form URLs with dotless hosts mask too (path/end terminators, not just scp ':')
+            var schemeDotless15 = ScanEstate.TrimReason("fatal: unable to access 'ssh://token@ghe/org/repo.git/': auth failed");
+            if (schemeDotless15.Contains("token") || schemeDotless15.Contains("@ghe") || !schemeDotless15.Contains("***@***/")) throw new Exception($"scheme-form dotless host not fully masked: {schemeDotless15}");
+            var httpsDotless15 = ScanEstate.TrimReason("fatal: unable to access 'https://PAT@intranet/org/repo.git/': denied");
+            if (httpsDotless15.Contains("PAT") || httpsDotless15.Contains("@intranet") || !httpsDotless15.Contains("***@***/")) throw new Exception($"https dotless host not fully masked: {httpsDotless15}");
             // Codex P2: IsSwapDir tests BOTH markers independently (embedded .tmp- in a repo name
             // must not mask a real .old-<hex8> suffix)
             if (!Ingest.IsSwapDir(".foo.tmp-copy.old-deadbeef")) throw new Exception("embedded .tmp- masked the .old- marker");

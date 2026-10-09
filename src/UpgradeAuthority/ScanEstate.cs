@@ -376,9 +376,10 @@ public static class ScanEstate
         // A masked SINGLE-LABEL host (`***@ghe:`) would still name the internal alias, and it rides
         // both the manifest and sanitized stderr (Redact.UrlRe doesn't parse the masked form — PR #2
         // Baz r4); single-label hosts are exactly what the redactor treats as sensitive, so mask them
-        // too. Dotted hosts keep their diagnostic value (the credential was the userinfo).
+        // too — in scp form (terminated by :) AND scheme form (terminated by / ? # or end — PR #2
+        // Codex r5). Dotted hosts keep their diagnostic value (the credential was the userinfo).
         scrubbed = System.Text.RegularExpressions.Regex.Replace(scrubbed,
-            @"(\*\*\*@)(?![a-zA-Z0-9_\-]*\.)([a-zA-Z0-9_\-]+):", "$1***:");
+            @"(\*\*\*@)(?![a-zA-Z0-9_\-]*\.)([a-zA-Z0-9_\-]+)(?=[:/?#]|$)", "$1***");
         return scrubbed.Length <= 200 ? scrubbed : scrubbed[..200];
         return scrubbed.Length <= 200 ? scrubbed : scrubbed[..200];
     }

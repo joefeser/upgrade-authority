@@ -75,3 +75,11 @@ Verification method fixed for good: full comment-set inventory by ID, no timesta
 | Bz | The masked form `***@ghe:` still names the internal alias — it rides the manifest and bypasses `Redact.UrlRe` in sanitized stderr | medium | **Accepted** | Single-label (dotless) hosts after a mask are masked too: `token@ghe:org/repo` → `***@***:org/repo`; dotted hosts keep their diagnostic value (`***@git.internal:` unchanged — the credential was the userinfo). Pinned in selftest |
 
 Baz re-review of round 3: single-label fix confirmed addressed in-thread, check pass (7m13s).
+
+## Round 5 — scrub terminator (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C5 | **Codex P2**: scheme-form URLs with dotless hosts (`ssh://token@ghe/org/repo.git`) kept the alias — the dotless mask only fired on the scp `:` terminator, not `/`/`?`/`#`/end | P2 | **Accepted** | Mask terminators broadened to `[:/?#]|$`; scheme-form dotless cases (ssh + https) pinned |
+
+Baz re-review of round 4: both fixes confirmed addressed in-thread, check pass (5m10s).
