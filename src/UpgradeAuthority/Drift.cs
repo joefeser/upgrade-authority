@@ -80,7 +80,7 @@ public static class Drift
         if (!File.Exists(path)) return (null, $"--feed file not found: {path}", 1);
         FeedFile? raw;
         try { raw = JsonSerializer.Deserialize<FeedFile>(File.ReadAllText(path), Opts); }
-        catch (JsonException ex) { return (null, $"feed file {Path.GetFileName(path)}: invalid JSON ({ex.Message})", 5); }
+        catch (JsonException ex) { return (null, $"feed file {Esc(Path.GetFileName(path))}: invalid JSON ({ex.Message})", 5); } // basename is untrusted on unix (PR #3 Codex r4)
         return Validate(raw, Path.GetFileName(path));
     }
 
@@ -263,6 +263,10 @@ public static class Drift
             }
             if (latestById.TryGetValue(g.Key, out var latestForCounts)) pkg.Latest = latestForCounts;
             pkg.Installations = pkg.Installations.OrderBy(i => i.Repo, StringComparer.Ordinal).ThenBy(i => i.Version, StringComparer.Ordinal).ToList();
+            pkg.Statuses["behind"] = pkg.Installations.Count(i => i.Status == "behind"); // in-process consumers see the same counts Write emits (PR #3 Baz r4)
+            pkg.Statuses["current"] = pkg.Installations.Count(i => i.Status == "current");
+            pkg.Statuses["ahead"] = pkg.Installations.Count(i => i.Status == "ahead");
+            pkg.Statuses["unclassified"] = pkg.Installations.Count(i => i.Status == "unclassified");
         }
 
         return new DriftReport
