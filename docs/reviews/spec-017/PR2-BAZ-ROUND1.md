@@ -21,3 +21,16 @@ Per doctrine §5: Baz findings enter triage severity-first; dismissals carry rec
 above. Selftest 116 → 117 cases (`scan-estate-baz-round1`); cases 11/12 extended to pin the narrowed
 swap rule (`.dotscan` WITH facts stays discoverable; `.planted.tmp-1234abcd` ignored) and the
 tolerant excluded-broken-child path.
+
+## Verification (2026-10-09, post-fix head 964c2c5)
+
+- **Codex**: first pass (06:14 against the pre-fix head) completed with **zero findings posted** —
+  the "did not report resolved" state was an unfinished-looking summary, not open issues. Re-triggered
+  on the fixed head after the patch landed: **completed, zero findings** (no comments, no inline notes).
+- **Baz round 2** (auto re-review of the fix commit): **pass in 7m10s, zero new inline findings** —
+  all seven fixes accepted implicitly, both dismissals not contested.
+- CI (build + 117-case selftest + validator 24 + public-clean): green.
+
+Zero open blockers/majors across the full reviewer set — the implementation review is converged
+(doctrine §2). PR #2 awaits Joe's work-machine verification, then ONE merge to public main + one
+sync commit to private dev.
