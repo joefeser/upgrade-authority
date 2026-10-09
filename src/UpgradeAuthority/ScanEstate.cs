@@ -258,7 +258,7 @@ public static class ScanEstate
             }
             // build freshness + fingerprint (in-place: computed here; worktree: none now, recorded after build/scan)
             var freshnessNow = worktreeMode ? (build && indexDepsJson ? "fresh-by-build" : "none") : ComputeBuildFreshness(repoPath, headSha, indexDepsJson);
-            var fingerprintNow = worktreeMode ? null : DepsFingerprint(repoPath); // recorded from the worktree at scan time instead
+            var fingerprintNow = worktreeMode || !indexDepsJson ? null : DepsFingerprint(repoPath); // C20 r7: no deps indexing => no build-output skip key (a local rebuild must not rescan a source-only scan); worktree records at scan time instead
             CacheMeta? meta = null;
             if (hasManifest && hasFacts && File.Exists(Path.Combine(scanDir, "scan-estate.json")))
             {

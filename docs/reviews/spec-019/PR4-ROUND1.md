@@ -62,3 +62,11 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 |---|---|---|---|---|
 | C18 | Identity normalization used string replace on spaced JSON — real tracemap facts are COMPACT; satellite name survived | **P1** | **Accepted** | Parse-and-rewrite (per-line JsonNode for facts; whole-doc for the manifest); unparseable lines stand as scanned |
 | C19 | SafeIterate leaked its manually owned enumerator; acquisition failures bypassed markTruncated | medium | **Accepted** | try/finally disposal on every exit; acquisition routed through markTruncated |
+
+## Round 7 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C20 | Fingerprint computed/compared without `--index-deps-json` — source-only scans rescan on local rebuilds; sentinel blocked default reuse | P2 | **Accepted** | Fingerprint only when deps indexing is on (null otherwise — matches null) |
+| C21 | The "predates the current commit" reason fired for absent/none freshness — a timestamp claim with no comparison behind it | P2 | **Accepted** | Fires only on a recorded `stale` verdict |
+| C22 | Build-failure skip reasons discarded stderr | P2 | **Accepted** | First stderr line through TrimReason (scrubbed, capped) in both branches |

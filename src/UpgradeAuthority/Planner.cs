@@ -644,7 +644,7 @@ public sealed class Engine
             e.ActionType = "unknown";
             // SPEC-019 §5.3: a stale build-resolved closure names both sides (HEAD commit vs build) —
             // it can neither prove exposure (no rule-c edge) nor safety (no closure credit)
-            if (LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo))) // SPEC-019 §5.3: a stale build-resolved closure is WHY this repo is unknown — name both sides
+            if (_depsFreshness.GetValueOrDefault(repo) == "stale" && LockOf(repo).Any(r => r.Provenance is not null)) // C21 r7: the predates-commit claim requires a RECORDED stale verdict — absence/none is uncertainty, never a timestamp claim
                 e.Reasons.Add("build evidence stale: deps.json closure predates the current commit — neither exposure nor safety can be proven from it");
             e.Reasons.Add("classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence");
             kinds.Add("package-evidence.v0");
