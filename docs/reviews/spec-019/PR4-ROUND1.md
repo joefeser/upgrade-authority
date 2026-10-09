@@ -137,3 +137,11 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | C43 | `Reason ??=` dropped the missing-scanner cause when a rescue had already set a reason | P2 | **Accepted** | Append (rescue provenance preserved AND the cause present) |
 | C44 | `"repo": null` freshness entries crashed TryGetValue before the typed check | P2 | **Accepted** | Null/empty checked first (UaException) |
 | Baz | `manifestSha256: null` provenance crashed `.Length`; malformed/legacy provenance shapes undefined | medium | **Accepted** | Load-time fail-closed: an incomplete provenance object is a typed row error (all-or-nothing); the gate also uses IsNullOrEmpty |
+
+
+## CONVERGENCE (2026-10-09, head 56f10d3)
+
+Round-15 delta review: **zero new findings** (Codex completed clean; Baz confirmed round-14 in-thread).
+Finding decay across the loop: 2×P1+2×P2 → 2×P1+3×P2 → P1+4×P2 → 3×P2 → 8 → 6 → 4 → 6 → 4 → 6 → 5 → **0** —
+every finding fixed or dismissed with a receipt across 15 rounds. Doctrine §2: zero open blockers/majors.
+PR #4 awaits Joe's work-machine verification → merge → dev fast-forward.
