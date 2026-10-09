@@ -1,0 +1,23 @@
+# SPEC-017 implementation PR #2 — Baz round 1 triage (2026-10-09)
+
+**Context:** Baz posted 9 inline findings on public PR #2 at 2026-10-08 23:52 (after the spec-review
+records closed — this is the *implementation* round). Codex was tagged by Joe at 06:08 on 2026-10-09
+and was still "Running" at re-validation time; its findings, when they land, are the next delta.
+Per doctrine §5: Baz findings enter triage severity-first; dismissals carry receipts.
+
+| # | Baz finding (file:line) | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| 1 | `DefaultRunner` reads stdout to EOF before stderr — a verbose tracemap fills the undrained pipe and deadlocks the estate loop | **high** | **Accepted** | Both streams drained concurrently (`ReadToEndAsync` × 2 before `WaitForExit`) |
+| 2 | Failed/empty `remote get-url origin` becomes the `""` dedupe key — every URL-less repo falsely "alternate" of the first | medium | **Accepted** | URL must resolve and normalize non-empty, else visible skip: `origin remote has no usable URL…` (§4.2 wording updated; selftest) |
+| 3 | `fetch failed: <stderr>` persists credential-bearing URLs into `scan-estate.v1.json` (a file artifact `--sanitized` never transforms) | medium | **Accepted** | Userinfo scrubbed at the SOURCE, unconditionally, in `TrimReason` (`scheme://user:pass@` and scheme-less `user:pass@host` → `***@`), before cap/persist (§4.1 F3 updated; selftest) |
+| 4 | `--delta-old`/`--delta-new` silently ignored when `delta.json` exists (only `--delta-package` warned) | medium | **Accepted** | Warning now names EVERY `--delta-*` flag present: `existing delta.json wins (--delta-package --delta-old --delta-new ignored)` — matches §4.3 as written (selftest) |
+| 5 | plan.schema accepts `includedCount` in exclude mode; implementation + validator forbid it | medium | **Accepted** | Schema gains the exclude-mode `not required includedCount` branch (lockstep with `BuildScope`/validator) |
+| 6 | An EXCLUDED broken child (manifest-only) aborts scoped `ownership init/update` — `EnumerateRepoKeysChecked` ran before the scan-shape guard | medium | **Accepted** | Excluded branch registers alternates only for real scans (`facts.ndjson` present); a broken excluded child warns, never aborts (§3 updated; selftest) |
+| 7 | Broad dot-prefix skip breaks SPEC-011's contract (a dot-named child WITH `facts.ndjson` is a scan) | medium | **Accepted (narrowed)** | Rule now matches ONLY the swap patterns `.name.tmp-<8hex>`/`.name.old-<8hex>` (`Ingest.IsSwapDir`); arbitrary dot-named scans stay discoverable (§3 + §7.4 reworded; selftest pins both directions) |
+| 8 | Adding `scopePath` breaks compiled callers (`MissingMethodException`) — add legacy overloads | medium | **Dismissed (receipt)** | This repo is a self-contained console app, not a library: `Ingest.Run`/`Ownership.Init/Update`/`Engine` have no external compiled consumers (no NuGet package published; the only callers — `Program`/selftest — compile in-tree with every build; the new parameters are optional with defaults). Receipt: `dotnet build` + full 117-case selftest green on the exact tree |
+| 9 | Scoped plans still labeled `plan.v1` — bump the schemaVersion for the new `scope` property | medium | **Dismissed (receipt)** | Optional-additive fields under an unchanged schemaVersion are this project's established, reviewed policy: `uncertainty.findings` (SPEC-007), `scanNotes` (SPEC-015), `delta.origin` (SPEC-012). `scope` follows it: optional, omitted without a scope input (every pre-SPEC-017 golden is byte-identical — the corpus is the receipt), schema + canonicalizer updated in lockstep, zero external consumers of the schema |
+
+**Result:** 7 accepted → fixed in one consolidated pass (this commit); 2 dismissed with receipts
+above. Selftest 116 → 117 cases (`scan-estate-baz-round1`); cases 11/12 extended to pin the narrowed
+swap rule (`.dotscan` WITH facts stays discoverable; `.planted.tmp-1234abcd` ignored) and the
+tolerant excluded-broken-child path.

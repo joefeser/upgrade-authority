@@ -163,12 +163,18 @@ public static class Ownership
         foreach (var child in Directory.GetDirectories(Path.GetFullPath(scansRoot)).OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal))
         {
             var childName = Path.GetFileName(child);
-            if (childName.StartsWith('.')) { Console.Error.WriteLine($"note: {childName} ignored (dot-prefixed — swap/temp dir, not a scan)"); continue; }
+            if (Ingest.IsSwapDir(childName)) { Console.Error.WriteLine($"note: {childName} ignored (scan-estate swap leftover, not a scan)"); continue; }
             if (scope is not null && !Scope.IsInScope(childName, scope))
             {
-                var (xkeys, xerr) = Ingest.EnumerateRepoKeysChecked(new[] { child });
-                if (xerr is not null) { Console.Error.WriteLine($"error: {xerr}"); return null; }
-                foreach (var k in xkeys) seenKeys.Add(k); // excluded children still register for alternate detection
+                // Register alternates only for real scans (facts.ndjson present); a broken EXCLUDED child
+                // warns and moves on — an out-of-scope directory must never abort the whole run, matching
+                // the unscoped path's warn-and-skip (PR #2 Baz round 1).
+                if (File.Exists(Path.Combine(child, "facts.ndjson")))
+                {
+                    var (xkeys, xerr) = Ingest.EnumerateRepoKeysChecked(new[] { child });
+                    if (xerr is not null) Console.Error.WriteLine($"warning: excluded {childName}: {xerr} — not registered for alternate detection");
+                    else foreach (var k in xkeys) seenKeys.Add(k); // excluded children still register for alternate detection
+                }
                 Console.Error.WriteLine($"note: {childName} skipped by discovery (out of scope by config)");
                 continue;
             }

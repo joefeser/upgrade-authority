@@ -1793,15 +1793,19 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-refusals: {ex.Message}"); }
 
-        // 11. ingest --scope discovery: excluded child skipped, svc-net48 alternate-blocked, explicit wins, dot-children ignored
+        // 11. ingest --scope discovery: excluded child skipped, svc-net48 alternate-blocked, explicit wins,
+        //     swap leftovers ignored while dot-named REAL scans stay discoverable (SPEC-011 contract)
         try
         {
             var rich11 = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
             var root11 = Path.Combine(Path.GetTempPath(), "ua-se11-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(Path.Combine(rich11, "scans"), root11);
-            Directory.CreateDirectory(Path.Combine(root11, ".planted"));
-            File.WriteAllText(Path.Combine(root11, ".planted", "facts.ndjson"),
-                "{\"factId\":\"f-dot\",\"scanId\":\"s\",\"repo\":\"dotplanted\",\"commitSha\":\"c\",\"factType\":\"PackageReferenced\",\"ruleId\":\"project.file.v1\",\"evidenceTier\":\"Tier2Structural\",\"evidence\":{\"filePath\":\"a.csproj\",\"startLine\":1,\"endLine\":1},\"properties\":{\"ecosystem\":\"nuget\",\"manifestKind\":\"packagereference\",\"packageName\":\"Newtonsoft.Json\",\"version\":\"12.0.3\"}}\n");
+            string DotFact(string repo, string id) =>
+                $"{{\"factId\":\"{id}\",\"scanId\":\"s\",\"repo\":\"{repo}\",\"commitSha\":\"c\",\"factType\":\"PackageReferenced\",\"ruleId\":\"project.file.v1\",\"evidenceTier\":\"Tier2Structural\",\"evidence\":{{\"filePath\":\"a.csproj\",\"startLine\":1,\"endLine\":1}},\"properties\":{{\"ecosystem\":\"nuget\",\"manifestKind\":\"packagereference\",\"packageName\":\"Newtonsoft.Json\",\"version\":\"12.0.3\"}}}}\n";
+            Directory.CreateDirectory(Path.Combine(root11, ".planted.tmp-1234abcd")); // swap-pattern leftover WITH facts
+            File.WriteAllText(Path.Combine(root11, ".planted.tmp-1234abcd", "facts.ndjson"), DotFact("planted", "f-swap"));
+            Directory.CreateDirectory(Path.Combine(root11, ".dotscan")); // dot-named REAL scan — SPEC-011 says discover it
+            File.WriteAllText(Path.Combine(root11, ".dotscan", "facts.ndjson"), DotFact("dotscan", "f-dot"));
             var scope11 = Path.Combine(Path.GetTempPath(), "ua-se11-scope.json");
             File.WriteAllText(scope11, "{\"schemaVersion\":\"estate-scope.v0\",\"exclude\":[\"svc\"]}\n");
             var out11 = Path.Combine(Path.GetTempPath(), "ua-se11-out-" + Guid.NewGuid().ToString("N")[..8]);
@@ -1813,7 +1817,8 @@ public static class Program
             var repos11 = px11.GetProperty("scanCoverage").EnumerateArray().Select(c => c.GetProperty("repo").GetString()).ToList();
             if (repos11.Contains("svc")) throw new Exception("svc must be out of scope");
             if (repos11.Contains("svc-net48")) throw new Exception("excluding svc must not let svc-net48 sneak in as the first snapshot");
-            if (repos11.Contains("dotplanted")) throw new Exception("dot-prefixed child must be ignored at discovery");
+            if (repos11.Contains("planted")) throw new Exception("swap-pattern leftover (.planted.tmp-1234abcd) must be ignored at discovery");
+            if (!repos11.Contains("dotscan")) throw new Exception("dot-named scan WITH facts.ndjson must stay discoverable (SPEC-011 contract)");
             if (!File.Exists(Path.Combine(out11, "input", "scope.v0.json"))) throw new Exception("scope file not copied to input");
             // explicit out-of-scope dir: warns but includes (deliberate act)
             var out11b = Path.Combine(Path.GetTempPath(), "ua-se11-out2-" + Guid.NewGuid().ToString("N")[..8]);
@@ -1824,25 +1829,28 @@ public static class Program
             var repos11b = JsonDocument.Parse(File.ReadAllText(Path.Combine(out11b, "input", "package-evidence.v0.json"))).RootElement
                 .GetProperty("scanCoverage").EnumerateArray().Select(c => c.GetProperty("repo").GetString()).ToList();
             if (!repos11b.Contains("svc")) throw new Exception("explicit dir must be included despite scope");
-            Console.WriteLine("ok   ingest-scope-discovery (excluded + alternate-blocked + dot-ignored + explicit wins)"); pass++;
+            Console.WriteLine("ok   ingest-scope-discovery (excluded + alternate-blocked + swap-ignored + .dotscan discovered + explicit wins)"); pass++;
             ForceDelete(root11); ForceDelete(out11); ForceDelete(out11b); File.Delete(scope11);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ingest-scope-discovery: {ex.Message}"); }
 
-        // 12. ownership --scope: excluded child skipped (alternate-blocked too)
+        // 12. ownership --scope: excluded child skipped (alternate-blocked too); an excluded BROKEN
+        //     child (manifest-only) warns, never aborts the run
         try
         {
             var rich12 = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
             var root12 = Path.Combine(Path.GetTempPath(), "ua-se12-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(Path.Combine(rich12, "scans"), root12);
+            Directory.CreateDirectory(Path.Combine(root12, "brokenx"));
+            File.WriteAllText(Path.Combine(root12, "brokenx", "scan-manifest.json"), "{}"); // excluded + not a valid scan
             var scope12 = Path.Combine(Path.GetTempPath(), "ua-se12-scope.json");
-            File.WriteAllText(scope12, "{\"schemaVersion\":\"estate-scope.v0\",\"exclude\":[\"svc\"]}\n");
+            File.WriteAllText(scope12, "{\"schemaVersion\":\"estate-scope.v0\",\"exclude\":[\"svc\",\"brokenx\"]}\n");
             var own12 = Path.Combine(Path.GetTempPath(), "ua-se12-own.json");
-            if (Ownership.Init(Array.Empty<string>(), root12, "team-a", "all-self", null, own12, scope12) != 0) throw new Exception("scoped ownership init failed");
+            if (Ownership.Init(Array.Empty<string>(), root12, "team-a", "all-self", null, own12, scope12) != 0) throw new Exception("scoped ownership init failed (excluded broken child must not abort)");
             var text12 = File.ReadAllText(own12);
             if (text12.Contains("svc")) throw new Exception("svc must be excluded from ownership");
             if (!text12.Contains("billing")) throw new Exception("billing must remain");
-            Console.WriteLine("ok   ownership-scope-discovery (excluded child skipped)"); pass++;
+            Console.WriteLine("ok   ownership-scope-discovery (excluded child skipped; excluded broken child tolerates)"); pass++;
             ForceDelete(root12); File.Delete(own12); File.Delete(scope12);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ownership-scope-discovery: {ex.Message}"); }
@@ -1933,6 +1941,55 @@ public static class Program
             Directory.Delete(inc14, true); Directory.Delete(Path.GetDirectoryName(bad14)!, true);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scope-plan-statement: {ex.Message}"); }
+
+        // 15. PR #2 Baz round 1: empty origin URL never becomes the dedupe key; ALL --delta-* flags
+        //     warn (not just --delta-package); persisted failure reasons scrub URL userinfo
+        try
+        {
+            // empty origin URL: F2 passes (origin listed), the URL lookup yields "" -> visible skip, never "" dedupe
+            var root15 = Path.Combine(Path.GetTempPath(), "ua-se15-" + Guid.NewGuid().ToString("N")[..8]);
+            var out15 = Path.Combine(Path.GetTempPath(), "ua-se15-out-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(Path.Combine(root15, "repos"));
+            var e1_15 = EstateRepo(root15, "alpha");
+            EstateRepo(root15, "beta");
+            Push.Git(e1_15, "remote set-url origin \"\"", out _, out _); // origin exists, URL empty
+            var rc15 = ScanEstate.Run(Path.Combine(root15, "repos"), out15, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner);
+            if (rc15 != 0) throw new Exception($"beta is fresh — run must succeed despite alpha's broken origin URL (exit {rc15})");
+            using (var m15 = SEManifest(out15))
+            {
+                var a15 = m15.RootElement.GetProperty("repos").EnumerateArray().First(e => e.GetProperty("name").GetString() == "alpha");
+                if (a15.GetProperty("status").GetString() != "skipped" || !a15.GetProperty("reason").GetString()!.Contains("no usable URL"))
+                    throw new Exception($"empty-origin skip wrong: {a15.GetRawText()}");
+                if (!m15.RootElement.GetProperty("repos").EnumerateArray().Any(e => e.GetProperty("name").GetString() == "beta" && e.GetProperty("status").GetString() == "scanned"))
+                    throw new Exception("beta must scan normally");
+            }
+
+            // all three --delta-* flags warn when an existing delta wins (none silently dropped);
+            // --delta-package matches the existing target so the mismatch refusal stays out of the way
+            var out15b = Path.Combine(Path.GetTempPath(), "ua-se15-out2-" + Guid.NewGuid().ToString("N")[..8]);
+            if (ScanEstate.Run(Path.Combine(root15, "repos"), out15b, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner) != 0)
+                throw new Exception("seed run failed");
+            Push.Git(e1_15, "remote set-url origin \"" + Path.Combine(root15, "origins", "alpha.git") + "\"", out _, out _); // restore alpha's URL
+            var savedErr15 = Console.Error;
+            var cap15 = new System.IO.StringWriter();
+            Console.SetError(cap15);
+            var rc15b = ScanEstate.Run(Path.Combine(root15, "repos"), out15b, null, null, "team-a", false, Array.Empty<string>(), "P", "9.9.9", "9.9.9", StubScanner);
+            Console.SetError(savedErr15);
+            if (rc15b != 0) throw new Exception($"re-run exited {rc15b}");
+            var warn15 = cap15.ToString();
+            if (!warn15.Contains("existing delta.json wins (--delta-package --delta-old --delta-new ignored)"))
+                throw new Exception($"all-flags delta warning missing or incomplete: {string.Join(" | ", warn15.Split('\n').Where(l => l.Contains("delta.json wins")))}");
+
+            // TrimReason scrubs credential-bearing userinfo before it can reach the manifest
+            var scrubbed15 = ScanEstate.TrimReason("fatal: unable to access 'https://user:s3cr3t-token@git.corp.example.com/org/repo.git/': failed connect");
+            if (scrubbed15.Contains("s3cr3t-token") || scrubbed15.Contains("user:") || !scrubbed15.Contains("***@git.corp.example.com"))
+                throw new Exception($"userinfo not scrubbed: {scrubbed15}");
+            var scp15 = ScanEstate.TrimReason("fatal: user:pat@git.internal: repo not found");
+            if (scp15.Contains("pat") || !scp15.Contains("***@")) throw new Exception($"scheme-less userinfo not scrubbed: {scp15}");
+            Console.WriteLine("ok   scan-estate-baz-round1 (empty-origin skip; all delta flags warn; reason scrub)"); pass++;
+            ForceDelete(root15); ForceDelete(out15); ForceDelete(out15b);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-baz-round1: {ex.Message}"); }
 
         // working-tree EOL guard: a CRLF checkout (core.autocrlf=true on Windows) converts unpinned
         // text files and silently breaks byte-exact apply goldens (seen on a real work machine: apply-F13).

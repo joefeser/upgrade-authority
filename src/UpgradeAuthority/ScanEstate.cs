@@ -49,6 +49,8 @@ public static class ScanEstate
     // The assembly is invoked directly (dotnet <dll>) — `dotnet run` recompiles per repo (runbook §4).
     // Output is captured and drained (not inherited): a child writing straight to the console would
     // bypass the --sanitized redactor. Progress comes from our own per-repo lines; failures carry rc.
+    // BOTH streams must drain CONCURRENTLY: reading one to EOF before the other deadlocks a verbose
+    // child once the undrained pipe fills (PR #2 Baz round 1) — the estate loop would hang mid-repo.
     static int DefaultRunner(ScanRequest r, string tracemapDll)
     {
         var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
@@ -56,8 +58,8 @@ public static class ScanEstate
         psi.ArgumentList.Add(tracemapDll);
         foreach (var a in ComposeScanArgs(r)) psi.ArgumentList.Add(a);
         using var p = System.Diagnostics.Process.Start(psi)!;
-        p.StandardOutput.ReadToEnd();
-        p.StandardError.ReadToEnd();
+        _ = p.StandardOutput.ReadToEndAsync();
+        _ = p.StandardError.ReadToEndAsync();
         p.WaitForExit();
         return p.ExitCode;
     }
@@ -102,8 +104,13 @@ public static class ScanEstate
                 || !remotesOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Contains("origin"))
             { entries.Add(Skip("no origin remote")); continue; } // never bypassable (SPEC-017 §4.1 F2)
             // alternate-checkout dedupe: name-ordinal first checkout of an origin wins (ingest's
-            // deliberate-combination rule, enforced before a scan is wasted)
-            Push.Git(repoPath, "remote get-url origin", out var urlOut, out _);
+            // deliberate-combination rule, enforced before a scan is wasted). The URL comes from
+            // config --get (the raw truth): `remote get-url` ECHOES THE REMOTE NAME when the URL is
+            // unset/empty, which would silently dedupe every URL-less repo onto the key "origin"
+            // (PR #2 Baz round 1 — proven by the selftest's empty-URL case).
+            if (Push.Git(repoPath, "config --get remote.origin.url", out var urlOut, out _) != 0
+                || Ingest.NormalizeRepoBasic(urlOut.Trim()).Length == 0)
+            { entries.Add(Skip("origin remote has no usable URL (alternate-checkout identity unavailable — check git remote set-url origin")); continue; }
             var normOrigin = Ingest.NormalizeRepoBasic(urlOut.Trim());
             if (seenOrigins.TryGetValue(normOrigin, out var firstName))
             { entries.Add(Skip($"alternate checkout of {firstName} (same origin) — one scan per repo; pass scan dirs to ingest explicitly to combine deliberately")); continue; }
@@ -237,8 +244,10 @@ public static class ScanEstate
         var deltaPath = Path.Combine(Path.GetFullPath(outDir), "delta.json");
         if (File.Exists(deltaPath))
         {
-            if (deltaPackage is not null)
-                Console.Error.WriteLine($"warning: existing delta.json wins (--delta-package ignored) — the real delta IS the real use case");
+            var ignoredDeltaFlags = new[] { ("--delta-package", deltaPackage), ("--delta-old", deltaOld), ("--delta-new", deltaNew) }
+                .Where(t => t.Item2 is not null).Select(t => t.Item1).ToList();
+            if (ignoredDeltaFlags.Count > 0) // SPEC-017 §4.3: EVERY --delta-* flag warns and loses, never silently
+                Console.Error.WriteLine($"warning: existing delta.json wins ({string.Join(" ", ignoredDeltaFlags)} ignored) — the real delta IS the real use case");
         }
         else
         {
@@ -319,10 +328,17 @@ public static class ScanEstate
 
     static string Sha7(string sha) => sha.Length <= 7 ? sha : sha[..7];
 
-    static string TrimReason(string text)
+    // Reason strings reach BOTH the console and scan-estate.v1.json — a file artifact --sanitized
+    // never transforms by design — so credential-bearing URL userinfo is scrubbed HERE, at the
+    // source, unconditionally (PR #2 Baz round 1: git fetch stderr happily echoes the remote URL).
+    internal static string TrimReason(string text)
     {
         var firstLine = (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "";
-        return firstLine.Length <= 200 ? firstLine : firstLine[..200];
+        var scrubbed = System.Text.RegularExpressions.Regex.Replace(firstLine,
+            @"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^\s/@:]+:[^\s/@]+@", "$1***@"); // scheme://user:pass@host
+        scrubbed = System.Text.RegularExpressions.Regex.Replace(scrubbed,
+            @"\b[^\s/@:]+:[^\s/@]+@(?=[a-zA-Z0-9.\-]+\.)", "***@"); // scheme-less user:pass@host
+        return scrubbed.Length <= 200 ? scrubbed : scrubbed[..200];
     }
 
     static string? CachedCommitSha(string manifestPath)

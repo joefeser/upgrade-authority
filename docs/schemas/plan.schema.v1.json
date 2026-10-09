@@ -136,6 +136,22 @@
               "includedCount"
             ]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "exclude"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "includedCount"
+              ]
+            }
+          }
         }
       ]
     },

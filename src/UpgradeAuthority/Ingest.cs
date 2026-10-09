@@ -103,7 +103,7 @@ public static class Ingest
             {
                 if (explicitSet.Contains(CanonicalDirPath(child))) continue;
                 var childName = Path.GetFileName(child);
-                if (childName.StartsWith('.')) { Console.Error.WriteLine($"note: {childName} ignored (dot-prefixed — swap/temp dir, not a scan)"); continue; } // SPEC-017: .tmp/.old swap leftovers are never discovered
+                if (IsSwapDir(childName)) { Console.Error.WriteLine($"note: {childName} ignored (scan-estate swap leftover, not a scan)"); continue; } // SPEC-017: .name.tmp-*/.name.old-* are never discovered; arbitrary dot-named scans stay discoverable (SPEC-011 contract, PR #2 Baz round 1)
                 if (scope is not null && !Scope.IsInScope(childName, scope))
                 {
                     var rnX = TryReadRepoName(child);
@@ -541,6 +541,19 @@ public static class Ingest
         finally { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); }
         Console.Error.WriteLine($"ingested: {evidence.Values.Sum(v => v.Count)} consumer facts, {lockfiles.Values.Sum(v => v.Count)} lockfile rows, {repoKeys.Count} repos → {outDir}");
         return 0;
+    }
+
+    // SPEC-017: scan-estate's atomic-swap siblings (.name.tmp-xxxxxxxx / .name.old-xxxxxxxx — 8 hex).
+    // Deliberately NARROW: the rule exists to hide swap leftovers, not to redefine which children are
+    // scans — a dot-named child with facts.ndjson is still a scan per SPEC-011 (PR #2 Baz round 1).
+    internal static bool IsSwapDir(string name)
+    {
+        if (!name.StartsWith('.')) return false;
+        var marker = name.LastIndexOf(".tmp-", StringComparison.Ordinal);
+        if (marker < 0) marker = name.LastIndexOf(".old-", StringComparison.Ordinal);
+        if (marker < 0) return false;
+        var suffix = name[(marker + 5)..];
+        return suffix.Length == 8 && suffix.All(Uri.IsHexDigit);
     }
 
     // repoName from a scan dir's manifest, if readable — for alternate-snapshot detection during discovery.
