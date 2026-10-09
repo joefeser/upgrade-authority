@@ -372,7 +372,14 @@ public static class ScanEstate
         var scrubbed = System.Text.RegularExpressions.Regex.Replace(firstLine,
             @"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^\s/@]+@", "$1***@"); // scheme://ANY-userinfo@ (token or user:pass)
         scrubbed = System.Text.RegularExpressions.Regex.Replace(scrubbed,
-            @"\b[^\s/@]+@(?=[a-zA-Z0-9.\-]+[.:])", "***@"); // scheme-less userinfo@host — dotted OR scp-style single-label `host:` (PR #2 Codex r3: `token@git:org/repo` is a real alias shape, SPEC-016 R1b precedent)
+            @"\b[^\s/@]+@(?=[a-zA-Z0-9._\-]+[.:])", "***@"); // scheme-less userinfo@host — dotted OR scp-style `host:`; `_` included (Redact.cs accepts it in hosts — PR #2 Codex r4)
+        // A masked SINGLE-LABEL host (`***@ghe:`) would still name the internal alias, and it rides
+        // both the manifest and sanitized stderr (Redact.UrlRe doesn't parse the masked form — PR #2
+        // Baz r4); single-label hosts are exactly what the redactor treats as sensitive, so mask them
+        // too. Dotted hosts keep their diagnostic value (the credential was the userinfo).
+        scrubbed = System.Text.RegularExpressions.Regex.Replace(scrubbed,
+            @"(\*\*\*@)(?![a-zA-Z0-9_\-]*\.)([a-zA-Z0-9_\-]+):", "$1***:");
+        return scrubbed.Length <= 200 ? scrubbed : scrubbed[..200];
         return scrubbed.Length <= 200 ? scrubbed : scrubbed[..200];
     }
 

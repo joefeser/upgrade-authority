@@ -66,3 +66,12 @@ zero new findings, check pass (7m41s)**. Codex's delta review of the same head p
 | C3 | The scheme-less scrub required a DOTTED host — scp-style single-label hosts (`secret-token@git:org/repo.git`, SSH aliases like `ghe:`) survived into the manifest | P1 | **Accepted** | Lookahead broadened to `userinfo@host` followed by dot OR colon (the scp `host:` form — the same single-label-host reality SPEC-016 R1b documented); single-label and alias-shaped cases pinned in selftest |
 
 Verification method fixed for good: full comment-set inventory by ID, no timestamp filters.
+
+## Round 4 — scrub follow-ups (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C4 | **Codex P1**: underscore SSH aliases (`secret-token@my_ghe:…`) survive — the host charset lacked `_`, which `Redact.cs` itself accepts in hosts | P1 | **Accepted** | `_` added to the lookahead charset; underscore case pinned |
+| Bz | The masked form `***@ghe:` still names the internal alias — it rides the manifest and bypasses `Redact.UrlRe` in sanitized stderr | medium | **Accepted** | Single-label (dotless) hosts after a mask are masked too: `token@ghe:org/repo` → `***@***:org/repo`; dotted hosts keep their diagnostic value (`***@git.internal:` unchanged — the credential was the userinfo). Pinned in selftest |
+
+Baz re-review of round 3: single-label fix confirmed addressed in-thread, check pass (7m13s).
