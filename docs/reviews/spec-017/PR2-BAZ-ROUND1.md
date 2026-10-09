@@ -83,3 +83,13 @@ Baz re-review of round 3: single-label fix confirmed addressed in-thread, check 
 | C5 | **Codex P2**: scheme-form URLs with dotless hosts (`ssh://token@ghe/org/repo.git`) kept the alias — the dotless mask only fired on the scp `:` terminator, not `/`/`?`/`#`/end | P2 | **Accepted** | Mask terminators broadened to `[:/?#]|$`; scheme-form dotless cases (ssh + https) pinned |
 
 Baz re-review of round 4: both fixes confirmed addressed in-thread, check pass (5m10s).
+
+## CONVERGENCE (2026-10-09, head 638468a)
+
+Round 5's fix: Baz confirmed addressed in-thread (check pass 4m34s); **Codex's delta review of
+638468a completed with ZERO new findings**. Every finding from every round is resolved or dismissed
+with a receipt: round 1 (9: 7 fixed + 2 dismissed) → round 2 (8: 7 fixed + 1 dismissed) → round 3
+(1 fixed) → round 4 (2 fixed) → round 5 (1 fixed) → **0 open**. Per doctrine §2 the implementation
+review is over. Finding-count decay 9→8→3→3→1→0 = convergence, not churn.
+
+PR #2 awaits Joe's work-machine verification → ONE merge to public main → ONE sync commit to dev.
