@@ -445,6 +445,12 @@ public static class ScanEstate
 
         freshDirs.Sort(StringComparer.Ordinal); // SPEC-019 §2: downstream inputs are name-ordinal regardless of worker completion order
 
+        // Baz r3: rescue provenance rides EVERY terminal state (reused entries never reached the
+        // pending assignment; failure paths overwrote it) — apply once, just before the durable write
+        foreach (var e2 in entries)
+            if (rescuedTo.TryGetValue(e2.Name, out var rb2) && (e2.Reason is null || !e2.Reason.Contains(rb2)))
+                e2.Reason = e2.Reason is null ? $"dirty tree rescued to {rb2} before refresh" : $"{e2.Reason}; dirty tree rescued to {rb2} before refresh";
+
         // ---- run manifest: written before anything downstream can fail (§4.4) ----
         var manifestFile = Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json");
         File.WriteAllText(manifestFile, JsonSerializer.Serialize(
@@ -564,34 +570,62 @@ public static class ScanEstate
     static string ComputeBuildFreshness(string repoPath, string headSha, bool indexDepsJson)
     {
         if (!indexDepsJson) return "none";
-        var files = DepsManifests(repoPath);
-        if (files.Count == 0) return "none";
+        var (files, truncated) = DepsManifests(repoPath);
+        if (files.Count == 0 && !truncated) return "none";
+        if (truncated) return "stale"; // fail closed: a discarded suffix could hold the OLDEST manifest (Codex P1 r3)
         if (Push.Git(repoPath, "log -1 --format=%ct HEAD", out var ctOut, out _) != 0) return "stale"; // no committer date ⇒ cannot certify fresh
         if (!long.TryParse(ctOut.Trim(), out var commitTime)) return "stale";
         var oldest = files.Min(f => new FileInfo(f).LastWriteTimeUtc.Ticks);
         return new DateTimeOffset(oldest, TimeSpan.Zero).ToUnixTimeSeconds() >= commitTime ? "fresh" : "stale";
     }
 
-    const int MaxDepsManifests = 2048; // bounded traversal (Baz r2): a hostile tree cannot make scan-estate enumerate unboundedly
-    static List<string> DepsManifests(string root)
+    // Bounded manual walk (Codex P2 r3): Take() bounds matches, NOT the traversal — the walk itself
+    // carries the budget. Truncation FAILS CLOSED everywhere it flows (freshness => stale; fingerprint
+    // => "!truncated" sentinel that never equals a real hash).
+    const int MaxDepsManifests = 2048;
+    const int MaxWalkedDirs = 50_000;
+    static (List<string> Files, bool Truncated) DepsManifests(string root)
     {
-        if (!Directory.Exists(root)) return new List<string>();
-        var found = Directory.EnumerateFiles(root, "*.deps.json", SearchOption.AllDirectories)
-            .Where(f => f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-            .Take(MaxDepsManifests + 1).ToList();
-        if (found.Count > MaxDepsManifests)
+        if (!Directory.Exists(root)) return (new List<string>(), false);
+        var found = new List<string>();
+        var truncated = false;
+        var stack = new Stack<(string Dir, bool InBin)>();
+        stack.Push((root, false));
+        var walked = 0;
+        while (stack.Count > 0)
         {
-            Console.Error.WriteLine($"warning: more than {MaxDepsManifests} deps.json manifests under {root} — traversal truncated; freshness treated conservatively");
-            found = found.Take(MaxDepsManifests).ToList();
-            return found; // callers: truncated set is still min-mtime conservative-ish; freshness derived from it may say fresh when more files exist — acceptable V0, warned
+            if (++walked > MaxWalkedDirs) { truncated = true; break; }
+            var (dir, inBin) = stack.Pop();
+            string[] entries;
+            try { entries = Directory.GetFileSystemEntries(dir); }
+            catch (Exception) when (ex581(dir)) { continue; }
+            foreach (var e in entries)
+            {
+                var name = Path.GetFileName(e);
+                if (Directory.Exists(e))
+                {
+                    if (name is ".git" or "node_modules" or ".vs" or "packages") continue; // never productive
+                    stack.Push((e, inBin || name.Equals("bin", StringComparison.OrdinalIgnoreCase)));
+                }
+                else if (inBin && name.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    found.Add(e);
+                    if (found.Count > MaxDepsManifests) { truncated = true; break; }
+                }
+            }
+            if (truncated) break;
         }
-        return found.OrderBy(f => f, StringComparer.Ordinal).ToList();
+        if (truncated)
+            Console.Error.WriteLine($"warning: deps.json discovery under {root} exceeded its budget ({MaxDepsManifests} manifests / {MaxWalkedDirs} dirs) — evidence treated conservatively (stale; fingerprint sentinel)");
+        return (found.OrderBy(f => f, StringComparer.Ordinal).ToList(), truncated);
+        static bool ex581(string d) => true; // unreadable directory: skip, never abort the estate
     }
 
     // make-style skip key: metadata only (path, size, mtime), never content reads (SPEC-019 §6)
     static string? DepsFingerprint(string root)
     {
-        var files = DepsManifests(root);
+        var (files, truncated) = DepsManifests(root);
+        if (truncated) return "!truncated"; // never equals a real hash ⇒ no false cache reuse (Codex P1 r3)
         if (files.Count == 0) return null;
         using var sha = System.Security.Cryptography.SHA256.Create();
         var parts = files.Select(f => { var fi = new FileInfo(f); return $"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}"; });

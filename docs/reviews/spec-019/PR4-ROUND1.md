@@ -25,3 +25,14 @@ Baz confirmed 6 round-1 items in-thread. New findings:
 | Baz | DepsManifests traversed repeatedly and unboundedly | medium | Accepted | Single bounded enumeration per call (cap 2048, warned, conservative) |
 | Baz | Pattern-matching foreign dirs under ua/ could be swept | medium | **Accepted (hardening)** | Sweep is OWNERSHIP-CHECKED: only dirs git itself lists as this repo's worktrees |
 | Baz | Optional-parameter signature changes break compiled callers | medium | **Dismissed (receipt)** | Self-contained console app; all callers in-tree (same receipt as PR #2 round 1) |
+
+## Round 3 (2026-10-09)
+
+Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C7 + Baz | A truncated manifest set could still certify fresh / falsely reuse (the discarded suffix might hold the oldest file) | **P1** | **Accepted** | Truncation fails closed: freshness ⇒ `stale`; fingerprint ⇒ `"!truncated"` sentinel (never equals a real hash) |
+| C8 | `Take()` bounded matches, not the WALK — a hostile tree still cost unbounded traversal | P2 | **Accepted** | Manual bounded walk (dir budget 50k, `.git`/`node_modules`/`.vs`/`packages` skipped, in-bin flag) |
+| C9 | Rescue provenance lost on reuse/failure terminal states | P2 | **Accepted** | Applied once at the durable manifest write — every terminal state carries the branch name |
+| Baz | Conflicting duplicate freshness entries silently last-wins | medium | **Accepted** | Identical duplicates collapse; conflicts refuse at load (the file contradicts itself) |
