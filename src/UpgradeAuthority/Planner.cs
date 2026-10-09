@@ -91,8 +91,12 @@ public sealed class Engine
         {                                // key (lockfile rows key RepoKey verbatim) and Norm (aliases + URL hosts resolve)
             foreach (var e in _pendingFreshness.Repos)
             {
-                _depsFreshness[e.Repo] = e.Freshness;
-                _depsFreshness[Norm(e.Repo)] = e.Freshness;
+                foreach (var key in new[] { e.Repo, Norm(e.Repo) })
+                {
+                    if (_depsFreshness.TryGetValue(key, out var prior) && prior != e.Freshness)
+                        throw new UaException($"malformed input build-freshness.v0.json: '{e.Repo}' and an alias resolve to one repo with conflicting freshness ({prior} and {e.Freshness}) — the file contradicts itself"); // C10 r4: normalization must not turn conflicts into last-wins
+                    _depsFreshness[key] = e.Freshness;
+                }
             }
             _pendingFreshness = null;
         }

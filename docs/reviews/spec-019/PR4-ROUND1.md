@@ -36,3 +36,14 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | C8 | `Take()` bounded matches, not the WALK — a hostile tree still cost unbounded traversal | P2 | **Accepted** | Manual bounded walk (dir budget 50k, `.git`/`node_modules`/`.vs`/`packages` skipped, in-bin flag) |
 | C9 | Rescue provenance lost on reuse/failure terminal states | P2 | **Accepted** | Applied once at the durable manifest write — every terminal state carries the branch name |
 | Baz | Conflicting duplicate freshness entries silently last-wins | medium | **Accepted** | Identical duplicates collapse; conflicts refuse at load (the file contradicts itself) |
+
+## Round 4 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C10 | Alias+canonical freshness entries with different values became last-wins after normalization | **P1** | **Accepted** | The dual-key store REFUSES conflicting assignments to one resolved repo (UaException) |
+| C11 | An unreadable subtree silently skipped without `truncated` — partial set could certify fresh | **P1** | **Accepted** | Discovery failure sets `truncated` (fail closed, like manifest overflow) |
+| C12 | `"!truncated"` sentinel matched itself across runs ⇒ obsolete-scan reuse | P2 | **Accepted** | Reuse explicitly disabled when either side carries the sentinel |
+| C13 + Baz | `GetFileSystemEntries` materialized wide dirs eagerly; budget checked after | P2 | **Accepted** | Lazy `EnumerateFileSystemEntries` + a total entry budget (500k), truncated on exceed |
+| C14 | Rescue provenance lost on the missing-`--tracemap` precondition exit | P2 | **Accepted** | `WriteManifest()` local function is the single durable-write site — called on that exit too |
+| Baz | Nested symlinks could feed outside-the-repo deps.json as evidence | medium | **Accepted** | Reparse points are never followed in the walk |

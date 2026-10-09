@@ -117,6 +117,17 @@ public static class ScanEstate
         var freshDirs = new List<string>();
         var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name
         var rescuedTo = new Dictionary<string, string>(StringComparer.Ordinal); // Baz r2: rescue provenance rides the single canonical entry
+        void WriteManifest()
+        {
+            // Baz r3/r4: rescue provenance rides EVERY terminal state (reused entries, failure paths,
+            // early precondition exits) — applied here, the single durable-write site
+            foreach (var e2 in entries)
+                if (rescuedTo.TryGetValue(e2.Name, out var rb2) && (e2.Reason is null || !e2.Reason.Contains(rb2)))
+                    e2.Reason = e2.Reason is null ? $"dirty tree rescued to {rb2} before refresh" : $"{e2.Reason}; dirty tree rescued to {rb2} before refresh";
+            var mf = Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json");
+            File.WriteAllText(mf, JsonSerializer.Serialize(
+                new { schemaVersion = "scan-estate.v1", repos = entries }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+        }
         foreach (var repoPath in Directory.GetDirectories(Path.GetFullPath(reposRoot)).OrderBy(p => Path.GetFileName(p), StringComparer.Ordinal))
         {
             var name = Path.GetFileName(repoPath);
@@ -270,7 +281,8 @@ public static class ScanEstate
                 && meta.Trunk == trunk
                 && Ord(meta.BuildFreshness) == Ord(freshnessNow)
                 && (worktreeMode || Ord(meta.DepsFingerprint) == Ord(fingerprintNow)) // in-place: a rebuild with same HEAD changes the fingerprint ⇒ rescan (SPEC-019 §6)
-                && !build; // Codex P2: --build is an explicit freshness-seeking action — it always executes (a pre-build cache match must not skip the requested build)
+                && !build // Codex P2: --build is an explicit freshness-seeking action — it always executes (a pre-build cache match must not skip the requested build)
+                && Ord(fingerprintNow) != "!truncated" && Ord(meta.DepsFingerprint) != "!truncated"; // C12 r4: sentinel-to-sentinel equality must never authorize reuse
             if (reuse)
             {
                 Console.Error.WriteLine($"reuse  {name} (HEAD unchanged: {Sha7(headSha)})");
@@ -288,6 +300,7 @@ public static class ScanEstate
         if (plannedScans.Count > 0 && tracemapDll is null && scanner is null)
         {
             Console.Error.WriteLine($"error: {plannedScans.Count} repo(s) need a scan — pass --tracemap <path-to-tracemap.dll>");
+            WriteManifest(); // C14 r4: a rescue that already moved the operator's WIP MUST be recorded durably even on this exit
             return 1;
         }
 
@@ -445,16 +458,10 @@ public static class ScanEstate
 
         freshDirs.Sort(StringComparer.Ordinal); // SPEC-019 §2: downstream inputs are name-ordinal regardless of worker completion order
 
-        // Baz r3: rescue provenance rides EVERY terminal state (reused entries never reached the
-        // pending assignment; failure paths overwrote it) — apply once, just before the durable write
-        foreach (var e2 in entries)
-            if (rescuedTo.TryGetValue(e2.Name, out var rb2) && (e2.Reason is null || !e2.Reason.Contains(rb2)))
-                e2.Reason = e2.Reason is null ? $"dirty tree rescued to {rb2} before refresh" : $"{e2.Reason}; dirty tree rescued to {rb2} before refresh";
-
         // ---- run manifest: written before anything downstream can fail (§4.4) ----
-        var manifestFile = Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json");
-        File.WriteAllText(manifestFile, JsonSerializer.Serialize(
-            new { schemaVersion = "scan-estate.v1", repos = entries }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+        WriteManifest();
+
+
 
         // ---- empty fresh set: typed error naming the composition, no sidecars ----
         if (freshDirs.Count == 0)
@@ -462,7 +469,7 @@ public static class ScanEstate
             var nSkipped = entries.Count(e => e.Status == "skipped");
             var nOos = entries.Count(e => e.Status == "out-of-scope");
             var nIgn = entries.Count(e => e.Status == "ignored");
-            Console.Error.WriteLine($"error: no repos to ingest (0 fresh: {nSkipped} skipped, {nOos} out-of-scope, {nIgn} ignored — see {manifestFile})");
+            Console.Error.WriteLine($"error: no repos to ingest (0 fresh: {nSkipped} skipped, {nOos} out-of-scope, {nIgn} ignored — see {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")})");
             return 1;
         }
 
@@ -559,7 +566,7 @@ public static class ScanEstate
         var nOos2 = entries.Count(e => e.Status == "out-of-scope");
         var nIgn2 = entries.Count(e => e.Status == "ignored");
         Console.Error.WriteLine($"estate: {nScan} scanned, {nReuse} reused, {nSkip} skipped, {nOos2} out-of-scope, {nIgn2} ignored → {Path.Combine(Path.GetFullPath(outDir), "report.md")}");
-        if (nSkip > 0) Console.Error.WriteLine($"note: skipped repos are listed in {manifestFile}");
+        if (nSkip > 0) Console.Error.WriteLine($"note: skipped repos are listed in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
         return 0;
     }
 
@@ -584,6 +591,7 @@ public static class ScanEstate
     // => "!truncated" sentinel that never equals a real hash).
     const int MaxDepsManifests = 2048;
     const int MaxWalkedDirs = 50_000;
+    const int MaxWalkedEntries = 500_000; // C13 r4: a single wide directory must not defeat the budget either
     static (List<string> Files, bool Truncated) DepsManifests(string root)
     {
         if (!Directory.Exists(root)) return (new List<string>(), false);
@@ -592,29 +600,37 @@ public static class ScanEstate
         var stack = new Stack<(string Dir, bool InBin)>();
         stack.Push((root, false));
         var walked = 0;
+        long entriesSeen = 0;
         while (stack.Count > 0)
         {
             if (++walked > MaxWalkedDirs) { truncated = true; break; }
             var (dir, inBin) = stack.Pop();
-            string[] entries;
-            try { entries = Directory.GetFileSystemEntries(dir); }
-            catch (Exception) when (ex581(dir)) { continue; }
+            System.Collections.Generic.IEnumerable<string> entries;
+            try { entries = Directory.EnumerateFileSystemEntries(dir); }
+            catch (Exception) when (ex581(dir)) { truncated = true; continue; } // unreadable subtree = incomplete evidence — FAIL CLOSED (C11 r4)
+            var broke = false;
             foreach (var e in entries)
             {
-                var name = Path.GetFileName(e);
-                if (Directory.Exists(e))
+                if (++entriesSeen > MaxWalkedEntries) { truncated = true; broke = true; break; }
+                string name;
+                FileAttributes attrs;
+                try { name = Path.GetFileName(e); attrs = File.GetAttributes(e); }
+                catch (Exception) when (ex581(e)) { truncated = true; continue; }
+                if ((attrs & FileAttributes.Directory) != 0)
                 {
+                    if ((attrs & FileAttributes.ReparsePoint) != 0) continue; // links never followed (Baz r4) — an outside-the-repo deps.json is not this repo's evidence
                     if (name is ".git" or "node_modules" or ".vs" or "packages") continue; // never productive
                     stack.Push((e, inBin || name.Equals("bin", StringComparison.OrdinalIgnoreCase)));
                 }
                 else if (inBin && name.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase))
                 {
                     found.Add(e);
-                    if (found.Count > MaxDepsManifests) { truncated = true; break; }
+                    if (found.Count > MaxDepsManifests) { truncated = true; broke = true; break; }
                 }
             }
-            if (truncated) break;
+            if (broke || truncated) break;
         }
+        if (truncated) { /* single warning site below */ }
         if (truncated)
             Console.Error.WriteLine($"warning: deps.json discovery under {root} exceeded its budget ({MaxDepsManifests} manifests / {MaxWalkedDirs} dirs) — evidence treated conservatively (stale; fingerprint sentinel)");
         return (found.OrderBy(f => f, StringComparer.Ordinal).ToList(), truncated);
