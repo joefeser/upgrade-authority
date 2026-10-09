@@ -9,8 +9,11 @@ namespace UpgradeAuthority;
 // evidence vs declared-external — no feed lookups, no network ("stated, not verified live").
 public static class Registry
 {
-    // §3: the ci-defined availability note — until the tracemap CI-workflow slice lands (§2b).
+    // §3: the ci-defined availability note — "not yet available" until the tracemap CI-workflow slice
+    // lands (§2b). The moment entries carry ci-defined provenance, the source IS represented and the
+    // note switches — the report never says "not yet available" over a nonzero count.
     public const string CiDefinedNote = "ci-defined source not yet available — project-declared + operator only";
+    public const string CiDefinedPresentNote = "ci-defined entries present — recorded at fusion (the tracemap CI-workflow slice's consuming contract: SPEC-020 §2b)";
 
     public sealed class ProducerRow
     {
@@ -163,7 +166,7 @@ public static class Registry
         sb.Append($"    \"projectDeclared\": {r.ProjectDeclared},").Append('\n');
         sb.Append($"    \"operatorDeclared\": {r.OperatorDeclared},").Append('\n');
         sb.Append($"    \"ciDefined\": {r.CiDefined},").Append('\n');
-        sb.Append("    \"note\": ").Append(Q(CiDefinedNote)).Append('\n');
+        sb.Append("    \"note\": ").Append(Q(r.CiDefined > 0 ? CiDefinedPresentNote : CiDefinedNote)).Append('\n');
         sb.Append("  }").Append('\n');
         sb.Append('}').Append('\n');
         return sb.ToString();

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -711,6 +712,16 @@ public static class Ingest
         string.CompareOrdinal(Ord(a.PackageId) + "\0" + Ord(a.Lockfile) + "\0" + Ord(a.Tfm) + "\0" + Ord(a.Version),
                                Ord(b.PackageId) + "\0" + Ord(b.Lockfile) + "\0" + Ord(b.Tfm) + "\0" + Ord(b.Version));
 
+    // Untrusted values (sidecar fields) reach diagnostics verbatim; control characters would
+    // forge terminal/log line structure the redactor does not escape (house rule, PR #3 Baz round 1).
+    static string Esc(string s)
+    {
+        var sb = new StringBuilder();
+        foreach (var c in s)
+            sb.Append(c < 0x20 || c == 0x7f ? $"\\u{(int)c:x4}" : c);
+        return sb.ToString();
+    }
+
     // SPEC-020 §2: pre-spec entries carry no provenance field — the in-band EvidenceNote marker the
     // scan-append path writes is the fallback classifier. Anything else in the sidecar is operator truth.
     internal static string MarkerProvenance(ProducerEntry p)
@@ -724,14 +735,23 @@ public static class Ingest
     static int CopyValidatedProducer(string? src, string dst, string schemaVersion, List<string> gaps, List<ProducerEntry> produced)
     {
         var rc = CopyValidated(src, dst, schemaVersion, gaps);
-        if (rc != 0 || produced.Count == 0) return rc;
+        if (rc != 0) return rc;
         ProducerEvidence existing;
         try { existing = JsonSerializer.Deserialize<ProducerEvidence>(File.ReadAllText(dst), JsonOpts) ?? new ProducerEvidence(); }
         catch (JsonException) { return rc; } // placeholder written by CopyValidated — parseable by construction
         existing.Producers ??= new List<ProducerEntry>();
-        // SPEC-020 §2: provenance recorded ONCE, here — sidecar entries get the operator stamp
-        // (pre-spec entries classify via the in-band marker); an explicitly recorded value wins.
-        foreach (var p in existing.Producers) p.Provenance ??= MarkerProvenance(p);
+        // SPEC-020 §2: provenance recorded ONCE, here — EVERY entry the fused file carries gets the
+        // stamp (sidecar ⇒ operator unless the in-band marker says scan-appended; an explicitly
+        // recorded value wins). Stamping runs even when the scans found no producers, so only
+        // genuinely pre-spec files ever reach the registry's marker fallback.
+        var stamped = false;
+        foreach (var p in existing.Producers)
+            if (p.Provenance is null) { p.Provenance = MarkerProvenance(p); stamped = true; }
+        if (produced.Count == 0)
+        {
+            if (stamped) File.WriteAllText(dst, JsonSerializer.Serialize(existing, WriteOpts));
+            return 0;
+        }
         // NuGet ids are case-insensitive: repo key ordinal, package id ignore-case
         var byKey = existing.Producers
             .GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant()))
@@ -743,13 +763,14 @@ public static class Ingest
             var k = (NormBasic(p.Repo), p.PackageId.ToLowerInvariant());
             if (byKey.TryGetValue(k, out var dup))
             {
-                if (dup.ProducedVersion != p.ProducedVersion && p.ProducedVersion is not null)
-                    Console.Error.WriteLine($"warning: producer conflict for {k.Item1}/{p.PackageId} — sidecar '{dup.ProducedVersion ?? "unevidenced"}' ({dup.Provenance ?? MarkerProvenance(dup)}) vs scan '{p.ProducedVersion}' ({p.Provenance}); sidecar kept (scan evidence is declaration-only)");
+                // every cross-source duplicate notes the loser — same-version and unevidenced
+                // overrides included (SPEC-020 §2: the losing provenance is never silently dropped)
+                Console.Error.WriteLine($"warning: producer conflict for {Esc(k.Item1)}/{Esc(p.PackageId)} — sidecar '{Esc(dup.ProducedVersion ?? "unevidenced")}' ({Esc(dup.Provenance ?? MarkerProvenance(dup))}) vs scan '{Esc(p.ProducedVersion ?? "unevidenced")}' ({Esc(p.Provenance ?? "project-declared")}); sidecar kept (scan evidence is declaration-only)");
                 continue;
             }
             var caseVariantEntry = existing.Producers.FirstOrDefault(x2 => string.Equals(NormBasic(x2.Repo), k.Item1, StringComparison.OrdinalIgnoreCase) && string.Equals(x2.PackageId, p.PackageId, StringComparison.OrdinalIgnoreCase));
             if (caseVariantEntry is not null)
-            { Console.Error.WriteLine($"warning: scan producer '{k.Item1}/{p.PackageId}' differs from existing '{NormBasic(caseVariantEntry.Repo)}/{caseVariantEntry.PackageId}' only by spelling — kept BOTH (planner identity is case-sensitive; merge deliberately via one spelling)"); }
+            { Console.Error.WriteLine($"warning: scan producer '{Esc(k.Item1)}/{Esc(p.PackageId)}' differs from existing '{Esc(NormBasic(caseVariantEntry.Repo))}/{Esc(caseVariantEntry.PackageId)}' only by spelling — kept BOTH (planner identity is case-sensitive; merge deliberately via one spelling)"); }
             existing.Producers.Add(p);
             byKey[k] = p;
             added++;

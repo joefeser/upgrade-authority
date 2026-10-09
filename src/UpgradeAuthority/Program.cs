@@ -2408,6 +2408,42 @@ public static class Program
             if (sumO.GetProperty("operatorDeclared").GetInt32() != 1 || sumO.GetProperty("projectDeclared").GetInt32() != 0)
                 throw new Exception("provenanceSummary counts wrong after override: " + sumO.GetRawText());
             Directory.Delete(outO, true); Directory.Delete(sideO, true);
+            // same-version override + log-injection escape: the loser is noted on EVERY cross-source
+            // duplicate (SPEC-020 §2), and sidecar-derived fields never forge log lines (Baz round 1)
+            var sideS = Path.Combine(Path.GetTempPath(), "ua-rg-s-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(sideS);
+            File.WriteAllText(Path.Combine(sideS, "producer.json"),
+                "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[{\"repo\":\"corelib\",\"packageId\":\"Contoso.Core\",\"producedVersion\":\"1.0.0\",\"provenance\":\"operator-declared\\nFAKE-LOG-LINE\"}]}");
+            File.Copy(Path.Combine(richO, "sidecars-estate2", "delta.json"), Path.Combine(sideS, "delta.json"));
+            File.WriteAllText(Path.Combine(sideS, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"corelib\",\"team\":\"team-a\"},{\"repo\":\"svc\",\"team\":\"team-a\"}]}");
+            var outS = Path.Combine(Path.GetTempPath(), "ua-rg-so-" + Guid.NewGuid().ToString("N")[..8]);
+            var errPrevS = Console.Error;
+            var swS = new System.IO.StringWriter();
+            int rcS;
+            try { Console.SetError(swS); rcS = Ingest.Run(new[] { Path.Combine(richO, "scans", "corelib"), Path.Combine(richO, "scans", "svc") }, outS, Path.Combine(sideS, "producer.json"), Path.Combine(sideS, "ownership.json"), Path.Combine(sideS, "delta.json")); }
+            finally { Console.SetError(errPrevS); }
+            if (rcS != 0) throw new Exception($"same-version ingest exited {rcS}");
+            var warnS = swS.ToString();
+            if (!warnS.Contains("producer conflict") || !warnS.Contains("sidecar '1.0.0'") || !warnS.Contains("vs scan '1.0.0'"))
+                throw new Exception("same-version override must still note the losing source: " + warnS);
+            if (!warnS.Contains("\\u000aFAKE-LOG-LINE")) throw new Exception("CR/LF in sidecar fields must be escaped in warnings (never raw): " + warnS);
+            if (Registry.Run(outS).Item2 != 3) throw new Exception("poisoned provenance must be refused by the registry (exit 3)");
+            Directory.Delete(outS, true); Directory.Delete(sideS, true);
+            // stamping with NO scan producers (Codex round 1): a producer-carrying sidecar still gets
+            // provenance recorded at fusion — svc carries no PackageProduced facts
+            var sideN = Path.Combine(Path.GetTempPath(), "ua-rg-n-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(sideN);
+            File.WriteAllText(Path.Combine(sideN, "producer.json"),
+                "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[{\"repo\":\"svc\",\"packageId\":\"Contoso.Core\",\"producedVersion\":\"1.0.0\"}]}");
+            File.Copy(Path.Combine(richO, "sidecars-estate2", "delta.json"), Path.Combine(sideN, "delta.json"));
+            File.WriteAllText(Path.Combine(sideN, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"svc\",\"team\":\"team-a\"}]}");
+            var outN = Path.Combine(Path.GetTempPath(), "ua-rg-no-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Ingest.Run(new[] { Path.Combine(richO, "scans", "svc") }, outN, Path.Combine(sideN, "producer.json"), Path.Combine(sideN, "ownership.json"), Path.Combine(sideN, "delta.json")) != 0)
+                throw new Exception("no-producer-facts ingest failed");
+            var prodN = JsonDocument.Parse(File.ReadAllText(Path.Combine(outN, "input", "producer-evidence.v0.json"))).RootElement.GetProperty("producers");
+            if (prodN.GetArrayLength() != 1 || prodN[0].GetProperty("provenance").GetString() != "operator-declared")
+                throw new Exception("sidecar entries must be stamped even when the scans found no producers: " + prodN.GetRawText());
+            Directory.Delete(outN, true); Directory.Delete(sideN, true);
             Console.WriteLine("ok   registry-operator-override (one entry, operator-declared, warning names both provenances)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-operator-override: {ex.Message}"); }
@@ -2463,6 +2499,14 @@ public static class Program
             peM["producers"]![0]!["provenance"] = "banana";
             File.WriteAllText(Path.Combine(sM, "input", "producer-evidence.v0.json"), peM.ToJsonString());
             if (Registry.Run(sM).Item2 != 3) throw new Exception("unknown provenance value must be a typed refusal (exit 3)");
+            // ci-defined entries exist ⇒ the availability note switches (never "not yet available" over a nonzero count)
+            peM["producers"]![0]!["provenance"] = "ci-defined";
+            File.WriteAllText(Path.Combine(sM, "input", "producer-evidence.v0.json"), peM.ToJsonString());
+            var (cCi, rcCi) = Registry.Run(sM);
+            if (rcCi != 0) throw new Exception($"ci-defined entry must be accepted (vocabulary), exited {rcCi}");
+            var sumCi = JsonDocument.Parse(cCi!).RootElement.GetProperty("provenanceSummary");
+            if (sumCi.GetProperty("ciDefined").GetInt32() != 1 || sumCi.GetProperty("note").GetString()!.Contains("not yet available"))
+                throw new Exception("nonzero ciDefined must carry the present note: " + sumCi.GetRawText());
             Directory.Delete(sM, true);
             // case-insensitive identity: lockfile spelling wins; null-version rows still count; unconsumed externals echo
             var sC = ScratchPe("casing");

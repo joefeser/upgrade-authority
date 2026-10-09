@@ -269,6 +269,10 @@ for (const d of dirs) {
         for (const [k, want] of [["projectDeclared", counts["project-declared"]], ["operatorDeclared", counts["operator-declared"]], ["ciDefined", counts["ci-defined"]]])
           if (!Number.isInteger(s[k]) || s[k] < 0 || s[k] !== want) errs.push("registry provenanceSummary " + k + " does not match producers[]");
         if (typeof s.note !== "string" || !s.note) errs.push("registry summary note");
+        // the note never contradicts the counts (SPEC-020: "not yet available" only over ciDefined 0)
+        const ciUnavailable = "ci-defined source not yet available — project-declared + operator only";
+        if (s.ciDefined === 0 && s.note !== ciUnavailable) errs.push("registry note must state ci-defined unavailability when ciDefined is 0");
+        if (s.ciDefined > 0 && s.note === ciUnavailable) errs.push("registry note says ci-defined not yet available over a nonzero ciDefined count");
       } catch { errs.push("registry.v1 parse"); }
     }
   }
