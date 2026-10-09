@@ -102,3 +102,10 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | C32 + Baz | Leftover matching still prefix-broad (`LastIndexOf`) — sibling `foo.tmp-bar` temps deletable by `foo` | P2 | **Accepted** | EXACT anchored forms `.{name}.tmp-<8hex>` / `.{name}.old-<8hex>` |
 | C33 | Skipped worktree entries kept `buildFreshness: none` | P2 | **Accepted** | Null on worktree-add and build-failure paths (no build happened) |
 | Baz | Rescue probe skipped the final `-15` candidate | medium | **Accepted** | Every candidate probed; exhaustion = visible refusal |
+
+## Round 11 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C34 | Pre-pass still fetched URL-less checkouts (reported as fetch failures) and alternate duplicates | P2 | **Accepted** | URL-less filtered at eligibility; alternates deduped name-ordinal-first-wins over the origin URL (same rule as the sequential loop) |
+| C35 | Scanner-failure and swap-failure worktree skips kept `buildFreshness` | P2 | **Accepted** | Null on every unsuccessful terminal path |

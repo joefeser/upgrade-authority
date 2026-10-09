@@ -128,6 +128,9 @@ public static class ScanEstate
                 .Where(d => new DirectoryInfo(d).LinkTarget is null) // C31 r10: a symlinked child is never fetched (the eligibility loop rejects it for the same reason)
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
                 .Where(d => Push.Git(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
+                .Where(d => UsableOriginUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
+                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? Ingest.NormalizeRepoBasic(u34.Trim()) : d, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).First()) // name-ordinal first-wins over one origin — SAME rule as the sequential loop (C34 r11: alternates are not fetched)
                 .Select(d => (Action)(() =>
                 {
                     var n30 = Path.GetFileName(d);
@@ -492,7 +495,8 @@ public static class ScanEstate
                     lock (gate)
                     {
                         entry.Status = "skipped";
-                        entry.Reason = $"scan swap failed: {TrimReason(ex.Message)}";
+                        entry.BuildFreshness = null; // C35 r11
+                        entry.BuildFreshness = null; entry.Reason = $"scan swap failed: {TrimReason(ex.Message)}";
                     }
                     return;
                 }
@@ -653,6 +657,10 @@ public static class ScanEstate
         if (nSkip > 0) Console.Error.WriteLine($"note: skipped repos are listed in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
         return 0;
     }
+
+    static bool UsableOriginUrl(string repoPath) =>
+        Push.Git(repoPath, "config --get remote.origin.url", out var u, out _) == 0
+        && Ingest.NormalizeRepoBasic(u.Trim()).Length > 0;
 
     static bool IsGitRepoWithOrigin(string repoPath)
     {
