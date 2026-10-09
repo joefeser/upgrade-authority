@@ -58,9 +58,10 @@ public static class ScanEstate
         psi.ArgumentList.Add(tracemapDll);
         foreach (var a in ComposeScanArgs(r)) psi.ArgumentList.Add(a);
         using var p = System.Diagnostics.Process.Start(psi)!;
-        _ = p.StandardOutput.ReadToEndAsync();
-        _ = p.StandardError.ReadToEndAsync();
+        var outTask = p.StandardOutput.ReadToEndAsync();
+        var errTask = p.StandardError.ReadToEndAsync();
         p.WaitForExit();
+        try { outTask.Wait(2000); errTask.Wait(2000); } catch { /* observation only — exit code is the contract */ }
         return p.ExitCode;
     }
 
@@ -71,8 +72,18 @@ public static class ScanEstate
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
         if (Push.Git(reposRoot, "--version", out _, out _) != 0)
         { Console.Error.WriteLine("error: git not found on PATH (required for freshness checks)"); return 1; }
-        var (scope, scopeRc) = Scope.LoadForCli(scopePath);
-        if (scopeRc != 0) return scopeRc;
+        // scope is read ONCE, here: the parsed form filters this run and the exact bytes are
+        // snapshotted for ingest (§4.4) — a file replaced mid-run can never split the evidence
+        string? scopeText = null;
+        EstateScope? scope = null;
+        if (scopePath is not null)
+        {
+            if (!File.Exists(scopePath)) { Console.Error.WriteLine($"error: --scope file not found: {scopePath}"); return 1; }
+            scopeText = File.ReadAllText(scopePath);
+            var (parsedScope, scopeErr) = Scope.ParseAndValidate(scopeText, Path.GetFileName(scopePath));
+            if (scopeErr is not null) { Console.Error.WriteLine($"error: {scopeErr}"); return 5; }
+            scope = parsedScope;
+        }
         if (tracemapDll is not null && !File.Exists(tracemapDll))
         { Console.Error.WriteLine($"error: --tracemap dll not found: {tracemapDll} (build tracemap once, pass bin/Release/net10.0/tracemap.dll)"); return 1; }
         string? dllHash = null;
@@ -96,6 +107,11 @@ public static class ScanEstate
                 return new ManifestEntry { Name = name, Status = "skipped", Reason = reason };
             }
             if (name.StartsWith('.')) { entries.Add(new ManifestEntry { Name = name, Status = "ignored", Reason = "dot-directory" }); continue; }
+            // symlinked children are visible skips, never scanned: a link redirects git/scanner work
+            // outside the operator's repos root (PR #2 Baz round 2) — point scan-estate at the real
+            // checkout's parent, or ingest the scan dir explicitly
+            if (new DirectoryInfo(repoPath).LinkTarget is not null)
+            { entries.Add(Skip("symlinked directory — pass the real checkout's parent (or the scan dir to ingest explicitly)")); continue; }
             if (!Scope.IsInScope(name, scope)) { Console.Error.WriteLine($"scope  {name} (out of scope by config)"); entries.Add(new ManifestEntry { Name = name, Status = "out-of-scope" }); continue; }
             if (Push.Git(repoPath, "rev-parse HEAD", out var headOut, out _) != 0)
             { entries.Add(Skip("not a git repository or no commits")); continue; }
@@ -158,7 +174,14 @@ public static class ScanEstate
             CacheMeta? meta = null;
             if (hasManifest && hasFacts && File.Exists(Path.Combine(scanDir, "scan-estate.json")))
             {
-                try { meta = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(scanDir, "scan-estate.json")), JsonOpts); }
+                try
+                {
+                    var candidate = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(scanDir, "scan-estate.json")), JsonOpts);
+                    // hand-edited/foreign metadata must invalidate, never crash or silently reuse
+                    // (PR #2 Baz round 2): wrong schemaVersion or a null exclude list ⇒ rescan
+                    if (candidate is { SchemaVersion: "scan-estate-cache.v1", Exclude: not null })
+                        meta = candidate;
+                }
                 catch (JsonException) { meta = null; } // broken metadata ⇒ rescan (safe default)
             }
             var reuse = hasManifest && hasFacts && meta is not null
@@ -267,6 +290,8 @@ public static class ScanEstate
         DeltaFile delta;
         try { delta = JsonSerializer.Deserialize<DeltaFile>(File.ReadAllText(deltaPath), JsonOpts) ?? throw new JsonException(); }
         catch (JsonException ex) { Console.Error.WriteLine($"error: malformed delta file {deltaPath}: {ex.Message}"); return 1; }
+        if (delta.Changes is null)
+        { Console.Error.WriteLine($"error: malformed delta file {deltaPath}: changes is null — a delta with no changes must not exist at all"); return 1; } // valid JSON, null list (PR #2 Baz round 2): typed error, never an uncaught NRE
         if (delta.Changes.Count != 1)
         { Console.Error.WriteLine($"error: delta.json must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)"); return 1; }
         var deltaPkgName = delta.Changes[0].PackageName;
@@ -309,8 +334,17 @@ public static class ScanEstate
         }
 
         // ---- chain: ingest (explicit dirs, all sidecars explicit) → plan → report (§4.4) ----
+        // Ingest consumes the SNAPSHOT of the scope bytes this run actually filtered with (read
+        // once at the top): a file replaced mid-run cannot split the run's evidence between two
+        // scope versions (PR #2 Baz round 2). The snapshot stays in the out dir as provenance.
+        var scopePathForIngest = scopePath;
+        if (scopePath is not null && scopeText is not null)
+        {
+            scopePathForIngest = Path.Combine(Path.GetFullPath(outDir), "scope.snapshot.json");
+            File.WriteAllText(scopePathForIngest, scopeText);
+        }
         var fixtureDir = Path.Combine(Path.GetFullPath(outDir), "fixture");
-        var rcIngest = Ingest.Run(freshDirs.ToArray(), fixtureDir, producerPath, ownershipPath, deltaPath, null, scopePath);
+        var rcIngest = Ingest.Run(freshDirs.ToArray(), fixtureDir, producerPath, ownershipPath, deltaPath, null, scopePathForIngest);
         if (rcIngest != 0) return rcIngest;
         var plan = Program.LoadEngine(fixtureDir).BuildPlan();
         Program.WriteArtifactFile(Path.Combine(Path.GetFullPath(outDir), "plan.json"), Canonical.Write(plan));
@@ -330,14 +364,15 @@ public static class ScanEstate
 
     // Reason strings reach BOTH the console and scan-estate.v1.json — a file artifact --sanitized
     // never transforms by design — so credential-bearing URL userinfo is scrubbed HERE, at the
-    // source, unconditionally (PR #2 Baz round 1: git fetch stderr happily echoes the remote URL).
+    // source, unconditionally (PR #2 Baz round 1 + Codex P1 round 2: git fetch stderr happily
+    // echoes the remote URL, and PATs ride as USERNAME-ONLY userinfo — https://PAT@host — no colon).
     internal static string TrimReason(string text)
     {
         var firstLine = (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "";
         var scrubbed = System.Text.RegularExpressions.Regex.Replace(firstLine,
-            @"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^\s/@:]+:[^\s/@]+@", "$1***@"); // scheme://user:pass@host
+            @"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^\s/@]+@", "$1***@"); // scheme://ANY-userinfo@ (token or user:pass)
         scrubbed = System.Text.RegularExpressions.Regex.Replace(scrubbed,
-            @"\b[^\s/@:]+:[^\s/@]+@(?=[a-zA-Z0-9.\-]+\.)", "***@"); // scheme-less user:pass@host
+            @"\b[^\s/@]+@(?=[a-zA-Z0-9.\-]+\.)", "***@"); // scheme-less userinfo@host (scp-style, token-bearing)
         return scrubbed.Length <= 200 ? scrubbed : scrubbed[..200];
     }
 

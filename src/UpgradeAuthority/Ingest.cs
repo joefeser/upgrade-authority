@@ -546,14 +546,19 @@ public static class Ingest
     // SPEC-017: scan-estate's atomic-swap siblings (.name.tmp-xxxxxxxx / .name.old-xxxxxxxx — 8 hex).
     // Deliberately NARROW: the rule exists to hide swap leftovers, not to redefine which children are
     // scans — a dot-named child with facts.ndjson is still a scan per SPEC-011 (PR #2 Baz round 1).
+    // Each marker is tested INDEPENDENTLY: a repo named foo.tmp-copy leaves .foo.tmp-copy.old-deadbeef,
+    // and stopping at the embedded .tmp- would miss the real .old- suffix (PR #2 Codex P2).
     internal static bool IsSwapDir(string name)
     {
         if (!name.StartsWith('.')) return false;
-        var marker = name.LastIndexOf(".tmp-", StringComparison.Ordinal);
-        if (marker < 0) marker = name.LastIndexOf(".old-", StringComparison.Ordinal);
-        if (marker < 0) return false;
-        var suffix = name[(marker + 5)..];
-        return suffix.Length == 8 && suffix.All(Uri.IsHexDigit);
+        return MatchesSwapMarker(name, ".tmp-") || MatchesSwapMarker(name, ".old-");
+        static bool MatchesSwapMarker(string name, string marker)
+        {
+            var idx = name.LastIndexOf(marker, StringComparison.Ordinal);
+            if (idx < 0) return false;
+            var suffix = name[(idx + marker.Length)..];
+            return suffix.Length == 8 && suffix.All(Uri.IsHexDigit);
+        }
     }
 
     // repoName from a scan dir's manifest, if readable — for alternate-snapshot detection during discovery.

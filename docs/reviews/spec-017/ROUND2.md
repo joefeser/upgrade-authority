@@ -32,7 +32,7 @@ installed — closing the quorum gap retroactively on the code:
 | **Baz** (doctrine-rev preferred verifier) | check **pass** (8m); summary-only comment, **zero findings**, zero inline comments — nothing to triage, no dismissal receipts needed |
 | **Sourcery** | rate-limited (7-day diff budget exhausted) — posted a descriptive Reviewer's Guide (accurate sequence/flow diagrams), no findings |
 | **Qodo** | billing-blocked (out of credits) — no review, matches the doctrine's cost note |
-| CI (build + 116-case selftest + validator + public-clean gate) | **green** |
+| CI (build + 117-case selftest + validator + public-clean gate) | **green** |
 
 Doctrine §5 status for this round: Baz pass + coordinator disposition; Codex absent (no CLI in the
 authoring environment; the PR is the standing surface for a Codex pass if Joe ferries one).

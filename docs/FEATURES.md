@@ -1,6 +1,6 @@
 # Features — the complete tour
 
-Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 116-case selftest — including real tracemap scan data for the tricky cases.
+Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 117-case selftest — including real tracemap scan data for the tricky cases.
 
 ## 0. Estate wrapper — `ua scan-estate`
 
@@ -83,5 +83,5 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 ## 7. Engineering guarantees
 
 - **Zero dependencies** — a .NET 10 console tool with no NuGet packages; runs offline on macOS, Linux, and Windows (verified on an isolated, network-disabled Windows machine).
-- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-017`); the fixture corpus (24 goldens) pins behaviors byte-exactly, including real scan data; the 116-case selftest covers goldens, input-permutation invariance, and every typed refusal.
+- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-017`); the fixture corpus (24 goldens) pins behaviors byte-exactly, including real scan data; the 117-case selftest covers goldens, input-permutation invariance, and every typed refusal.
 - **Fidelity discipline** — golden changes require recorded, reviewed reasons (`docs/reviews/*/GOLDEN-CHANGES.md`); nothing is silently regenerated.

@@ -56,6 +56,7 @@ One preflight: `git --version` fails ⇒ typed error (git is required for freshn
 | # | Check | On failure |
 |---|---|---|
 | F0 | name starts with `.` | `status: ignored`, reason `dot-directory` (not a repo; recorded, not scanned) |
+| F0b | the child is a symlink/reparse point | skipped: `symlinked directory` — a link would redirect git/scanner work outside the operator's repos root; point scan-estate at the real checkout's parent or ingest the scan dir explicitly |
 | F1 | not a git repo / zero commits (`git rev-parse HEAD` fails) | skipped: `not a git repository or no commits` — **never bypassable** (tracemap requires a commit SHA) |
 | F2 | no `origin` remote | skipped: `no origin remote` — **never bypassable** (`--allow-stale` accepts a repo that IS stale against a trunk; with no remote there is no trunk to be stale against, and alternate-checkout dedupe (§4.2) keys on the origin URL) |
 | F3 | `git fetch origin` fails | skipped: `fetch failed: <first line of stderr, capped 200 chars, credential-bearing URL userinfo scrubbed>` (unless `--allow-stale`) — the reason persists into the run manifest (a file artifact `--sanitized` never transforms), so secrets are scrubbed at the source, unconditionally |
@@ -86,7 +87,7 @@ Out-of-scope repos (§3) are handled before all of this: not examined, `status: 
 2. Write `<out>/scan-estate.v1.json`: `{"schemaVersion":"scan-estate.v1","repos":[{"name","status","reason"?,"commitSha"?}]}` in name-ordinal order; `status ∈ scanned | reused | skipped | out-of-scope | ignored`. Written now — before any later step can fail — so the skip record always survives.
 3. If the fresh scan set is empty ⇒ typed error (exit 1) naming the composition: `no repos to ingest (0 fresh: N skipped, M out-of-scope, K ignored — see scan-estate.v1.json)`. No sidecar files are created on this path.
 4. Sidecar bootstrap (§4.3). Failures propagate exit codes (manifest already persisted).
-5. Ingest the fresh set as **explicit dirs, name-ordinal order** (stale-skipped repos' cached scans deliberately do not enter the run; alternates were already deduped in §4.2) with all three sidecars explicit plus `--scope` when given → `<out>/fixture`.
+5. Ingest the fresh set as **explicit dirs, name-ordinal order** (stale-skipped repos' cached scans deliberately do not enter the run; alternates were already deduped in §4.2) with all three sidecars explicit plus `--scope` when given → `<out>/fixture`. The scope file is read **once** at run start: the parsed form filters this run and the exact bytes are snapshotted to `<out>/scope.snapshot.json`, which is what ingest consumes — a file replaced mid-run cannot split one run's evidence between two scope versions; the snapshot remains as provenance of the bytes actually used.
 6. `plan --out <out>/plan.json`, `report --out <out>/report.md` (§6 bytes).
 7. Console summary (stderr): `estate: N scanned, N reused, N skipped, N out-of-scope, N ignored → <out>/report.md` plus, when nonzero, `note: skipped repos are listed in <out>/scan-estate.v1.json`. Exit 0 even with skips (they are visible, not errors); ingest/plan failures propagate their exit codes.
 

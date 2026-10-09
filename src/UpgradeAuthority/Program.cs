@@ -1669,6 +1669,11 @@ public static class Program
             var rep7 = File.ReadAllText(Path.Combine(out7, "report.md"));
             if (!rep7.Contains("- Scope: 1 repos out of scope by config: beta")) throw new Exception("report scope statement missing");
             if (!File.Exists(Path.Combine(out7, "fixture", "input", "scope.v0.json"))) throw new Exception("scope file not copied into the fixture");
+            // Baz r2: the fixture's scope bytes come from the SNAPSHOT of the one validated read —
+            // one run can never mix two scope versions, and the snapshot stays as provenance
+            var snapshot7 = Path.Combine(out7, "scope.snapshot.json");
+            if (!File.Exists(snapshot7)) throw new Exception("scope.snapshot.json missing (the run's actual evidence)");
+            if (File.ReadAllText(snapshot7) != File.ReadAllText(Path.Combine(out7, "fixture", "input", "scope.v0.json"))) throw new Exception("fixture scope bytes differ from the snapshot");
             using (var m7 = SEManifest(out7))
                 if (m7.RootElement.GetProperty("repos").EnumerateArray().First(e => e.GetProperty("name").GetString() == "beta").GetProperty("status").GetString() != "out-of-scope")
                     throw new Exception("manifest: beta must be out-of-scope");
@@ -1780,12 +1785,16 @@ public static class Program
             if (ScanEstate.Run(Path.Combine(root10, "repos"), out10d, null, scopeAll, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner) != 1) throw new Exception("empty fresh set must exit 1");
             if (!File.Exists(Path.Combine(out10d, "scan-estate.v1.json"))) throw new Exception("manifest must survive the empty-fresh-set error");
             if (File.Exists(Path.Combine(out10d, "ownership.v0.json"))) throw new Exception("no sidecars on the empty-fresh-set path");
-            // pre-placed 2-change delta -> typed refusal at bootstrap
+            // pre-placed 2-change delta -> typed refusal at bootstrap; null changes -> typed refusal, never an NRE
             var out10e = Path.Combine(Path.GetTempPath(), "ua-se10-out5-" + Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(out10e);
             File.WriteAllText(Path.Combine(out10e, "delta.json"),
                 "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"https://example.invalid/x.git\",\"sourceCommitSha\":\"0000000000000000000000000000000000000000\",\"changes\":[{\"id\":\"a\",\"packageName\":\"P\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"},{\"id\":\"b\",\"packageName\":\"Q\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"}]}\n");
             if (ScanEstate.Run(Path.Combine(root10, "repos"), out10e, null, null, "team-a", false, Array.Empty<string>(), null, null, null, StubScanner) != 1) throw new Exception("2-change delta must exit 1");
+            var out10f = Path.Combine(Path.GetTempPath(), "ua-se10-out6-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(out10f);
+            File.WriteAllText(Path.Combine(out10f, "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"https://example.invalid/x.git\",\"sourceCommitSha\":\"0000000000000000000000000000000000000000\",\"changes\":null}\n");
+            if (ScanEstate.Run(Path.Combine(root10, "repos"), out10f, null, null, "team-a", false, Array.Empty<string>(), null, null, null, StubScanner) != 1) throw new Exception("null-changes delta must exit 1 (typed), not crash");
             Console.WriteLine("ok   scan-estate-refusals (tracemap/self/trio/empty-set/multi-change)"); pass++;
             ForceDelete(root10);
             foreach (var d in new[] { out10, out10b, out10c, out10d, out10e }) if (Directory.Exists(d)) ForceDelete(d);
@@ -1986,7 +1995,42 @@ public static class Program
                 throw new Exception($"userinfo not scrubbed: {scrubbed15}");
             var scp15 = ScanEstate.TrimReason("fatal: user:pat@git.internal: repo not found");
             if (scp15.Contains("pat") || !scp15.Contains("***@")) throw new Exception($"scheme-less userinfo not scrubbed: {scp15}");
-            Console.WriteLine("ok   scan-estate-baz-round1 (empty-origin skip; all delta flags warn; reason scrub)"); pass++;
+            // Codex P1: USERNAME-ONLY userinfo (PAT-as-username, no colon) must scrub too
+            var pat15 = ScanEstate.TrimReason("fatal: unable to access 'https://ghp_Pr0vIdEnCe123@git.example.com/org/repo.git/': auth failed");
+            if (pat15.Contains("ghp_") || !pat15.Contains("***@git.example.com")) throw new Exception($"username-only PAT not scrubbed: {pat15}");
+            // Codex P2: IsSwapDir tests BOTH markers independently (embedded .tmp- in a repo name
+            // must not mask a real .old-<hex8> suffix)
+            if (!Ingest.IsSwapDir(".foo.tmp-copy.old-deadbeef")) throw new Exception("embedded .tmp- masked the .old- marker");
+            if (!Ingest.IsSwapDir(".name.tmp-1234abcd")) throw new Exception("plain tmp leftover missed");
+            if (!Ingest.IsSwapDir(".weird.old-copy.tmp-00001111")) throw new Exception("embedded .old- masked the .tmp- marker");
+            if (Ingest.IsSwapDir(".dotscan") || Ingest.IsSwapDir("normal") || Ingest.IsSwapDir(".x.tmp-nothex!") || Ingest.IsSwapDir(".x.tmp-1234abc")) throw new Exception("IsSwapDir over-matches");
+            // Baz r2: cache metadata that is foreign (wrong schemaVersion) or null-exclude must
+            // invalidate (rescan), never crash — exercised via the seam
+            var metaDir15 = Path.Combine(out15b, "scans", "alpha");
+            File.WriteAllText(Path.Combine(metaDir15, "scan-estate.json"), "{\"schemaVersion\":\"scan-estate-cache.v9\",\"exclude\":null}");
+            var calls15 = 0;
+            int Count15(ScanEstate.ScanRequest r) { calls15++; return StubScanner(r); }
+            if (ScanEstate.Run(Path.Combine(root15, "repos"), out15b, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count15) != 0) throw new Exception("foreign-metadata run failed");
+            if (calls15 != 1) throw new Exception($"invalid metadata must force exactly alpha's rescan (beta reused), got {calls15}");
+            File.WriteAllText(Path.Combine(metaDir15, "scan-estate.json"), "{\"schemaVersion\":\"scan-estate-cache.v1\",\"exclude\":null}");
+            calls15 = 0;
+            if (ScanEstate.Run(Path.Combine(root15, "repos"), out15b, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count15) != 0) throw new Exception("null-exclude run failed");
+            if (calls15 != 1) throw new Exception($"null-exclude metadata must invalidate (rescan alpha only), got {calls15}");
+            // Baz r2: symlinked children are visible skips (exercised where the platform allows creation)
+            DirectoryInfo? link15 = null;
+            try { link15 = (DirectoryInfo?)Directory.CreateSymbolicLink(Path.Combine(root15, "repos", "linky"), Path.Combine(root15, "repos", "beta")); }
+            catch (IOException) { /* Windows without dev mode: creation unavailable — guard is platform-neutral */ }
+            catch (UnauthorizedAccessException) { }
+            if (link15 is not null)
+            {
+                calls15 = 0;
+                if (ScanEstate.Run(Path.Combine(root15, "repos"), out15b, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count15) != 0) throw new Exception("symlink run failed");
+                if (calls15 != 0) throw new Exception("symlinked child must not be scanned (alpha/beta reused)");
+                using (var m15s = SEManifest(out15b))
+                    if (!m15s.RootElement.GetProperty("repos").EnumerateArray().Any(e => e.GetProperty("name").GetString() == "linky" && e.GetProperty("status").GetString() == "skipped" && e.GetProperty("reason").GetString()!.Contains("symlinked")))
+                        throw new Exception("symlink skip not recorded in the manifest");
+            }
+            Console.WriteLine("ok   scan-estate-baz-round1 (+r2: PAT scrub, both swap markers, metadata invalidation, symlink skip)"); pass++;
             ForceDelete(root15); ForceDelete(out15); ForceDelete(out15b);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-baz-round1: {ex.Message}"); }

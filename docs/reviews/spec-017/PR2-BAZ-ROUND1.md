@@ -34,3 +34,24 @@ tolerant excluded-broken-child path.
 Zero open blockers/majors across the full reviewer set — the implementation review is converged
 (doctrine §2). PR #2 awaits Joe's work-machine verification, then ONE merge to public main + one
 sync commit to private dev.
+
+## Round 2 on the fixed head (2026-10-09 — Codex P1/P2 + Baz's second pass)
+
+The "converged" call above was premature: the completion checks filtered comments by a wrong
+timestamp window, hiding a second round. Joe flagged it ("issues on head"). Baz's own thread-replies
+confirmed all seven round-1 fixes addressed; the NEW findings:
+
+| # | Finding (source) | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C1 | **Codex P1**: username-only userinfo (`https://PAT@host`) survives the scrub — both regexes required `user:pass@` (colon) | P1 | **Accepted** | Scrub broadened to ANY userinfo (`scheme://ANY@`, scheme-less `ANY@host`); PAT-shaped case pinned in selftest |
+| C2 | **Codex P2**: `IsSwapDir` stops at the first `.tmp-` marker — a repo named `foo.tmp-copy` leaves `.foo.tmp-copy.old-deadbeef` unrecognized | P2 | **Accepted** | Both markers tested independently (`MatchesSwapMarker(.tmp-) \|\| (.old-)`); embedded-marker cases pinned |
+| Bz | Symlinked repos-root child redirects git/scanner outside the root | high | **Accepted (hardening)** | `DirectoryInfo.LinkTarget` ⇒ visible skip `symlinked directory` (spec §4.1 F0b); selftest exercises where the platform allows creation |
+| Bz | Cache metadata with `"exclude": null` NREs in `SequenceEqual`; no schemaVersion check reuses foreign metadata | medium | **Accepted** | Reuse requires `scan-estate-cache.v1` AND non-null `Exclude`, else rescan (spec §4.2's "malformed ⇒ rescan" made literal); both invalidation shapes pinned |
+| Bz | Delta `"changes": null` (valid JSON) NREs at `delta.Changes.Count` | medium | **Accepted** | Null ⇒ typed malformed error (spec's error path), pinned |
+| Bz | Selftest count drift: docs said 116, suite runs 117 | medium | **Accepted** | Full sweep (README/FEATURES/runbook/doc-16/GOLDEN-CHANGES/ROUND2) |
+| Bz | Scope file validated once but reread by ingest — a mid-run replacement splits evidence | medium | **Accepted** | Scope read ONCE at run start; parsed form filters the run, exact bytes snapshotted to `<out>/scope.snapshot.json` which ingest consumes; fixture-bytes == snapshot pinned (spec §4.4 step 5) |
+| Bz | Legit scan dirs named `.<x>.tmp-<8hex>` are skipped by the swap rule | medium | **Dismissed (receipt)** | The collision requires a scan dir named exactly dot-prefix + tmp/old + 8 hex — a reservation scan-estate itself created and documents (§3); the demonstrated real failure is the inverse (swap leftover WITH facts discovered as a scan, round-1 finding 7). Baz's own round-1 reply confirmed the narrowed rule's intent. Operators naming scan dirs in the reserved pattern is the theoretical side of the trade |
+
+Also from Baz's thread-replies: the pipe-drain fix was noted as "reads not awaited before disposal —
+cleanup only partially robust" → drain tasks now observed with a bounded wait (exit code remains the
+contract). Selftest stays 117 cases (extensions, no new case); goldens untouched.
