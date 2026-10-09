@@ -40,7 +40,7 @@ git clone https://github.com/joefeser/upgrade-authority
 cd upgrade-authority
 dotnet build src/UpgradeAuthority        # ~5 s; no package restore beyond the SDK
 
-# full self-check: 110+ cases incl. real committed scan data (offline)
+# full self-check: 120+ cases incl. real committed scan data (offline)
 dotnet run --project src/UpgradeAuthority -- selftest
 
 # try it on the committed demo estate (real tracemap scans, sanitized)
@@ -62,6 +62,7 @@ Requires the .NET 10 SDK. Everything else is self-contained.
 | `ua scan-estate` | One command from a folder of repo checkouts to a report: freshness precondition (every scanned repo at its origin trunk tip, or visibly skipped), SHA-cached tracemap scans (the scans folder IS the cache — re-runs rescan only movers), sidecar bootstrap, then ingest → plan → report. `--scope <file>` declares repos out of scope (visible in the report, never silently dropped); `--exclude <glob>` passes tracemap folder exclusions through. |
 | `ua ingest` | Converts tracemap scan output (facts.ndjson + scan-manifest.json) into planner inputs. Multi-repo; `--scans-root <dir>` ingests a whole scans tree in one command; `--scope <file>` filters discovery with a visible scope statement in the plan. |
 | `ua ownership init/update` | Generates and maintains the ownership file (which team owns each repo) from the scan set — the last hand-maintained input, optional where scans declare producers. |
+| `ua drift` | Outdated discovery: compares the estate's installed versions (lockfile rows + exact pins) against feed truth — a `feed-versions.v1` file or a flat folder feed of `*.nupkg` names — and emits a canonical `drift.v1` report (behind / current / ahead / unclassified / unknown-feed) plus single-change delta candidates (`--emit-deltas`). Never fetches live ("stated, not verified live"); classification shares apply's comparer, so drift can never disagree with the upgrade-only policy. |
 | `ua plan` | The impact plan: three-state repo classification (affected / not-affected / unknown), waves with statuses and prerequisites, findings (evidenced version disagreements inside a repo). Byte-deterministic; `--out <file>` writes canonical bytes directly (PowerShell 5.1-safe). |
 | `ua report` | Markdown rendering of the plan — waves, gates, evidence, gaps, findings, scan-health notes. `--out <file>` writes canonical bytes directly. |
 | `ua apply` | Derives edit sites from evidence (direct pins, CPM central pins, `VersionOverride`, packages.config), applies the upgrade-only policy (never downgrades), verifies each site against a checkout, emits per-wave unified diffs. |
@@ -86,7 +87,7 @@ See [docs/FEATURES.md](docs/FEATURES.md) for the full tour and [docs/COMPARISONS
 
 ## Status
 
-V0 feature-complete: the full chain above is implemented, specified, and pinned by a 117-case deterministic selftest that runs byte-exact on Windows, macOS, and Linux (checkout line endings are pinned by `.gitattributes`; a selftest guard fails loudly on a CRLF checkout). The fixture corpus includes real tracemap scan output for multi-project estates — central package management, version overrides, multi-TFM lockfiles, legacy `packages.config`, and producer/consumer graphs.
+V0 feature-complete: the full chain above is implemented, specified, and pinned by a 124-case deterministic selftest that runs byte-exact on Windows, macOS, and Linux (checkout line endings are pinned by `.gitattributes`; a selftest guard fails loudly on a CRLF checkout). The fixture corpus includes real tracemap scan output for multi-project estates — central package management, version overrides, multi-TFM lockfiles, legacy `packages.config`, and producer/consumer graphs.
 
 Roadmap sketches (not built): persistent storage behind the planner, an action queue for long-running campaigns, vulnerability-intelligence ingestion, multi-user operation with roles.
 

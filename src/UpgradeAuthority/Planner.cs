@@ -37,6 +37,10 @@ public sealed class Engine
         return r.TrimEnd('/');
     }
 
+    // SPEC-018: drift reads the loaded inventory without planning — read-only views of the fused inputs.
+    internal IReadOnlyDictionary<string, List<Fact>> FactsView => _facts;
+    internal IReadOnlyDictionary<string, List<LockRow>> LockRowsView => _lockRows;
+
     // SPEC-017 §5: the plan echoes the config — deduped, ordinal (permutation-stable); the config's
     // own order never reaches the plan. Null when there is no scope input (zero churn for existing fixtures).
     PlanScope? BuildScope() => _scope is null ? null : new PlanScope

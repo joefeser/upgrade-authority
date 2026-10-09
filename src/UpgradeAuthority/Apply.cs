@@ -152,6 +152,11 @@ public static class Apply
         }
         return 0;
     }
+    // SPEC-018 §4: exact-pin test extracted for sharing with drift. Same semantics as the edit-site
+    // gate above (ranges/floating/prerelease/redacted fail it) with two deliberate divergences
+    // stated by the spec: no line-evidence requirement and no comparison target.
+    internal static bool IsExactPin(string constraint) =>
+        constraint.Length > 0 && !constraint.StartsWith("redacted:") && ParseCore(constraint) is not null;
     static int[]? ParseCore(string v)
     {
         var parts = v.Split('.');

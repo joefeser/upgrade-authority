@@ -1,6 +1,6 @@
 # Features — the complete tour
 
-Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 117-case selftest — including real tracemap scan data for the tricky cases.
+Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 124-case selftest — including real tracemap scan data for the tricky cases.
 
 ## 0. Estate wrapper — `ua scan-estate`
 
@@ -39,6 +39,15 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 - **init** — every discovered repo, ordinal order: `--all-self` (one team owns the estate), `--team <t>`, or `--unassigned` (checklist to stderr, zero ownerships — absent means *unknown* to the planner, never an invented team).
 - **update** — manual assignments are sacred (kept verbatim); `mirrors[]` and unknown future fields pass through untouched; alias-keyed entries resolve through the file's own mirror mappings exactly as the planner does; repos missing from the scan set are **kept and warned** (a scan gap never erases an assignment).
 - **One identity algorithm** — repo identity is computed by the same code ingest uses; the generator and the planner can never disagree about who a repo is.
+
+## 2b. Drift — `ua drift` (outdated discovery)
+
+**What it does:** answers "what's actually old" — the north-star step the hand-written delta used to paper over.
+
+- **Feed truth, never live** — latest versions arrive as a file (`feed-versions.v1`, `asOf` echoed verbatim) or a flat folder feed of `*.nupkg` names (longest-suffix filename grammar; prerelease-suffixed and hyphenated ids parse; one version per id — latest-selection needs prerelease ordering V0 refuses). "Stated, not verified live."
+- **Installed inventory** — lockfile rows (resolved truth) + exact declared pins (`declared-pin` evidence), case-insensitive package identity with an estate-spelling rule that never lets a feed-cased delta silently plan to nothing; a repo seen at two versions keeps both rows.
+- **Classification parity** — behind / current / ahead via apply's own comparer (drift can never disagree with the upgrade-only policy); prerelease/floating sides are honest `unclassified` rows with D1–D3 reasons; packages missing from the feed are `unknown-feed` — visible, never guessed.
+- **Delta candidates** — `--emit-deltas <dir>` writes one single-change `package-delta.v1` per distinct behind version, planner-compatible as-is; picking which to run (deepest-layer-first) stays a human/campaign decision. Canonical `drift.v1` output with `--out` (SPEC-017 convention).
 
 ## 3. Planning — `ua plan`
 
@@ -83,5 +92,5 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 ## 7. Engineering guarantees
 
 - **Zero dependencies** — a .NET 10 console tool with no NuGet packages; runs offline on macOS, Linux, and Windows (verified on an isolated, network-disabled Windows machine).
-- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-017`); the fixture corpus (24 goldens) pins behaviors byte-exactly, including real scan data; the 117-case selftest covers goldens, input-permutation invariance, and every typed refusal.
+- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-017`); the fixture corpus (24 goldens) pins behaviors byte-exactly, including real scan data; the 124-case selftest covers goldens, input-permutation invariance, and every typed refusal.
 - **Fidelity discipline** — golden changes require recorded, reviewed reasons (`docs/reviews/*/GOLDEN-CHANGES.md`); nothing is silently regenerated.
