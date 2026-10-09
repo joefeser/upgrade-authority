@@ -2408,6 +2408,35 @@ public static class Program
             if (rT19.Classification != "unknown" || planT19.Waves.SelectMany(w => w.ReleaseUnits).Any(u => u.Repo == "repo"))
                 throw new Exception($"stale target row: {rT19.Classification} + scheduled — must be unknown, never scheduled, never a crash");
             Directory.Delete(scT19, true);
+            // C17 (PR4 r5): a stale deps.json row mentioning the target must NOT demote a repo whose
+            // independent lockfile closure proves cleanliness (spec 19-5: lockfile stands; stale demotes build-only)
+            var scL19 = Path.Combine(Path.GetTempPath(), "ua-d19l-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(mixed19, scL19);
+            var pxL19 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scL19, "input", "package-evidence.v0.json")))!;
+            pxL19["facts"] = new System.Text.Json.Nodes.JsonArray(); // isolate closure semantics: no consumer declarations, rows only
+            File.WriteAllText(Path.Combine(scL19, "input", "package-evidence.v0.json"), pxL19.ToJsonString());
+            var dLock19 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scL19, "input", "delta.json")))!;
+            dLock19["changes"]![0]!["packageName"] = "Serilog";
+            File.WriteAllText(Path.Combine(scL19, "input", "delta.json"), dLock19.ToJsonString());
+            // mixed19's repo: lockfile row Newtonsoft 12.0.3 + deps.json row 13.0.3; make deps STALE, delta targets Newtonsoft
+            var v2L19 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scL19, "input", "lockfile-rows.v2.json")))!;
+            foreach (var row in v2L19["repos"]![0]!["rows"]!.AsArray())
+                if (row!["provenance"] is not null) row["packageId"] = "Newtonsoft.Json"; // ensure the deps row names the target (it already does; explicit)
+            File.WriteAllText(Path.Combine(scL19, "input", "lockfile-rows.v2.json"), v2L19.ToJsonString());
+            File.WriteAllText(Path.Combine(scL19, "input", "build-freshness.v0.json"), "{\"schemaVersion\":\"build-freshness.v0\",\"repos\":[{\"repo\":\"repo\",\"freshness\":\"stale\"}]}");
+            var dNL19 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scL19, "input", "delta.json")))!;
+            dNL19["changes"]![0]!["packageName"] = "Newtonsoft.Json"; dNL19["changes"]![0]!["oldVersion"] = "12.0.3"; dNL19["changes"]![0]!["newVersion"] = "13.0.3";
+            File.WriteAllText(Path.Combine(scL19, "input", "delta.json"), dNL19.ToJsonString());
+            // (a lockfile row naming the target with a direct relation is rule-c affected — expected, not under test here)
+            // now a target the LOCKFILE does not name but the STALE deps row does: lockfile closure must stand
+            var v2L19b = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scL19, "input", "lockfile-rows.v2.json")))!;
+            foreach (var row in v2L19b["repos"]![0]!["rows"]!.AsArray())
+                if (row!["provenance"] is null) row["packageId"] = "Serilog"; // lockfile names Serilog (not the target)
+            File.WriteAllText(Path.Combine(scL19, "input", "lockfile-rows.v2.json"), v2L19b.ToJsonString());
+            var pL19b = LoadEngine(scL19).BuildPlan();
+            var rL19b = pL19b.Repos.First(r => r.Repo == "repo");
+            if (rL19b.Classification != "not-affected") throw new Exception($"independent lockfile closure must stand despite the stale deps row naming the target — got {rL19b.Classification}: {string.Join(" | ", rL19b.Reasons)}");
+            Directory.Delete(scL19, true);
             var scAbs19 = Path.Combine(Path.GetTempPath(), "ua-d19a-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(fd19, scAbs19);
             File.Delete(Path.Combine(scAbs19, "input", "build-freshness.v0.json"));

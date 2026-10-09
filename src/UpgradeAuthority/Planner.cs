@@ -270,8 +270,14 @@ public sealed class Engine
         {
             if (affected.Contains(repo)) { classification[repo] = "affected"; continue; }
             bool complete = _coverage.GetValueOrDefault(repo)?.Status == "complete";
+            bool hasIndependentLockfile = LockOf(repo).Any(r => r.Provenance is null); // checked-in resolution truth
             bool hasLock = LockProvable(repo).Count > 0; // SPEC-019: a stale build-resolved closure proves nothing — only lockfile rows or FRESH deps.json rows can
-            bool touches = FactsOf(repo).Any(f => affectedPkgs.Contains(f.PackageId)) || LockOf(repo).Any(r => affectedPkgs.Contains(r.PackageId)); // suspicion sees ALL rows incl. stale deps.json (conservative direction)
+            // Suspicion: facts + provable rows always; STALE deps rows only demote repos with NO independent
+            // lockfile closure (C17 r5 / spec 19-5: a complete lockfile closure stands on its own — the
+            // stale build row becomes an unactionable observation, never a demotion of checked-in proof)
+            bool touches = FactsOf(repo).Any(f => affectedPkgs.Contains(f.PackageId))
+                || LockProvable(repo).Any(r => affectedPkgs.Contains(r.PackageId))
+                || (!hasIndependentLockfile && LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo) && affectedPkgs.Contains(r.PackageId)));
             classification[repo] = complete && hasLock && !touches ? "not-affected" : "unknown";
         }
 

@@ -398,6 +398,16 @@ public static class ScanEstate
                     }
                     return;
                 }
+                if (satellite is not null)
+                {
+                    // C15 r5: real scanners derive repoName/repo from the SATELLITE path (alpha-<hex8>).
+                    // That leaf is an artifact of OUR orchestration, not the repo's identity — restore the
+                    // canonical name in the recorded facts/manifest so ingest identity and freshness match.
+                    var leaf = Path.GetFileName(satellite);
+                    foreach (var f in new[] { Path.Combine(tmp, "facts.ndjson"), Path.Combine(tmp, "scan-manifest.json") })
+                        if (File.Exists(f))
+                            File.WriteAllText(f, File.ReadAllText(f).Replace($"\"repo\": \"{leaf}\"", $"\"repo\": \"{entry.Name}\"").Replace($"\"repoName\": \"{leaf}\"", $"\"repoName\": \"{entry.Name}\""));
+                }
                 var meta = new CacheMeta
                 {
                     Exclude = tracemapExcludes.ToList(), TracemapSha256 = dllHash, StaleScan = staleWaived,
@@ -609,7 +619,7 @@ public static class ScanEstate
             try { entries = Directory.EnumerateFileSystemEntries(dir); }
             catch (Exception) when (ex581(dir)) { truncated = true; continue; } // unreadable subtree = incomplete evidence — FAIL CLOSED (C11 r4)
             var broke = false;
-            foreach (var e in entries)
+            foreach (var e in SafeIterate(entries, () => truncated = true)) // C16 r5: lazy enumeration throws from MoveNext, not creation
             {
                 if (++entriesSeen > MaxWalkedEntries) { truncated = true; broke = true; break; }
                 string name;
@@ -634,7 +644,18 @@ public static class ScanEstate
         if (truncated)
             Console.Error.WriteLine($"warning: deps.json discovery under {root} exceeded its budget ({MaxDepsManifests} manifests / {MaxWalkedDirs} dirs) — evidence treated conservatively (stale; fingerprint sentinel)");
         return (found.OrderBy(f => f, StringComparer.Ordinal).ToList(), truncated);
-        static bool ex581(string d) => true; // unreadable directory: skip, never abort the estate
+        static bool ex581(string d) => true; // unreadable path: skip, never abort the estate
+        static IEnumerable<string> SafeIterate(IEnumerable<string> source, Action markTruncated)
+        {
+            var it = source.GetEnumerator();
+            while (true)
+            {
+                string current;
+                try { if (!it.MoveNext()) yield break; current = it.Current; }
+                catch (Exception) { markTruncated(); yield break; } // inaccessible mid-iteration = incomplete evidence, fail closed
+                yield return current;
+            }
+        }
     }
 
     // make-style skip key: metadata only (path, size, mtime), never content reads (SPEC-019 §6)
