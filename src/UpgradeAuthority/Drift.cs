@@ -86,6 +86,7 @@ public static class Drift
 
     static (FeedFile?, string?, int) Validate(FeedFile? raw, string displayName)
     {
+        displayName = Esc(displayName); // the basename itself is untrusted on unix (PR #3 Codex r3)
         if (raw is null) return (null, $"feed file {displayName}: unparseable", 5);
         if (raw.SchemaVersion != "feed-versions.v1")
             return (null, $"feed file {displayName}: schemaVersion mismatch — expected 'feed-versions.v1', got '{Esc(raw.SchemaVersion ?? "")}'", 5);
