@@ -222,9 +222,10 @@ public static class ScanEstate
             else if (updateCheckouts)
             {
                 // Joe's script: dirty => rescue branch + commit (never silent, never dropped); then trunk + ff-only.
-                if (Push.Git(repoPath, "status --porcelain", out var dirtyOut, out _) != 0 || dirtyOut.Trim().Length > 0)
+                if (Push.Git(repoPath, "status --porcelain", out var dirtyOut, out _) != 0)
+                { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree")); continue; } // C36 r12
+                if (dirtyOut.Trim().Length > 0)
                 {
-                    if (dirtyOut.Trim().Length > 0)
                     {
                         var rescueBranch = "";
                         var rescueOk = false;
@@ -431,6 +432,7 @@ public static class ScanEstate
                     lock (gate)
                     {
                         entry.Status = "skipped";
+                        entry.BuildFreshness = null; // C38 r12: no successful scan established freshness
                         entry.Reason = rc == 0 ? "scanner exited 0 but produced no facts.ndjson/scan-manifest.json" : $"tracemap exited {rc}";
                         Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
                     }
@@ -512,6 +514,7 @@ public static class ScanEstate
                 lock (gate)
                 {
                     entry.Status = "skipped";
+                    entry.BuildFreshness = null; // C38 r12
                     entry.Reason = $"scan worker failed: {TrimReason(ex.Message)}";
                     Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
                     workerFault = true; // Baz r8: an internal fault never masquerades as a successful estate run

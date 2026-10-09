@@ -182,8 +182,8 @@ public sealed class Engine
     }
 
     // the produced package through which some consumer's lockfile evidences target flow
-    string? CarrierPkg(string repo) =>
-        ProducedOf(repo).FirstOrDefault(p2 => _lockRows.Any(kv => kv.Key != repo && kv.Value.Any(r => r.PackageId == Target && r.Via == p2)));
+    string? CarrierPkg(string repo) => // C37 r12: corroboration honors the freshness gate — stale build output never corroborates
+        ProducedOf(repo).FirstOrDefault(p2 => _lockRows.Any(kv => kv.Key != repo && LockProvable(kv.Key).Any(r => r.PackageId == Target && r.Via == p2)));
 
     static string Range(List<string> pkgs)
     {
@@ -707,17 +707,21 @@ public sealed class Engine
                 case 'c':
                     // SPEC-007 §5.3: rule (c) is established by a transitive row; narrate THAT row's
                     // evidence — never a direct row's absent via (mixed-relation case, F11).
-                    var via = (LockProvable(repo).FirstOrDefault(r => r.PackageId == Target && r.Type == "transitive")
-                               ?? LockProvable(repo).First(r => r.PackageId == Target)).Via;
+                    var cRow = LockProvable(repo).FirstOrDefault(r => r.PackageId == Target && r.Type == "transitive")
+                               ?? LockProvable(repo).First(r => r.PackageId == Target);
+                    var via = cRow.Via;
+                    // C39 r12: a deps.json row is build output, never checked-in resolution truth — say so
+                    var cBasis = cRow.Provenance is null ? "lockfile"
+                        : $"build output (deps.json), freshness: {(_depsFreshness.GetValueOrDefault(repo) == "fresh-by-build" ? "fresh-by-build (built at the scanned commit)" : "fresh")}";
                     var direct = via is not null
                         ? (LockOf(repo).FirstOrDefault(r => r.PackageId == via && r.Type == "direct") is { } vp ? vp.PackageId : null)
                         : null;
                     if (via is null)
-                        e.Reasons.Add($"transitive exposure to {Target} evidenced by {repo}'s lockfile rows (parent not evidenced — dependencyNames absent or exceeded 256 chars)");
+                        e.Reasons.Add($"transitive exposure to {Target} evidenced by {repo}'s {cBasis} rows (parent not evidenced — dependencyNames absent or exceeded 256 chars)");
                     else if (externalTarget)
-                        e.Reasons.Add($"transitive path {repo} -> {direct ?? via} -> {Target} evidenced by {repo}'s lockfile rows ({Target} transitive via {direct ?? via})");
+                        e.Reasons.Add($"transitive path {repo} -> {direct ?? via} -> {Target} evidenced by {repo}'s {cBasis} rows ({Target} transitive via {direct ?? via})");
                     else
-                        e.Reasons.Add($"transitive path {repo} -> {via} -> {Target} reconstructed from {repo}'s own lockfile ({direct ?? via} direct; {Target} transitive via {via})");
+                        e.Reasons.Add($"transitive path {repo} -> {via} -> {Target} reconstructed from {repo}'s own {cBasis} ({direct ?? via} direct; {Target} transitive via {via})");
                     break;
                 case 'd':
                     if (!dMat) break;

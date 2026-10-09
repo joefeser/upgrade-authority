@@ -109,3 +109,12 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 |---|---|---|---|---|
 | C34 | Pre-pass still fetched URL-less checkouts (reported as fetch failures) and alternate duplicates | P2 | **Accepted** | URL-less filtered at eligibility; alternates deduped name-ordinal-first-wins over the origin URL (same rule as the sequential loop) |
 | C35 | Scanner-failure and swap-failure worktree skips kept `buildFreshness` | P2 | **Accepted** | Null on every unsuccessful terminal path |
+
+## Round 12 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C36 | Unreadable `git status` proceeded to checkout/ff — mutating an unverifiable tree | P2 | **Accepted** | Nonzero status ⇒ visible skip before any mutation |
+| C37 | `CarrierPkg` corroborated producers from stale deps rows (confidence inflation) | P2 | **Accepted** | Gated on `LockProvable` |
+| C38 | Scanner-failure and worker-exception skips still serialized freshness | P2 | **Accepted** | Null on both terminal paths |
+| C39 | Rule-c reasons said "lockfile" for deps.json rows | P2 | **Accepted** | The row's provenance selects the basis text; deps.json rows name build output + the freshness qualifier |
