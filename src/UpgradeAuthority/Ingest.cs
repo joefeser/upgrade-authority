@@ -476,13 +476,22 @@ public static class Ingest
         var dedupedScan = new List<ProducerEntry>();
         foreach (var g in producedProducers.GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant())))
         {
+            // the raw repo spelling is the FINAL tie-breaker: spellings NormBasic collapses ("R" vs "R/")
+            // must never make the persisted entry fact-order dependent (PR5 Baz round 3)
             var ordered = g.OrderBy(p => Ord(p.ProducedVersion) == "" ? 1 : 0)
                            .ThenBy(p => Ord(p.ProducedVersion), StringComparer.Ordinal)
                            .ThenBy(p => p.PackageId, StringComparer.Ordinal)
-                           .ThenBy(p => Ord(p.EvidenceNote), StringComparer.Ordinal).ToList();
+                           .ThenBy(p => Ord(p.EvidenceNote), StringComparer.Ordinal)
+                           .ThenBy(p => p.Repo, StringComparer.Ordinal).ToList();
             var claims = ordered.Select(p => p.ProducedVersion).Distinct().ToList();
             if (claims.Count > 1)
-                Console.Error.WriteLine($"warning: scan declares '{Esc(ordered[0].Repo)}/{Esc(ordered[0].PackageId)}' at {claims.Count} versions ({string.Join(", ", claims.OrderBy(v => Ord(v), StringComparer.Ordinal).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v)}'"))}) — '{Esc(Ord(ordered[0].ProducedVersion) == "" ? "unevidenced" : ordered[0].ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+            {
+                // bounded rendering: a pathological scan cannot flood stderr — first 5 claims + omitted count
+                var shown = claims.OrderBy(v => Ord(v), StringComparer.Ordinal)
+                    .Take(5).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v)}'").ToList();
+                if (claims.Count > shown.Count) shown.Add($"(+{claims.Count - shown.Count} more)");
+                Console.Error.WriteLine($"warning: scan declares '{Esc(ordered[0].Repo)}/{Esc(ordered[0].PackageId)}' at {claims.Count} versions ({string.Join(", ", shown)}) — '{Esc(Ord(ordered[0].ProducedVersion) == "" ? "unevidenced" : ordered[0].ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+            }
             dedupedScan.Add(ordered[0]);
         }
         producedProducers = dedupedScan;

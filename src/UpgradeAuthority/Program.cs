@@ -2447,9 +2447,9 @@ public static class Program
             // PR5 Baz round 2: scan-vs-scan duplicates are not sidecar overrides (two projects, one
             // package id) — identical claims collapse silently, two versions warn honestly and keep
             // ordinal-first, and the cross-source "sidecar kept" warning never fires for scan-only dups
-            string ProdFactJson(string id, string version) => JsonSerializer.Serialize(new
+            string ProdFactJson(string id, string version, string repo = "R-dup") => JsonSerializer.Serialize(new
             {
-                factId = "fact-" + id + "-" + version, scanId = "s", repo = "R-dup", commitSha = "c",
+                factId = "fact-" + repo + "-" + id + "-" + version, scanId = "s", repo = repo, commitSha = "c",
                 factType = "PackageProduced", ruleId = "project.file.v1", evidenceTier = "Tier2Structural",
                 evidence = new { filePath = "src/P" + version + ".csproj", startLine = 4, endLine = 5, extractorId = "ProjectFileExtractor", extractorVersion = "0.3.0" },
                 properties = new Dictionary<string, object?>
@@ -2461,7 +2461,7 @@ public static class Program
             var scanD = Path.Combine(Path.GetTempPath(), "ua-rg-dup-" + Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(scanD);
             File.WriteAllText(Path.Combine(scanD, "facts.ndjson"),
-                ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "2.0.0") + "\n");
+                ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "2.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0", "R-dup/") + "\n"); // spelling tie under NormBasic
             File.Copy(Path.Combine(richO, "sidecars-estate2", "delta.json"), Path.Combine(scanD, "delta.json"));
             var outD = Path.Combine(Path.GetTempPath(), "ua-rg-dupo-" + Guid.NewGuid().ToString("N")[..8]);
             var errPrevD = Console.Error;
@@ -2476,8 +2476,10 @@ public static class Program
             var prodsD = JsonDocument.Parse(File.ReadAllText(Path.Combine(outD, "input", "producer-evidence.v0.json"))).RootElement.GetProperty("producers");
             if (prodsD.GetArrayLength() != 1 || prodsD[0].GetProperty("producedVersion").GetString() != "1.0.0" || prodsD[0].GetProperty("provenance").GetString() != "project-declared")
                 throw new Exception("scan dedup must keep ONE ordinal-first entry: " + prodsD.GetRawText());
+            if (prodsD[0].GetProperty("repo").GetString() != "R-dup")
+                throw new Exception("spelling ties under NormBasic must break ordinally (R-dup before R-dup/): " + prodsD.GetRawText());
             File.WriteAllText(Path.Combine(scanD, "facts.ndjson"),
-                ProdFactJson("Contoso.Dup", "2.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n");
+                ProdFactJson("Contoso.Dup", "1.0.0", "R-dup/") + "\n" + ProdFactJson("Contoso.Dup", "2.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n");
             var outD2 = Path.Combine(Path.GetTempPath(), "ua-rg-dup2-" + Guid.NewGuid().ToString("N")[..8]);
             if (Ingest.Run(new[] { scanD }, outD2, null, null, null) != 0) throw new Exception("dup ingest 2 failed");
             if (File.ReadAllText(Path.Combine(outD, "input", "producer-evidence.v0.json")) != File.ReadAllText(Path.Combine(outD2, "input", "producer-evidence.v0.json")))
