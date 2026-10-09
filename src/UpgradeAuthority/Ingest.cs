@@ -189,7 +189,7 @@ public static class Ingest
         {
             if (f.FactType != "PackageReferenced") continue;
             var mk = Prop(f, "manifestKind");
-            if (mk == "packages.lock.json") continue; // handled separately
+            if (mk == "packages.lock.json" || mk == "deps.json") continue; // resolution evidence, handled as lockfile-class rows (SPEC-019 §4: build output is NEVER a consumer declaration — it would fabricate rule-b edges, CPM correlations, and apply sites inside bin/)
 
             var key = RepoKey(f, manifest);
             var pkg = Prop(f, "packageName", "package", "name");
@@ -298,7 +298,8 @@ public static class Ingest
         foreach (var (f, manifest, dir) in allFacts)
         {
             if (f.FactType != "PackageReferenced") continue;
-            if (Prop(f, "manifestKind") != "packages.lock.json") continue;
+            var factKind = Prop(f, "manifestKind");
+            if (factKind != "packages.lock.json" && factKind != "deps.json") continue;
             var key = RepoKey(f, manifest);
             var pkg = Prop(f, "packageName", "package", "name");
             if (string.IsNullOrEmpty(pkg)) { ingestGaps.Add($"skipped lockfile fact {f.FactId}: no packageName"); repoIngestGaps.Add((key, $"skipped lockfile fact: no packageName")); continue; }
@@ -306,7 +307,9 @@ public static class Ingest
             var resolved = Prop(f, "resolvedVersion") ?? "";
             var namesStr = Prop(f, "dependencyNames"); // comma-joined string, or null/empty
             var tfm = Prop(f, "targetFramework") ?? "";
-            var lockfilePath = Prop(f, "lockfilePath") ?? f.Evidence?.FilePath ?? "";
+            var lockfilePath = factKind == "deps.json"
+                ? Prop(f, "manifestPath") ?? f.Evidence?.FilePath ?? "" // SPEC-019 §4: deps.json rows key on the build-output manifest path
+                : Prop(f, "lockfilePath") ?? f.Evidence?.FilePath ?? "";
             if (lockfilePath == "")
             { ingestGaps.Add($"skipped lockfile fact {f.FactId}: no lockfilePath — {pkg}"); repoIngestGaps.Add((key, $"skipped lockfile fact: no lockfilePath — {pkg}")); continue; }
             if (resolved == "")
@@ -321,6 +324,15 @@ public static class Ingest
                 Names = namesStr, // preserve the comma-joined string; planner treats it as child detail
                 Lockfile = lockfilePath,
                 Tfm = tfm,
+                Provenance = factKind == "deps.json"
+                    ? new RowProvenance
+                    {
+                        // SPEC-019 §4: upstream's reserved placeholders pass through UNTOUCHED — ua never overwrites them
+                        ManifestSha256 = Prop(f, "manifestSha256") ?? "",
+                        Freshness = Prop(f, "freshness") ?? "unknown",
+                        BuildCommitSha = Prop(f, "buildCommitSha") ?? "unknown",
+                    }
+                    : null,
             };
             if (!lockfiles.TryGetValue(key, out var rows)) lockfiles[key] = rows = new();
             // Row identity = (lockfile, tfm, packageId). Cross-lockfile/cross-TFM disagreement is legal
@@ -378,7 +390,9 @@ public static class Ingest
                 var diagnosticKind = Prop(f, "diagnosticKind");
                 var ruleId = f.RuleIdProp ?? "";
                 bool isNote;
-                if (gapKind is not null && gapKind.Contains("packages-lock", StringComparison.Ordinal))
+                if (gapKind is not null && gapKind.StartsWith("deps-json-", StringComparison.Ordinal))
+                    isNote = gapKind == "deps-json-not-found"; // SPEC-019 §4: no build output = the expected never-built state (Note); every other deps-json-* = evidence lost (Gap)
+                else if (gapKind is not null && gapKind.Contains("packages-lock", StringComparison.Ordinal))
                     isNote = false; // lockfile evidence loss
                 else if (gapKind is "CompilationDiagnostic" or "WorkspaceDiagnostic" or "SdkResolutionFailed")
                     isNote = true; // compile/build health
@@ -495,6 +509,31 @@ public static class Ingest
             Facts = evidence.Values.SelectMany(v => v).ToList(), ScanCoverage = coverage,
         };
         File.WriteAllText(Path.Combine(inputDir, "package-evidence.v0.json"), JsonSerializer.Serialize(pkgEvidence, WriteOpts));
+
+        // SPEC-019 §5.3: assemble the freshness channel — scan-estate recorded per-scan buildFreshness
+        // next to the facts (folder-name keyed); translate to REPO keys here (the one place that knows both).
+        var freshnessEntries = new List<BuildFreshnessEntry>();
+        foreach (var dir in scanDirs)
+        {
+            var sePath = Path.Combine(dir, "scan-estate.json");
+            if (!File.Exists(sePath)) continue;
+            try
+            {
+                using var seDoc = JsonDocument.Parse(File.ReadAllText(sePath));
+                if (seDoc.RootElement.TryGetProperty("buildFreshness", out var bf) && bf.ValueKind == JsonValueKind.String)
+                {
+                    var dirName = Path.GetFileName(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar));
+                    var value = bf.GetString()!;
+                    foreach (var (key, (label, _m)) in repoKeys)
+                        if (label == dirName || key == dirName)
+                            freshnessEntries.Add(new BuildFreshnessEntry { Repo = key, Freshness = value });
+                }
+            }
+            catch (JsonException) { /* broken metadata is the scan's problem (warned at scan time) */ }
+        }
+        if (freshnessEntries.Count > 0)
+            File.WriteAllText(Path.Combine(inputDir, "build-freshness.v0.json"), JsonSerializer.Serialize(
+                new BuildFreshnessFile { SchemaVersion = "build-freshness.v0", Repos = freshnessEntries }, WriteOpts));
 
         // Lockfile rows — SPEC-008: one v2 file for ALL repos with lockfile facts (repos sorted by name);
         // no lockfile file at all when there are none (unchanged for lockfile-less scans)
@@ -659,7 +698,9 @@ public static class Ingest
     internal static bool SameRow(LockRow a, LockRow b) => // also used by Program's load-time validation (SPEC-007 §7)
         a.PackageId == b.PackageId // packageId is a field too: case variants share a key (compared case-insensitively) but are never identical (SPEC-007 §3)
         && Ord(a.Version) == Ord(b.Version) && Ord(a.Type) == Ord(b.Type) && Ord(a.Via) == Ord(b.Via)
-        && NamesText(a.Names) == NamesText(b.Names); // no Ord(): null and "" are distinct field values (SPEC-007 §3)
+        && NamesText(a.Names) == NamesText(b.Names) // no Ord(): null and "" are distinct field values (SPEC-007 §3)
+        && ProvText(a.Provenance) == ProvText(b.Provenance); // SPEC-019 §4: provenance joins row identity — rows from one manifest share it by construction
+    static string ProvText(RowProvenance? p) => p is null ? "" : $"{p.ManifestSha256}\0{p.Freshness}\0{p.BuildCommitSha}";
     static string DescribeRow(LockRow r) => $"{r.Type} {r.PackageId} {r.Version ?? "no-version"}";
     internal static int RowOrder(LockRow a, LockRow b) =>
         string.CompareOrdinal(Ord(a.PackageId) + "\0" + Ord(a.Lockfile) + "\0" + Ord(a.Tfm) + "\0" + Ord(a.Version),

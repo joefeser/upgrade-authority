@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "tracemap-ingest",
+  "facts": [
+    {
+      "repo": "repo",
+      "packageId": "Newtonsoft.Json",
+      "declaredConstraint": "13.0.3",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 7,
+      "projects": [
+        "src/App/App.csproj"
+      ],
+      "commitSha": "afb7999a7b8195e40f28aa9cdb8c9f502dc302f6",
+      "path": "src/App/App.csproj"
+    }
+  ],
+  "scanCoverage": [
+    {
+      "repo": "repo",
+      "status": "complete",
+      "gaps": []
+    }
+  ]
+}

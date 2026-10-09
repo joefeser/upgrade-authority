@@ -129,6 +129,31 @@ public sealed class LockRow
     // SPEC-007: v1 row identity = (repo, lockfile, tfm, packageId). Null on frozen v0 rows.
     [JsonPropertyName("lockfile")] public string? Lockfile { get; set; }
     [JsonPropertyName("tfm")] public string? Tfm { get; set; }
+    // SPEC-019 §4: deps.json rows carry their reserved upstream placeholders verbatim —
+    // lockfile rows never set it. Joins row identity (SameRow compares it).
+    [JsonPropertyName("provenance")] public RowProvenance? Provenance { get; set; }
+}
+
+public sealed class RowProvenance
+{
+    [JsonPropertyName("manifestSha256")] public string ManifestSha256 { get; set; } = "";
+    [JsonPropertyName("freshness")] public string Freshness { get; set; } = "unknown";
+    [JsonPropertyName("buildCommitSha")] public string BuildCommitSha { get; set; } = "unknown";
+}
+
+// SPEC-019 §5.3: the freshness channel — scan-estate computes it (repo access), the fixture carries
+// it, the planner gates build-resolved closures on it. Absent file ⇒ conservative.
+public sealed class BuildFreshnessFile
+{
+    [JsonPropertyName("schemaVersion")] public string SchemaVersion { get; set; } = "";
+    [JsonPropertyName("repos")] public List<BuildFreshnessEntry> Repos { get; set; } = new();
+}
+
+public sealed class BuildFreshnessEntry
+{
+    [JsonPropertyName("repo")] public string Repo { get; set; } = "";
+    [JsonPropertyName("freshness")] public string Freshness { get; set; } = "";
+    [JsonPropertyName("basis")] public string? Basis { get; set; }
 }
 
 // ---- Plan model (plan.v1), serialized by Canonical in fixed key order ----

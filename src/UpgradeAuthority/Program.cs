@@ -154,7 +154,7 @@ public static class Program
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
-                foreach (var f in new[] { "--repos-root", "--out", "-o", "--tracemap", "--scope", "--self", "--delta-package", "--delta-old", "--delta-new" })
+                foreach (var f in new[] { "--repos-root", "--out", "-o", "--tracemap", "--scope", "--self", "--delta-package", "--delta-old", "--delta-new", "--worktree-root", "--trunk", "--parallel" })
                 {
                     int? bad = ValueFlagError(args, f);
                     if (bad is not null) { Console.Error.WriteLine($"error: {args[bad.Value]} requires a value"); return 1; }
@@ -168,6 +168,14 @@ public static class Program
                 var dO = GetOpt(args, "--delta-old");
                 var dN = GetOpt(args, "--delta-new");
                 var allowStale = Array.IndexOf(args, "--allow-stale") >= 0;
+                var updateCheckouts = Array.IndexOf(args, "--update-checkouts") >= 0;
+                var worktreeMode = Array.IndexOf(args, "--worktree") >= 0;
+                var buildFlag = Array.IndexOf(args, "--build") >= 0;
+                var indexDepsJson = Array.IndexOf(args, "--index-deps-json") >= 0;
+                var parallelOpt = GetOpt(args, "--parallel");
+                int parallel = 2;
+                if (parallelOpt is not null && (!int.TryParse(parallelOpt, out parallel) || parallel < 1 || parallel > 64))
+                { Console.Error.WriteLine("error: --parallel requires a value in 1..64"); return 1; }
                 var excludes = new List<string>();
                 for (int i = 0; i < args.Length; i++)
                     if (args[i] == "--exclude") // repeatable tracemap pass-through (folder globs, NOT scope exclusion)
@@ -177,7 +185,7 @@ public static class Program
                     }
                 if (reposRoot is null) { Console.Error.WriteLine("error: --repos-root <dir> is required"); return 1; }
                 if (outDirE is null) { Console.Error.WriteLine("error: --out <dir> is required (the estate working dir: scans/, sidecars, fixture/, plan.json, report.md)"); return 1; }
-                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN);
+                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
             Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
@@ -363,7 +371,27 @@ public static class Program
             if (scopeErr is not null) throw new UaException(scopeErr);
             scopeFile = parsedScope;
         }
-        return new Engine(pe, ow, px, delta, lockRepos, scopeFile);
+        // SPEC-019 §5.3: optional per-repo build freshness (the staleness channel). ABSENT = conservative —
+        // a deps.json closure alone can never prove not-affected without it.
+        BuildFreshnessFile? freshnessFile = null;
+        var freshnessInputPath = Path.Combine(fixtureDir, "input", "build-freshness.v0.json");
+        if (File.Exists(freshnessInputPath))
+        {
+            BuildFreshnessFile? parsed;
+            try { parsed = JsonSerializer.Deserialize<BuildFreshnessFile>(File.ReadAllText(freshnessInputPath), Json); }
+            catch (JsonException ex) { throw new UaException($"malformed input build-freshness.v0.json: {ex.Message}"); }
+            if (parsed?.SchemaVersion != "build-freshness.v0")
+                throw new UaException($"malformed input build-freshness.v0.json: unsupported schemaVersion '{parsed?.SchemaVersion}' (expected build-freshness.v0)");
+            foreach (var fe in parsed.Repos)
+            {
+                if (fe.Freshness is not ("fresh" or "stale" or "none" or "fresh-by-build"))
+                    throw new UaException($"malformed input build-freshness.v0.json: repo '{fe.Repo}' freshness '{fe.Freshness}' not in fresh|stale|none|fresh-by-build");
+                if (string.IsNullOrEmpty(fe.Repo))
+                    throw new UaException("malformed input build-freshness.v0.json: empty repo");
+            }
+            freshnessFile = parsed;
+        }
+        return new Engine(pe, ow, px, delta, lockRepos, scopeFile, freshnessFile);
     }
 
     // SPEC-007 §7: load-time typed errors — one row per resolution group; v1 rows carry their key fields.
@@ -1463,7 +1491,7 @@ public static class Program
         int StubScanner(ScanEstate.ScanRequest r)
         {
             Directory.CreateDirectory(r.ScanOutDir);
-            var n = Path.GetFileName(r.RepoPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var n = string.IsNullOrEmpty(r.RepoName) ? Path.GetFileName(r.RepoPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) : r.RepoName;
             File.WriteAllText(Path.Combine(r.ScanOutDir, "facts.ndjson"),
                 $"{{\"factId\":\"fact-stub-{n}\",\"scanId\":\"scan-stub\",\"repo\":\"{n}\",\"commitSha\":\"{r.HeadSha}\",\"factType\":\"PackageReferenced\",\"ruleId\":\"project.file.v1\",\"evidenceTier\":\"Tier2Structural\",\"evidence\":{{\"filePath\":\"src/App.csproj\",\"startLine\":4,\"endLine\":4}},\"properties\":{{\"ecosystem\":\"nuget\",\"manifestKind\":\"packagereference\",\"packageName\":\"Newtonsoft.Json\",\"version\":\"12.0.3\"}}}}\n");
             File.WriteAllText(Path.Combine(r.ScanOutDir, "scan-manifest.json"),
@@ -1527,7 +1555,7 @@ public static class Program
             if (ScanEstate.Run(Path.Combine(root2, "repos"), out2, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner) != 0) throw new Exception("first run failed");
             var planBefore = File.ReadAllText(Path.Combine(out2, "plan.json"));
             var calls = 0;
-            int Count(ScanEstate.ScanRequest r) { calls++; return StubScanner(r); }
+            int Count(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls); return StubScanner(r); }
             if (ScanEstate.Run(Path.Combine(root2, "repos"), out2, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", Count) != 0) throw new Exception("re-run failed");
             if (calls != 0) throw new Exception($"no-change re-run performed {calls} scans");
             if (File.ReadAllText(Path.Combine(out2, "plan.json")) != planBefore) throw new Exception("plan bytes changed on a no-op re-run");
@@ -1595,7 +1623,7 @@ public static class Program
             if (ScanEstate.Run(Path.Combine(root4, "repos"), out4, null, null, "team-a", true, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner) != 0) throw new Exception("allow-stale run failed");
             File.Delete(Path.Combine(root4, "repos", "dirty", "junk.txt"));
             var calls4 = 0;
-            int Count4(ScanEstate.ScanRequest r) { calls4++; return StubScanner(r); }
+            int Count4(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls4); return StubScanner(r); }
             if (ScanEstate.Run(Path.Combine(root4, "repos"), out4, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", Count4) != 0) throw new Exception("clean re-run failed");
             if (calls4 != 1) throw new Exception($"clean re-run at same SHA performed {calls4} scans — a staleScan-marked cache was silently reused");
             Console.WriteLine("ok   scan-estate-dirty-tree (skip; allow-stale scans; clean re-run rescans)"); pass++;
@@ -1611,7 +1639,7 @@ public static class Program
             Directory.CreateDirectory(root5);
             EstateRepo(root5, "eps");
             var calls5 = 0;
-            int Count5(ScanEstate.ScanRequest r) { calls5++; return StubScanner(r); }
+            int Count5(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls5); return StubScanner(r); }
             if (ScanEstate.Run(Path.Combine(root5, "repos"), out5, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count5) != 0) throw new Exception("run 1 failed");
             if (ScanEstate.Run(Path.Combine(root5, "repos"), out5, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count5) != 0) throw new Exception("run 2 failed");
             if (calls5 != 1) throw new Exception("identical run 2 must reuse");
@@ -1677,7 +1705,7 @@ public static class Program
             var scopeEx = Path.Combine(Path.GetTempPath(), "ua-se7-scope-ex.json");
             File.WriteAllText(scopeEx, "{\"schemaVersion\":\"estate-scope.v0\",\"exclude\":[\"beta\"]}\n");
             var calls7 = 0;
-            int Count7(ScanEstate.ScanRequest r) { calls7++; return StubScanner(r); }
+            int Count7(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls7); return StubScanner(r); }
             if (ScanEstate.Run(Path.Combine(root7, "repos"), out7, null, scopeEx, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", Count7) != 0) throw new Exception("scoped run failed");
             if (calls7 != 2) throw new Exception($"excluded beta must not scan ({calls7} calls)");
             if (Directory.Exists(Path.Combine(out7, "scans", "beta"))) throw new Exception("beta scan dir must not exist");
@@ -2040,7 +2068,7 @@ public static class Program
             var metaDir15 = Path.Combine(out15b, "scans", "alpha");
             File.WriteAllText(Path.Combine(metaDir15, "scan-estate.json"), "{\"schemaVersion\":\"scan-estate-cache.v9\",\"exclude\":null}");
             var calls15 = 0;
-            int Count15(ScanEstate.ScanRequest r) { calls15++; return StubScanner(r); }
+            int Count15(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls15); return StubScanner(r); }
             if (ScanEstate.Run(Path.Combine(root15, "repos"), out15b, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count15) != 0) throw new Exception("foreign-metadata run failed");
             if (calls15 != 1) throw new Exception($"invalid metadata must force exactly alpha's rescan (beta reused), got {calls15}");
             File.WriteAllText(Path.Combine(metaDir15, "scan-estate.json"), "{\"schemaVersion\":\"scan-estate-cache.v1\",\"exclude\":null}");
@@ -2290,6 +2318,195 @@ public static class Program
             Console.WriteLine("ok   drift-permutation-swap-plan (order-independent bytes; candidate plans the expected set)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL drift-permutation-swap-plan: {ex.Message}"); }
+
+        // SPEC-019: deps.json evidence + estate refresh + parallel scans
+        try
+        {
+            var ad = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich", "deps-scans", "appdeps"));
+            var side19 = Path.Combine(Path.GetTempPath(), "ua-d19-side-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(side19);
+            File.WriteAllText(Path.Combine(side19, "producer.json"), "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[{\"packageId\":\"Serilog\"}],\"producers\":[]}");
+            File.WriteAllText(Path.Combine(side19, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"repo\",\"team\":\"team-a\"}]}");
+            File.WriteAllText(Path.Combine(side19, "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"https://example.invalid/x.git\",\"sourceCommitSha\":\"0000000000000000000000000000000000000000\",\"changes\":[{\"id\":\"d\",\"packageName\":\"Serilog\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"2.0.0\",\"newVersion\":\"3.0.0\"}]}");
+            var out19 = Path.Combine(Path.GetTempPath(), "ua-d19-out-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Ingest.Run(new[] { ad }, out19,
+                Path.Combine(side19, "producer.json"), Path.Combine(side19, "ownership.json"), Path.Combine(side19, "delta.json")) != 0) throw new Exception("appdeps ingest failed");
+            // 19-1: deps.json facts NEVER become consumer facts (the csproj pin stays; nothing under bin/)
+            var px19 = JsonDocument.Parse(File.ReadAllText(Path.Combine(out19, "input", "package-evidence.v0.json"))).RootElement;
+            var facts19 = px19.GetProperty("facts").EnumerateArray().ToList();
+            if (facts19.Any(f => f.GetProperty("path").GetString()!.Contains("bin/"))) throw new Exception("deps.json leaked into the consumer-fact path");
+            if (facts19.Count != 1 || facts19[0].GetProperty("path").GetString() != "src/App/App.csproj") throw new Exception("the csproj declaration must be the only consumer fact");
+            // v2 rows carry provenance + the verbatim full-form tfm; drift sees evidence "deps.json"
+            var v219 = JsonDocument.Parse(File.ReadAllText(Path.Combine(out19, "input", "lockfile-rows.v2.json"))).RootElement;
+            var row19 = v219.GetProperty("repos")[0].GetProperty("rows")[0];
+            if (row19.GetProperty("tfm").GetString() != ".NETCoreApp,Version=v10.0") throw new Exception("tfm must stay verbatim (full target form)");
+            if (row19.GetProperty("provenance").GetProperty("freshness").GetString() != "unknown") throw new Exception("upstream placeholder must pass through untouched");
+            File.WriteAllText(Path.Combine(out19, "input", "build-freshness.v0.json"), "{\"schemaVersion\":\"build-freshness.v0\",\"repos\":[{\"repo\":\"repo\",\"freshness\":\"fresh\"}]}");
+            File.WriteAllText(Path.Combine(side19, "feed.json"), "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Newtonsoft.Json\",\"version\":\"13.0.3\"},{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"}]}");
+            var (_, driftCanon19b, rcD19b) = Drift.Run(out19, Path.Combine(side19, "feed.json"), null, null);
+            if (rcD19b != 0 || driftCanon19b is null) throw new Exception("drift over deps.json rows failed");
+            var inst19 = JsonDocument.Parse(driftCanon19b).RootElement.GetProperty("packages").EnumerateArray()
+                .First(pp => pp.GetProperty("packageId").GetString() == "Newtonsoft.Json").GetProperty("installations")[0];
+            if (inst19.GetProperty("evidence").GetString() != "deps.json") throw new Exception("drift must label deps.json installations");
+            if (inst19.GetProperty("status").GetString() != "current") throw new Exception("13.0.3 vs 13.0.3 must be current");
+            Console.WriteLine("ok   deps-real-e2e (real tracemap bytes: consumer-path exclusion, provenance rows, verbatim tfm, drift evidence)"); pass++;
+            Directory.Delete(out19, true); Directory.Delete(side19, true);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL deps-real-e2e: {ex.Message}"); }
+
+        // SPEC-019 §5: freshness gating (fresh ⇒ not-allowed + Q1; stale ⇒ unknown two-sided; absent ⇒ conservative)
+        try
+        {
+            var fd19 = Path.Combine(fixturesRoot, "F-deps");
+            var plan19 = LoadEngine(fd19).BuildPlan();
+            var r19 = plan19.Repos.First(r => r.Repo == "repo");
+            if (r19.Classification != "not-affected" || !r19.Reasons[0].Contains("closure evidenced by build output (deps.json), freshness: fresh"))
+                throw new Exception($"fresh deps.json closure must prove not-affected with Q1: {r19.Reasons[0]}");
+            var mixed19 = Path.Combine(fixturesRoot, "F-deps-mixed");
+            var planM19 = LoadEngine(mixed19).BuildPlan();
+            var rM19 = planM19.Repos.First(r => r.Repo == "repo");
+            if (rM19.Classification != "not-affected" || !rM19.Reasons[0].Contains("lockfile closure (Newtonsoft.Json direct) and build-resolved closure"))
+                throw new Exception("mixed closure must name both evidence kinds");
+            if (!planM19.Uncertainty.Findings!.Any(f => f.Subject == "repo version disagreement: Newtonsoft.Json")) throw new Exception("lockfile-vs-deps.json divergence must fire T10");
+            foreach (var (mode19, want19) in new[] { ("stale", "build evidence stale: deps.json closure predates the current commit"), ("none", "classification unknown") })
+            {
+                var sc19 = Path.Combine(Path.GetTempPath(), "ua-d19g-" + mode19 + "-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(fd19, sc19);
+                File.WriteAllText(Path.Combine(sc19, "input", "build-freshness.v0.json"),
+                    $"{{\"schemaVersion\":\"build-freshness.v0\",\"repos\":[{{\"repo\":\"repo\",\"freshness\":\"{mode19}\"}}]}}");
+                var p19 = LoadEngine(sc19).BuildPlan();
+                var rr19 = p19.Repos.First(r => r.Repo == "repo");
+                if (rr19.Classification != "unknown") throw new Exception($"{mode19}: stale/absent build closure must not prove not-affected (got {rr19.Classification})");
+                if (!rr19.Reasons.Any(x => x.Contains(want19) || (mode19 == "none" && x.Contains("never not-affected")))) throw new Exception($"{mode19}: reason wrong: {string.Join(" | ", rr19.Reasons)}");
+                Directory.Delete(sc19, true);
+            }
+            var scAbs19 = Path.Combine(Path.GetTempPath(), "ua-d19a-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fd19, scAbs19);
+            File.Delete(Path.Combine(scAbs19, "input", "build-freshness.v0.json"));
+            var pAbs19 = LoadEngine(scAbs19).BuildPlan();
+            if (pAbs19.Repos.First(r => r.Repo == "repo").Classification != "unknown") throw new Exception("absent freshness file must be conservative");
+            File.WriteAllText(Path.Combine(scAbs19, "input", "build-freshness.v0.json"), "{\"schemaVersion\":\"build-freshness.v0\",\"repos\":[{\"repo\":\"repo\",\"freshness\":\"bogus\"}]}");
+            try { LoadEngine(scAbs19).BuildPlan(); throw new Exception("bad freshness value must refuse at load"); }
+            catch (UaException ex19) { if (!ex19.Message.Contains("not in fresh|stale|none|fresh-by-build")) throw new Exception("wrong refusal message"); }
+            Directory.Delete(scAbs19, true);
+            Console.WriteLine("ok   deps-freshness-gating (Q1 fresh; stale two-sided; absent conservative; mixed names both)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL deps-freshness-gating: {ex.Message}"); }
+
+        // SPEC-019 §3.1 + §6: --update-checkouts rescue; fingerprint cache; indexDepsJson toggle
+        try
+        {
+            var root20 = Path.Combine(Path.GetTempPath(), "ua-d19r-" + Guid.NewGuid().ToString("N")[..8]);
+            var out20 = Path.Combine(Path.GetTempPath(), "ua-d19r-out-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(Path.Combine(root20, "repos"));
+            var alpha20 = EstateRepo(root20, "alpha");
+            // behind + dirty: rescue branch + commit, then trunk
+            File.WriteAllText(Path.Combine(alpha20, "stray.txt"), "wip");
+            Push.Git(alpha20, "commit -qm ahead --allow-empty", out _, out _);
+            Push.Git(alpha20, "push -q origin main", out _, out _);
+            Push.Git(alpha20, "reset -q --hard HEAD~1", out _, out _);
+            if (ScanEstate.Run(Path.Combine(root20, "repos"), out20, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner,
+                updateCheckouts: true) != 0) throw new Exception("update-checkouts run failed");
+            Push.Git(alpha20, "branch --list ua/rescue-*", out var rescue20, out _);
+            if (rescue20.Trim().Length == 0) throw new Exception("rescue branch not created");
+            Push.Git(alpha20, "rev-parse main", out var local20, out _);
+            Push.Git(alpha20, "rev-parse origin/main", out var remote20, out _);
+            if (local20.Trim() != remote20.Trim()) throw new Exception("trunk not fast-forwarded");
+            // local-ahead: refuses, never merges
+            Push.Git(alpha20, "commit -qm localwork --allow-empty", out _, out _);
+            var out20b = Path.Combine(Path.GetTempPath(), "ua-d19r-out2-" + Guid.NewGuid().ToString("N")[..8]);
+            if (ScanEstate.Run(Path.Combine(root20, "repos"), out20b, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner,
+                updateCheckouts: true) != 1) throw new Exception("local-ahead estate (single repo) must exit 1");
+            using (var m20 = SEManifest(out20b))
+                if (!m20.RootElement.GetProperty("repos")[0].GetProperty("reason").GetString()!.Contains("local commits ahead"))
+                    throw new Exception("local-ahead must refuse-with-reason, never merge");
+            // fingerprint cache: rebuild (fake bin deps.json, mtime bump) with same HEAD => exactly that repo rescans
+            Push.Git(alpha20, "reset -q --hard origin/main", out _, out _);
+            var out20c = Path.Combine(Path.GetTempPath(), "ua-d19r-out3-" + Guid.NewGuid().ToString("N")[..8]);
+            int Count20(ScanEstate.ScanRequest r) => StubScanner(r);
+            if (ScanEstate.Run(Path.Combine(root20, "repos"), out20c, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count20,
+                indexDepsJson: true) != 0) throw new Exception("indexDepsJson seed failed"); // no bin/ => fingerprint null, freshness none
+            var calls20 = 0;
+            int Count20b(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls20); return StubScanner(r); }
+            if (ScanEstate.Run(Path.Combine(root20, "repos"), out20c, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count20b,
+                indexDepsJson: true) != 0) throw new Exception("rerun failed");
+            if (calls20 != 0) throw new Exception("no-change rerun must reuse");
+            var fakeBin = Path.Combine(alpha20, "bin", "Release", "net10.0");
+            Directory.CreateDirectory(fakeBin);
+            File.WriteAllText(Path.Combine(fakeBin, "alpha.deps.json"), "{}");
+            File.WriteAllText(Path.Combine(alpha20, ".git", "info", "exclude"), "bin/\n"); // real repos ignore bin/ — an untracked build dir is not dirt
+            System.Threading.Thread.Sleep(20); // distinct mtime
+            var calls20c = 0;
+            int Count20c(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls20c); return StubScanner(r); }
+                        if (ScanEstate.Run(Path.Combine(root20, "repos"), out20c, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count20c,
+                indexDepsJson: true) != 0) throw new Exception("post-bin run failed");
+            if (calls20c != 1) throw new Exception($"new build output must change the fingerprint and force a rescan (calls={calls20c})");
+            var calls20d = 0;
+            int Count20d(ScanEstate.ScanRequest r) { System.Threading.Interlocked.Increment(ref calls20d); return StubScanner(r); }
+            if (ScanEstate.Run(Path.Combine(root20, "repos"), out20c, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Count20d,
+                indexDepsJson: false) != 0) throw new Exception("toggle run failed");
+            if (calls20d != 1) throw new Exception("toggling --index-deps-json must rescan (scan condition)");
+            ForceDelete(root20); ForceDelete(out20); ForceDelete(out20b); ForceDelete(out20c);
+            Console.WriteLine("ok   estate-refresh-cache (rescue+ff; local-ahead refuses; fingerprint + condition toggles)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL estate-refresh-cache: {ex.Message}"); }
+
+        // SPEC-019 §3.2: worktree mode — checkout untouched, namespace isolation, foreign survivors, parallel determinism
+        try
+        {
+            var root21 = Path.Combine(Path.GetTempPath(), "ua-d19w-" + Guid.NewGuid().ToString("N")[..8]);
+            var out21 = Path.Combine(Path.GetTempPath(), "ua-d19w-out-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(Path.Combine(root21, "repos"));
+            var beta21 = EstateRepo(root21, "beta");
+            File.WriteAllText(Path.Combine(beta21, "stray.txt"), "wip"); // dirty + behind: no problem in worktree mode
+            Push.Git(beta21, "commit -qm ahead --allow-empty", out _, out _);
+            Push.Git(beta21, "push -q origin main", out _, out _);
+            Push.Git(beta21, "reset -q --hard HEAD~1", out _, out _);
+            Push.Git(beta21, "rev-parse HEAD", out var headBefore21, out _);
+            Push.Git(beta21, "status --porcelain", out var statusBefore21, out _);
+            Push.Git(beta21, "rev-parse --abbrev-ref HEAD", out var branchBefore21, out _);
+            var wtRoot21 = Path.Combine(root21, "shared-worktrees");
+            // a foreign worktree beside our namespace must SURVIVE
+            var foreign21 = Path.Combine(wtRoot21, "codex-session-1");
+            Directory.CreateDirectory(foreign21);
+            File.WriteAllText(Path.Combine(foreign21, "session.txt"), "an agent lives here");
+            if (ScanEstate.Run(Path.Combine(root21, "repos"), out21, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner,
+                worktreeMode: true, worktreeRoot: wtRoot21) != 0) throw new Exception("worktree run failed");
+            Push.Git(beta21, "rev-parse HEAD", out var headAfter21, out _);
+            Push.Git(beta21, "status --porcelain", out var statusAfter21, out _);
+            Push.Git(beta21, "rev-parse --abbrev-ref HEAD", out var branchAfter21, out _);
+            if (headAfter21.Trim() != headBefore21.Trim() || statusAfter21 != statusBefore21 || branchAfter21.Trim() != branchBefore21.Trim())
+                throw new Exception("operator checkout was touched (HEAD/branch/status must be byte-identical)");
+            if (!File.Exists(Path.Combine(foreign21, "session.txt"))) throw new Exception("foreign worktree did not survive the run");
+            var uaNs21 = Path.Combine(wtRoot21, "ua");
+            if (Directory.Exists(uaNs21) && Directory.GetDirectories(uaNs21).Length > 0) throw new Exception("worktree satellites not cleaned up");
+            using (var m21 = SEManifest(out21))
+                if (m21.RootElement.GetProperty("repos")[0].GetProperty("status").GetString() != "scanned") throw new Exception("worktree scan must succeed for a behind+dirty checkout");
+            // parallel determinism: two repos, N=4 == sequential bytes
+            EstateRepo(root21, "alpha");
+            var outSeq = Path.Combine(Path.GetTempPath(), "ua-d19w-seq-" + Guid.NewGuid().ToString("N")[..8]);
+            var outPar = Path.Combine(Path.GetTempPath(), "ua-d19w-par-" + Guid.NewGuid().ToString("N")[..8]);
+            // clean beta's behind state for a comparable run: worktree mode ignores it anyway; alpha is fresh
+            if (ScanEstate.Run(Path.Combine(root21, "repos"), outSeq, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner,
+                worktreeMode: true, worktreeRoot: wtRoot21, parallel: 1) != 0) throw new Exception("sequential run failed");
+            if (ScanEstate.Run(Path.Combine(root21, "repos"), outPar, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner,
+                worktreeMode: true, worktreeRoot: wtRoot21, parallel: 4) != 0) throw new Exception("parallel run failed");
+            if (File.ReadAllText(Path.Combine(outSeq, "scan-estate.v1.json")) != File.ReadAllText(Path.Combine(outPar, "scan-estate.v1.json")))
+                throw new Exception("manifest bytes depend on --parallel");
+            if (File.ReadAllText(Path.Combine(outSeq, "plan.json")) != File.ReadAllText(Path.Combine(outPar, "plan.json")))
+                throw new Exception("plan bytes depend on --parallel");
+            // trunk override + invalid parallel
+            if (ScanEstate.Run(Path.Combine(root21, "repos"), outPar, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner,
+                worktreeMode: true, worktreeRoot: wtRoot21, trunkOverride: "nosuchbranch", parallel: 4) != 1) throw new Exception("missing --trunk branch must exit 1 (all repos skipped)");
+            if (ScanEstate.Run(Path.Combine(root21, "repos"), outPar, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner, parallel: 0) != 1
+                || ScanEstate.Run(Path.Combine(root21, "repos"), outPar, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner, parallel: 99) != 1)
+                throw new Exception("--parallel bounds must be typed errors");
+            if (ScanEstate.Run(Path.Combine(root21, "repos"), outPar, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner,
+                updateCheckouts: true, worktreeMode: true) != 1) throw new Exception("both refresh modes must refuse");
+            ForceDelete(root21); ForceDelete(out21); ForceDelete(outSeq); ForceDelete(outPar);
+            Console.WriteLine("ok   estate-worktree-parallel (checkout untouched; namespace isolation; foreign survives; N-independent bytes)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL estate-worktree-parallel: {ex.Message}"); }
 
         // working-tree EOL guard: a CRLF checkout (core.autocrlf=true on Windows) converts unpinned
         // text files and silently breaks byte-exact apply goldens (seen on a real work machine: apply-F13).

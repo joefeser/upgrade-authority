@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "lockfile-rows.v2",
+  "repos": [
+    {
+      "repo": "repo",
+      "rows": [
+        {
+          "packageId": "Newtonsoft.Json",
+          "type": "direct",
+          "version": "13.0.3",
+          "lockfile": "src/App/bin/Release/net10.0/App.deps.json",
+          "tfm": ".NETCoreApp,Version=v10.0",
+          "provenance": {
+            "manifestSha256": "918f6b24ddbaecc121ee458ce01f432bbfd0f76028d620156fbddd6c106b7641",
+            "freshness": "unknown",
+            "buildCommitSha": "unknown"
+          }
+        }
+      ]
+    }
+  ]
+}
