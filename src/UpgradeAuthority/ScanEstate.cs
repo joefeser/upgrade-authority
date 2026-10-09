@@ -191,6 +191,8 @@ public static class ScanEstate
             var trunk = "";
             string? worktreePath = null;
             var scanMode = worktreeMode ? "worktree" : "in-place";
+            if (updateCheckouts && Push.Git(repoPath, "status --porcelain", out var preStatus, out _) != 0)
+            { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree (checked before fetch)")); continue; } // Baz r13: before ANY mutation, fetch included
             if (fetchFailures.TryGetValue(name, out var fetchErr))
             { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
             if (!fetched.Contains(name) && Push.Git(repoPath, "fetch origin", out _, out fetchErr) != 0) // sequential fallback (parallel=1 or refresh modes fetch inline)
@@ -336,6 +338,7 @@ public static class ScanEstate
         if (plannedScans.Count > 0 && tracemapDll is null && scanner is null)
         {
             Console.Error.WriteLine($"error: {plannedScans.Count} repo(s) need a scan — pass --tracemap <path-to-tracemap.dll>");
+            foreach (var u40 in plannedScans) { u40.Entry.Status = "skipped"; u40.Entry.BuildFreshness = null; u40.Entry.Reason ??= "scan not run (--tracemap missing)"; } // C40 r13: never persist "scanned" for work that never ran
             WriteManifest(); // C14 r4: a rescue that already moved the operator's WIP MUST be recorded durably even on this exit
             return 1;
         }

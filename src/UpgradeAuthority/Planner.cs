@@ -137,7 +137,7 @@ public sealed class Engine
     // edges, not-affected closure) only when fresh — stale/absent rows stay visible for suspicion
     // (touches) and findings (input observations) but prove nothing in either direction.
     bool DepsFresh(string repo) => _depsFreshness.GetValueOrDefault(repo) is "fresh" or "fresh-by-build";
-    List<LockRow> LockProvable(string repo) => LockOf(repo).Where(r => r.Provenance is null || DepsFresh(repo)).ToList();
+    List<LockRow> LockProvable(string repo) => LockOf(repo).Where(r => r.Provenance is null || (DepsFresh(repo) && r.Provenance.ManifestSha256.Length > 0)).ToList(); // Baz r13: incomplete provenance ({} shells) is never proof
     bool HasStaleDepsRow(string repo, HashSet<string> pkgs) => LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo) && pkgs.Contains(r.PackageId));
     List<string> ProducedOf(string repo) => _produced.GetValueOrDefault(repo, new List<string>());
 
@@ -696,8 +696,12 @@ public sealed class Engine
                         e.Reasons.Add($"direct reference to {Target} ({bFact!.Path}); produces {carrier} — bump + republish flows the update");
                     else if (!externalTarget && carrier is not null)
                     {
-                        var corrRepo = _lockRows.First(kv => kv.Value.Any(r => r.PackageId == Target && r.Via == carrier)).Key;
-                        e.Reasons.Add($"direct reference to {Target} on the producer side ({bFact!.Path}); produces {carrier} — {corrRepo}'s lockfile corroborates that {carrier}'s closure carries {Target} (transitive via {carrier})");
+                        // Baz r13: the corroborator and its evidence KIND come from the gated rows —
+                        // a stale deps.json row never corroborates, and a deps.json corroborator says so
+                        var corrKv = _lockRows.First(kv => LockProvable(kv.Key).Any(r => r.PackageId == Target && r.Via == carrier));
+                        var corrRow = LockProvable(corrKv.Key).First(r => r.PackageId == Target && r.Via == carrier);
+                        var corrBasis = corrRow.Provenance is null ? "lockfile" : "build output (deps.json)";
+                        e.Reasons.Add($"direct reference to {Target} on the producer side ({bFact!.Path}); produces {carrier} — {corrKv.Key}'s {corrBasis} corroborates that {carrier}'s closure carries {Target} (transitive via {carrier})");
                     }
                     else if (facts.Any(f => f.PackageId != Target))
                         e.Reasons.Add($"direct references to {string.Join(" and ", facts.Select(f => f.PackageId).Distinct().OrderBy(p2 => p2))}; the delta targets {Target}");

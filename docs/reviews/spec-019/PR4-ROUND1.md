@@ -118,3 +118,14 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | C37 | `CarrierPkg` corroborated producers from stale deps rows (confidence inflation) | P2 | **Accepted** | Gated on `LockProvable` |
 | C38 | Scanner-failure and worker-exception skips still serialized freshness | P2 | **Accepted** | Null on both terminal paths |
 | C39 | Rule-c reasons said "lockfile" for deps.json rows | P2 | **Accepted** | The row's provenance selects the basis text; deps.json rows name build output + the freshness qualifier |
+
+## Round 13 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C40 | Missing-scanner exit persisted `Status = "scanned"` for work that never ran | P2 | **Accepted** | All pending entries ⇒ skipped/null-freshness/"scan not run (--tracemap missing)" before that manifest write |
+| C41 | Freshness cross-assigned across dirs sharing a basename (org-a/service vs org-b/service) | P2 | **Accepted** | Freshness maps to THIS dir's repo keys only (per-dir enumeration) |
+| C42 | drift never consulted depsSpellings for the reported spelling | P3 | **Accepted** | Chain is now lockfile > deps.json > declared-pin > key |
+| Baz | Producer corroborator reason recomputed from unfiltered rows; mislabeled deps.json as "lockfile" | medium | **Accepted** | Corroborator + evidence-kind from the gated rows |
+| Baz | Incomplete `provenance:{}` shells counted as provable build evidence | medium | **Accepted** | LockProvable requires a non-empty manifestSha256 |
+| Baz | Unreadable-status guard ran after the fetch | medium | **Accepted** | Guard moved before any mutation, fetch included |

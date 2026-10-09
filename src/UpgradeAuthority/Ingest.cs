@@ -525,9 +525,13 @@ public static class Ingest
                 {
                     var dirName = Path.GetFileName(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar));
                     var value = bf.GetString()!;
-                    foreach (var (key, (label, _m)) in repoKeys)
-                        if (label == dirName || key == dirName)
-                            freshnessEntries.Add(new BuildFreshnessEntry { Repo = key, Freshness = value });
+                    // C41 r13: freshness belongs to THIS dir's repos only — two dirs sharing a basename
+                    // (org-a/service, org-b/service) must never cross-assign values
+                    var (dirKeys, dirErr) = EnumerateRepoKeysChecked(new[] { dir });
+                    if (dirErr is null)
+                        foreach (var key in dirKeys)
+                            if (repoKeys.ContainsKey(key))
+                                freshnessEntries.Add(new BuildFreshnessEntry { Repo = key, Freshness = value });
                 }
             }
             catch (JsonException) { /* broken metadata is the scan's problem (warned at scan time) */ }

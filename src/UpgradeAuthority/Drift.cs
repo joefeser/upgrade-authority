@@ -227,8 +227,9 @@ public static class Drift
         foreach (var key in rows.Select(r => r.PackageKey).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var pkg = new DriftPackage();
-            // reported spelling: ordinal-first lockfile spelling, else ordinal-first pin spelling
+            // reported spelling: lockfile > deps.json > declared-pin, ordinal-first within each (SPEC-019 §4 precedence)
             pkg.PackageId = lockSpellings.TryGetValue(key, out var ls) && ls.Count > 0 ? ls.Min!
+                          : depsSpellings.TryGetValue(key, out var ds) && ds.Count > 0 ? ds.Min!
                           : pinSpellings.TryGetValue(key, out var ps) && ps.Count > 0 ? ps.Min!
                           : key;
             byPackage[key] = pkg;
