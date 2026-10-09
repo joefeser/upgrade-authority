@@ -469,6 +469,24 @@ public static class Ingest
             producedProducers.Add(new ProducerEntry { Repo = key, PackageId = pkg!, ProducedVersion = string.IsNullOrEmpty(pv) ? null : pv, EvidenceNote = $"tracemap PackageProduced ({srcName})", Provenance = "project-declared" }); // SPEC-020 §2: recorded at fusion, never reconstructed
         }
 
+        // PR5 Baz round 2: scan-vs-scan duplicates are NOT sidecar overrides — dedup BEFORE the merge so
+        // every duplicate the merge loop sees is genuinely cross-source. Identical declarations collapse
+        // silently (idempotent, case-insensitive — NuGet ids); one package at TWO versions inside the
+        // scan is an honest warning (evidenced beats unevidenced, then ordinal — fact order never decides).
+        var dedupedScan = new List<ProducerEntry>();
+        foreach (var g in producedProducers.GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant())))
+        {
+            var ordered = g.OrderBy(p => Ord(p.ProducedVersion) == "" ? 1 : 0)
+                           .ThenBy(p => Ord(p.ProducedVersion), StringComparer.Ordinal)
+                           .ThenBy(p => p.PackageId, StringComparer.Ordinal)
+                           .ThenBy(p => Ord(p.EvidenceNote), StringComparer.Ordinal).ToList();
+            var claims = ordered.Select(p => p.ProducedVersion).Distinct().ToList();
+            if (claims.Count > 1)
+                Console.Error.WriteLine($"warning: scan declares '{Esc(ordered[0].Repo)}/{Esc(ordered[0].PackageId)}' at {claims.Count} versions ({string.Join(", ", claims.OrderBy(v => Ord(v), StringComparer.Ordinal).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v)}'"))}) — '{Esc(Ord(ordered[0].ProducedVersion) == "" ? "unevidenced" : ordered[0].ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+            dedupedScan.Add(ordered[0]);
+        }
+        producedProducers = dedupedScan;
+
         if (multiDirMissing.Count > 0 || !producerSatisfiedByScan)
         {
             var missing2 = new List<string>(multiDirMissing);
@@ -763,8 +781,9 @@ public static class Ingest
             var k = (NormBasic(p.Repo), p.PackageId.ToLowerInvariant());
             if (byKey.TryGetValue(k, out var dup))
             {
-                // every cross-source duplicate notes the loser — same-version and unevidenced
-                // overrides included (SPEC-020 §2: the losing provenance is never silently dropped)
+                // pre-deduped scan keys ⇒ every hit here IS a sidecar entry — the cross-source
+                // override case; every duplicate notes the loser (same-version and unevidenced
+                // included, SPEC-020 §2: the losing provenance is never silently dropped)
                 Console.Error.WriteLine($"warning: producer conflict for {Esc(k.Item1)}/{Esc(p.PackageId)} — sidecar '{Esc(dup.ProducedVersion ?? "unevidenced")}' ({Esc(dup.Provenance ?? MarkerProvenance(dup))}) vs scan '{Esc(p.ProducedVersion ?? "unevidenced")}' ({Esc(p.Provenance ?? "project-declared")}); sidecar kept (scan evidence is declaration-only)");
                 continue;
             }
@@ -772,7 +791,8 @@ public static class Ingest
             if (caseVariantEntry is not null)
             { Console.Error.WriteLine($"warning: scan producer '{Esc(k.Item1)}/{Esc(p.PackageId)}' differs from existing '{Esc(NormBasic(caseVariantEntry.Repo))}/{Esc(caseVariantEntry.PackageId)}' only by spelling — kept BOTH (planner identity is case-sensitive; merge deliberately via one spelling)"); }
             existing.Producers.Add(p);
-            byKey[k] = p;
+            // no byKey insert: scan keys are distinct by pre-dedup — the map stays sidecar-only,
+            // so a duplicate hit can only mean a genuine cross-source override
             added++;
         }
         if (existing.Source == "empty") existing.Source = "tracemap-ingest"; // a placeholder became real

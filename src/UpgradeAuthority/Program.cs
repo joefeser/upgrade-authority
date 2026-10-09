@@ -2444,6 +2444,45 @@ public static class Program
             if (prodN.GetArrayLength() != 1 || prodN[0].GetProperty("provenance").GetString() != "operator-declared")
                 throw new Exception("sidecar entries must be stamped even when the scans found no producers: " + prodN.GetRawText());
             Directory.Delete(outN, true); Directory.Delete(sideN, true);
+            // PR5 Baz round 2: scan-vs-scan duplicates are not sidecar overrides (two projects, one
+            // package id) — identical claims collapse silently, two versions warn honestly and keep
+            // ordinal-first, and the cross-source "sidecar kept" warning never fires for scan-only dups
+            string ProdFactJson(string id, string version) => JsonSerializer.Serialize(new
+            {
+                factId = "fact-" + id + "-" + version, scanId = "s", repo = "R-dup", commitSha = "c",
+                factType = "PackageProduced", ruleId = "project.file.v1", evidenceTier = "Tier2Structural",
+                evidence = new { filePath = "src/P" + version + ".csproj", startLine = 4, endLine = 5, extractorId = "ProjectFileExtractor", extractorVersion = "0.3.0" },
+                properties = new Dictionary<string, object?>
+                {
+                    ["ecosystem"] = "nuget", ["package"] = id, ["packageName"] = id,
+                    ["version"] = version, ["projectPath"] = "src/P" + version + ".csproj",
+                },
+            }, Json);
+            var scanD = Path.Combine(Path.GetTempPath(), "ua-rg-dup-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(scanD);
+            File.WriteAllText(Path.Combine(scanD, "facts.ndjson"),
+                ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "2.0.0") + "\n");
+            File.Copy(Path.Combine(richO, "sidecars-estate2", "delta.json"), Path.Combine(scanD, "delta.json"));
+            var outD = Path.Combine(Path.GetTempPath(), "ua-rg-dupo-" + Guid.NewGuid().ToString("N")[..8]);
+            var errPrevD = Console.Error;
+            var swD = new System.IO.StringWriter();
+            int rcD;
+            try { Console.SetError(swD); rcD = Ingest.Run(new[] { scanD }, outD, null, null, null); }
+            finally { Console.SetError(errPrevD); }
+            if (rcD != 0) throw new Exception($"dup ingest exited {rcD}");
+            var warnD = swD.ToString();
+            if (warnD.Contains("sidecar kept")) throw new Exception("scan-vs-scan duplicate must not fire the cross-source warning: " + warnD);
+            if (!warnD.Contains("at 2 versions") || !warnD.Contains("'1.0.0' kept")) throw new Exception("two-version scan contradiction must warn honestly: " + warnD);
+            var prodsD = JsonDocument.Parse(File.ReadAllText(Path.Combine(outD, "input", "producer-evidence.v0.json"))).RootElement.GetProperty("producers");
+            if (prodsD.GetArrayLength() != 1 || prodsD[0].GetProperty("producedVersion").GetString() != "1.0.0" || prodsD[0].GetProperty("provenance").GetString() != "project-declared")
+                throw new Exception("scan dedup must keep ONE ordinal-first entry: " + prodsD.GetRawText());
+            File.WriteAllText(Path.Combine(scanD, "facts.ndjson"),
+                ProdFactJson("Contoso.Dup", "2.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n" + ProdFactJson("Contoso.Dup", "1.0.0") + "\n");
+            var outD2 = Path.Combine(Path.GetTempPath(), "ua-rg-dup2-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Ingest.Run(new[] { scanD }, outD2, null, null, null) != 0) throw new Exception("dup ingest 2 failed");
+            if (File.ReadAllText(Path.Combine(outD, "input", "producer-evidence.v0.json")) != File.ReadAllText(Path.Combine(outD2, "input", "producer-evidence.v0.json")))
+                throw new Exception("scan dedup must be fact-order independent");
+            Directory.Delete(scanD, true); Directory.Delete(outD, true); Directory.Delete(outD2, true);
             Console.WriteLine("ok   registry-operator-override (one entry, operator-declared, warning names both provenances)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-operator-override: {ex.Message}"); }
