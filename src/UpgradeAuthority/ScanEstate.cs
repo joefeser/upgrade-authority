@@ -202,6 +202,12 @@ public static class ScanEstate
                     if (dirtyOut.Trim().Length > 0)
                     {
                         var rescueBranch = $"ua/rescue-{headSha[..8]}"; // 8 chars — one more than display Sha7, uniqueness at a glance
+                        for (var suf = 2; ; suf++) // C25 r8: repeated dirty states at the same HEAD get suffixed branches, never a failed checkout -b
+                        {
+                            Push.Git(repoPath, $"rev-parse --verify {rescueBranch}", out var rbChk, out _);
+                            if (rbChk.Trim().Length == 0) break;
+                            rescueBranch = $"ua/rescue-{headSha[..8]}-{suf}";
+                        }
                         var rcB = Push.Git(repoPath, $"checkout -b {rescueBranch}", out _, out _);
                         var rcA = rcB == 0 ? Push.Git(repoPath, "add -A", out _, out _) : 1;
                         var commitErr = ""; var rcC = rcA == 0 ? Push.Git(repoPath, "commit -m \"ua scan-estate rescue: preserve dirty working tree before refresh\"", out _, out commitErr) : 1;
@@ -308,6 +314,7 @@ public static class ScanEstate
         // ---- pass 2: execute scans in parallel (SPEC-019 §2: decisions were all made sequentially
         //      above in name-ordinal order; ONLY the work parallelizes, so outputs are N-independent) ----
         var gate = new object();
+        var workerFault = false;
         var workers = plannedScans.Select(unit => (Action)(() =>
         {
             var (entry, repoPath, headSha, staleWaived, worktreePath, freshness, fingerprint, resolvedTrunk) = unit;
@@ -339,14 +346,15 @@ public static class ScanEstate
                         psiB.ArgumentList.Add(satellite);
                         psiB.ArgumentList.Add("--nologo");
                         using var pB = System.Diagnostics.Process.Start(psiB)!;
-                        _ = pB.StandardOutput.ReadToEndAsync(); _ = pB.StandardError.ReadToEndAsync();
+                        var errB = pB.StandardError.ReadToEndAsync();
+                        _ = pB.StandardOutput.ReadToEndAsync();
                         pB.WaitForExit();
                         if (pB.ExitCode != 0)
                         {
                             lock (gate)
                             {
                                 entry.Status = "skipped";
-                                entry.Reason = "build failed (--build refuses to scan without fresh evidence)";
+                                entry.Reason = $"build failed: {TrimReason(errB.IsCompleted ? errB.Result : "")} (--build refuses to scan without fresh evidence)";
                                 Console.Error.WriteLine($"skip   {entry.Name} (build failed; worktree discarded)");
                             }
                             return;
@@ -363,19 +371,20 @@ public static class ScanEstate
                     psiB.ArgumentList.Add(repoPath);
                     psiB.ArgumentList.Add("--nologo");
                     using var pB = System.Diagnostics.Process.Start(psiB)!;
-                    _ = pB.StandardOutput.ReadToEndAsync(); _ = pB.StandardError.ReadToEndAsync();
+                    var errB = pB.StandardError.ReadToEndAsync();
+                    _ = pB.StandardOutput.ReadToEndAsync();
                     pB.WaitForExit();
                     if (pB.ExitCode != 0)
                     {
                         lock (gate)
                         {
                             entry.Status = "skipped";
-                            entry.Reason = "build failed (--build refuses to scan without fresh evidence)";
+                            entry.Reason = $"build failed: {TrimReason(errB.IsCompleted ? errB.Result : "")} (--build refuses to scan without fresh evidence)";
                             Console.Error.WriteLine($"skip   {entry.Name} (build failed)");
                         }
                         return;
                     }
-                    fingerprint = DepsFingerprint(repoPath);
+                    fingerprint = indexDepsJson ? DepsFingerprint(repoPath) : null; // C24 r8: no indexing => no build-output skip key stored (a stored hash would force one needless rescan on the next source-only run)
                     freshness = indexDepsJson ? ComputeBuildFreshness(repoPath, headSha, true) : freshness;
                 }
                 ClearLeftovers(scansDir, entry.Name);
@@ -476,6 +485,7 @@ public static class ScanEstate
                     entry.Status = "skipped";
                     entry.Reason = $"scan worker failed: {TrimReason(ex.Message)}";
                     Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
+                    workerFault = true; // Baz r8: an internal fault never masquerades as a successful estate run
                 }
             }
             finally
@@ -491,6 +501,12 @@ public static class ScanEstate
             System.Threading.Tasks.Parallel.Invoke(new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = parallel }, workers);
         else
             foreach (var w in workers) w();
+        if (workerFault)
+        {
+            WriteManifest();
+            Console.Error.WriteLine("internal error: one or more scan workers faulted — estate artifacts NOT written; see the skip reasons in the run manifest");
+            return 4;
+        }
 
         freshDirs.Sort(StringComparer.Ordinal); // SPEC-019 §2: downstream inputs are name-ordinal regardless of worker completion order
 
@@ -714,12 +730,14 @@ public static class ScanEstate
         foreach (var line in wl.Split('\n'))
             if (line.StartsWith("worktree ", StringComparison.Ordinal))
                 owned.Add(Path.GetFullPath(line["worktree ".Length..].Trim()));
-        foreach (var d in Directory.GetDirectories(uaRoot).Where(d =>
-            Path.GetFileName(d).StartsWith(name + "-", StringComparison.Ordinal)
-            && Path.GetFileName(d).Length == name.Length + 1 + 8
-            && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)
-            && owned.Contains(Path.GetFullPath(d))).ToList())
+        var swept = 0;
+        foreach (var d in Directory.EnumerateDirectories(uaRoot).Take(MaxWalkedDirs * 4)) // Baz r8: lazy + bounded — a huge shared namespace cannot stall cleanup unreported
         {
+            if (++swept >= MaxWalkedDirs * 4) { Console.Error.WriteLine($"warning: worktree cleanup under {uaRoot} hit its enumeration bound — sweep incomplete this run"); break; }
+            if (!(Path.GetFileName(d).StartsWith(name + "-", StringComparison.Ordinal)
+                && Path.GetFileName(d).Length == name.Length + 1 + 8
+                && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)
+                && owned.Contains(Path.GetFullPath(d)))) continue;
             Push.Git(repoPath, "worktree remove --force \"" + d + "\"", out _, out _);
             Push.Git(repoPath, "worktree prune", out _, out _);
             if (Directory.Exists(d)) TryDeleteDir(d); // dir survived an admin-less removal

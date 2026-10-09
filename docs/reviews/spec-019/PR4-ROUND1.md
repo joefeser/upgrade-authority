@@ -70,3 +70,13 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | C20 | Fingerprint computed/compared without `--index-deps-json` — source-only scans rescan on local rebuilds; sentinel blocked default reuse | P2 | **Accepted** | Fingerprint only when deps indexing is on (null otherwise — matches null) |
 | C21 | The "predates the current commit" reason fired for absent/none freshness — a timestamp claim with no comparison behind it | P2 | **Accepted** | Fires only on a recorded `stale` verdict |
 | C22 | Build-failure skip reasons discarded stderr | P2 | **Accepted** | First stderr line through TrimReason (scrubbed, capped) in both branches |
+
+## Round 8 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C23 + Baz | Both build branches still discarded stderr (the round-7 patch had missed them on a name mismatch) | P2 | **Accepted** | Captured and surfaced via TrimReason in both branches (verified compiled this time) |
+| C24 | Post-build fingerprint stored unconditionally — one needless rescan for later source-only runs | P2 | **Accepted** | Stored only when `--index-deps-json` is on |
+| C25 | Repeated dirty state at the same HEAD collided on the rescue branch name ⇒ skip | P2 | **Accepted** | Suffix probing (`ua/rescue-<sha8>-2`, `-3`, …) |
+| Baz | Worker exceptions masked as a successful estate run (exit 0 + artifacts) | medium | **Accepted** | `workerFault` flag ⇒ manifest written, artifacts NOT written, exit 4 |
+| Baz | Sweep materialized the shared namespace eagerly | medium | **Accepted** | Lazy bounded enumeration + incomplete-sweep warning |
