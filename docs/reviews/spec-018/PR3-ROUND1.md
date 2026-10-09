@@ -29,3 +29,17 @@ Baz confirmed all round-1 fixes in-thread (9 addressed replies, check pass). New
 | C7 | Esc gaps: conflict diagnostics wrote versions raw; folder-conflict wrote filenames raw; null schemaVersion/source NRE'd inside Esc | P2 | **Accepted** | Esc applied to every untrusted interpolation (versions, filenames); null metadata coalesced; typed exit 5 pinned for null schemaVersion/source and case-variant-two-versions |
 | Baz | Validator's ord() fallback preserved unknown drift keys (out-of-shape goldens could pass) | medium | **Accepted** | ord is STRICT (unknown keys dropped from the rendering ⇒ byte-compare fails); comment records why |
 | Baz | Unbounded staged memory in EmitDeltas | medium | **Dismissed (receipt)** | The tool is in-memory by design (Engine loads every fact/lockfile row before drift runs); staged candidates are strictly smaller than the already-loaded inventory. An arbitrary cap would be the first memory limit in a codebase that deliberately has none; estate-scale memory is the design-talk tier |
+
+
+## Round 3–4 + CONVERGENCE (2026-10-09, head 291383a)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C8 (r3) | Feed file's own basename interpolated raw in validation diagnostics | P2 | Accepted | `displayName` passes through `Esc` at `Validate` entry |
+| C9 (r4) | The invalid-JSON branch (runs before Validate) still had the raw basename | P2 | Accepted | That branch escapes its basename too — the last raw untrusted feed value |
+| Baz (r4) | Returned report's per-package `Statuses` map empty (only `Write` computed counts) — in-process API inconsistency | medium | Accepted | `Build` populates all four counts from the final deduplicated installations |
+
+**Round 5: Codex delta review of 291383a completed with ZERO new findings; Baz confirmed rounds 3–4
+in-thread with passing checks.** Finding decay 10 → 5 → 4 → 2 → **0 open** — every finding fixed or
+dismissed with a receipt. Per doctrine §2 the implementation review is converged. PR #3 awaits Joe's
+work-machine verification → ONE merge to public main → ONE sync to dev.
