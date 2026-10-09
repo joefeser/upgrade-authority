@@ -93,3 +93,12 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | Baz | Rescue suffix probing unbounded | medium | **Accepted** | Bounded at 15; exhaustion is a visible refusal |
 | Baz | Faulted runs left the previous run's artifacts masquerading as current | medium | **Accepted** | Faulted runs remove fixture/plan/report with a console note |
 | Baz | (sweep boundary — folded into C29) | medium | Accepted | — |
+
+## Round 10 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C31 + Baz | The r9 fetch pre-pass ran before eligibility — symlinked and out-of-scope checkouts got fetched | **P1** | **Accepted** | Pre-pass applies the same cheap filters (dot, symlink, scope, is-git, has-origin); alternate dedupe stays sequential |
+| C32 + Baz | Leftover matching still prefix-broad (`LastIndexOf`) — sibling `foo.tmp-bar` temps deletable by `foo` | P2 | **Accepted** | EXACT anchored forms `.{name}.tmp-<8hex>` / `.{name}.old-<8hex>` |
+| C33 | Skipped worktree entries kept `buildFreshness: none` | P2 | **Accepted** | Null on worktree-add and build-failure paths (no build happened) |
+| Baz | Rescue probe skipped the final `-15` candidate | medium | **Accepted** | Every candidate probed; exhaustion = visible refusal |

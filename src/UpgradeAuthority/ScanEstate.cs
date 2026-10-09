@@ -125,6 +125,9 @@ public static class ScanEstate
         {
             var fetchUnits = Directory.GetDirectories(Path.GetFullPath(reposRoot))
                 .Where(d => !Path.GetFileName(d).StartsWith('.'))
+                .Where(d => new DirectoryInfo(d).LinkTarget is null) // C31 r10: a symlinked child is never fetched (the eligibility loop rejects it for the same reason)
+                .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
+                .Where(d => Push.Git(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
                 .Select(d => (Action)(() =>
                 {
                     var n30 = Path.GetFileName(d);
@@ -220,14 +223,13 @@ public static class ScanEstate
                 {
                     if (dirtyOut.Trim().Length > 0)
                     {
-                        var rescueBranch = $"ua/rescue-{headSha[..8]}"; // 8 chars — one more than display Sha7, uniqueness at a glance
-                        var rescueOk = true;
-                        for (var suf = 2; suf < 16; suf++) // Baz r9: bounded probing — an exhausted range is a visible refusal, never a stall
+                        var rescueBranch = "";
+                        var rescueOk = false;
+                        for (var suf = 1; suf <= 15; suf++) // Baz r10: EVERY candidate is probed (incl. the last); an exhausted range is a visible refusal
                         {
-                            Push.Git(repoPath, $"rev-parse --verify {rescueBranch}", out var rbChk, out _);
-                            if (rbChk.Trim().Length == 0) break;
-                            rescueBranch = $"ua/rescue-{headSha[..8]}-{suf}";
-                            if (suf == 15) rescueOk = false;
+                            var candidate = suf == 1 ? $"ua/rescue-{headSha[..8]}" : $"ua/rescue-{headSha[..8]}-{suf}";
+                            Push.Git(repoPath, $"rev-parse --verify {candidate}", out var rbChk, out _);
+                            if (rbChk.Trim().Length == 0) { rescueBranch = candidate; rescueOk = true; break; }
                         }
                         if (!rescueOk)
                         { entries.Add(Skip("rescue branch range exhausted (15 prior rescues at this HEAD) — clean up ua/rescue-* branches")); continue; }
@@ -353,7 +355,7 @@ public static class ScanEstate
                         lock (gate)
                         {
                             entry.Status = "skipped";
-                            entry.Reason = $"worktree add failed: {TrimReason(wtErr)}";
+                            entry.BuildFreshness = null; entry.Reason = $"worktree add failed: {TrimReason(wtErr)}"; // C33 r10: no build happened
                             Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
                         }
                         return;
@@ -377,7 +379,7 @@ public static class ScanEstate
                             lock (gate)
                             {
                                 entry.Status = "skipped";
-                                entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
+                                entry.BuildFreshness = null; entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
                                 Console.Error.WriteLine($"skip   {entry.Name} (build failed; worktree discarded)");
                             }
                             return;
@@ -402,7 +404,7 @@ public static class ScanEstate
                         lock (gate)
                         {
                             entry.Status = "skipped";
-                            entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
+                            entry.BuildFreshness = null; entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
                             Console.Error.WriteLine($"skip   {entry.Name} (build failed)");
                         }
                         return;
@@ -652,6 +654,12 @@ public static class ScanEstate
         return 0;
     }
 
+    static bool IsGitRepoWithOrigin(string repoPath)
+    {
+        if (Push.Git(repoPath, "remote", out var remotes, out _) != 0) return false;
+        return remotes.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Contains("origin");
+    }
+
     static string Sha7(string sha) => sha.Length <= 7 ? sha : sha[..7];
     static string Ord(string? s) => s ?? "";
 
@@ -814,17 +822,18 @@ public static class ScanEstate
     // stale .tmp/.old swap siblings for one repo — an interrupted run must not strand discoverable garbage
     static void ClearLeftovers(string scansDir, string name)
     {
-        // exact pattern .{name}.tmp-<8hex> / .{name}.old-<8hex> — a sibling repo named foo.tmp-bar must
-        // never have ITS active temps matched by repo foo's prefix (C28 r9)
+        // EXACT forms .{name}.tmp-<8hex> / .{name}.old-<8hex> — the marker sits immediately after the
+        // name; a sibling repo foo.tmp-bar's active .foo.tmp-bar.tmp-<hex> can NEVER match (C32 r10)
         foreach (var d in Directory.EnumerateDirectories(scansDir))
         {
             var fn = Path.GetFileName(d);
-            if (!fn.StartsWith("." + name + ".", StringComparison.Ordinal)) continue;
-            var marker = fn.LastIndexOf(".tmp-", StringComparison.Ordinal);
-            if (marker < 0) marker = fn.LastIndexOf(".old-", StringComparison.Ordinal);
-            if (marker < 0) continue;
-            var suffix = fn[(marker + 5)..];
-            if (suffix.Length == 8 && suffix.All(Uri.IsHexDigit)) TryDeleteDir(d);
+            foreach (var marker in new[] { ".tmp-", ".old-" })
+            {
+                var prefix = "." + name + marker;
+                if (fn.StartsWith(prefix, StringComparison.Ordinal)
+                    && fn.Length == prefix.Length + 8
+                    && fn[(prefix.Length)..].All(Uri.IsHexDigit)) { TryDeleteDir(d); break; }
+            }
         }
     }
 
