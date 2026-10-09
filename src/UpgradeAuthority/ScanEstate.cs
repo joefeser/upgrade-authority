@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace UpgradeAuthority;
@@ -400,13 +401,38 @@ public static class ScanEstate
                 }
                 if (satellite is not null)
                 {
-                    // C15 r5: real scanners derive repoName/repo from the SATELLITE path (alpha-<hex8>).
-                    // That leaf is an artifact of OUR orchestration, not the repo's identity — restore the
-                    // canonical name in the recorded facts/manifest so ingest identity and freshness match.
+                    // C15/C18: real scanners derive repoName/repo from the SATELLITE path (alpha-<hex8>) —
+                    // an artifact of OUR orchestration, not repo identity. Parse-and-rewrite (compact JSON is
+                    // real tracemap's shape; string replace missed it) so ingest identity and freshness match.
                     var leaf = Path.GetFileName(satellite);
-                    foreach (var f in new[] { Path.Combine(tmp, "facts.ndjson"), Path.Combine(tmp, "scan-manifest.json") })
-                        if (File.Exists(f))
-                            File.WriteAllText(f, File.ReadAllText(f).Replace($"\"repo\": \"{leaf}\"", $"\"repo\": \"{entry.Name}\"").Replace($"\"repoName\": \"{leaf}\"", $"\"repoName\": \"{entry.Name}\""));
+                    var factsPath = Path.Combine(tmp, "facts.ndjson");
+                    if (File.Exists(factsPath))
+                    {
+                        var outLines = new List<string>();
+                        foreach (var line in File.ReadLines(factsPath))
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) { outLines.Add(line); continue; }
+                            try
+                            {
+                                var node = JsonNode.Parse(line);
+                                if (node?["repo"]?.GetValue<string>() == leaf) node["repo"] = entry.Name;
+                                outLines.Add(node?.ToJsonString() ?? line);
+                            }
+                            catch (JsonException) { outLines.Add(line); } // never rewrite what we can't parse — the scan output stands
+                        }
+                        File.WriteAllLines(factsPath, outLines);
+                    }
+                    var manifestPathW = Path.Combine(tmp, "scan-manifest.json");
+                    if (File.Exists(manifestPathW))
+                    {
+                        try
+                        {
+                            var mNode = JsonNode.Parse(File.ReadAllText(manifestPathW));
+                            if (mNode?["repoName"]?.GetValue<string>() == leaf) mNode["repoName"] = entry.Name;
+                            File.WriteAllText(manifestPathW, mNode?.ToJsonString() ?? File.ReadAllText(manifestPathW));
+                        }
+                        catch (JsonException) { /* unparseable manifest is the scanner's problem; left as-is */ }
+                    }
                 }
                 var meta = new CacheMeta
                 {
@@ -647,14 +673,20 @@ public static class ScanEstate
         static bool ex581(string d) => true; // unreadable path: skip, never abort the estate
         static IEnumerable<string> SafeIterate(IEnumerable<string> source, Action markTruncated)
         {
-            var it = source.GetEnumerator();
-            while (true)
+            IEnumerator<string>? it = null;
+            try
             {
-                string current;
-                try { if (!it.MoveNext()) yield break; current = it.Current; }
-                catch (Exception) { markTruncated(); yield break; } // inaccessible mid-iteration = incomplete evidence, fail closed
-                yield return current;
+                try { it = source.GetEnumerator(); }
+                catch (Exception) { markTruncated(); yield break; } // acquisition failure = incomplete evidence, fail closed
+                while (true)
+                {
+                    string current;
+                    try { if (!it.MoveNext()) yield break; current = it.Current; }
+                    catch (Exception) { markTruncated(); yield break; } // MoveNext failure (mid-iteration removal etc.)
+                    yield return current;
+                }
             }
+            finally { it?.Dispose(); } // Baz r6: manually owned enumerators are disposed on EVERY exit
         }
     }
 

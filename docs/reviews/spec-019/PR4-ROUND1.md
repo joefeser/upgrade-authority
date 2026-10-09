@@ -55,3 +55,10 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | C15 | Real worktree scans record the satellite leaf as repo identity ⇒ ingest freshness never matches + repo identity churns per rescan | **P1** | **Accepted** | Post-scan normalization (worktree mode only): the satellite leaf in facts/manifest `repo`/`repoName` is OUR orchestration artifact, not repo identity — restored to the canonical name before the swap |
 | C16 | Lazy enumeration throws from `MoveNext` (not creation) — outside the catch, aborting the estate | **P1** | **Accepted** | `SafeIterate` wrapper: mid-iteration failure marks discovery truncated (fail closed) |
 | C17 | A stale deps row naming the target demoted repos with an independent lockfile closure — contradicts spec 19-5 | P2 | **Accepted** | `touches` scopes stale-row suspicion to repos with NO lockfile rows (checked-in proof stands; pinned by a new acceptance: lockfile-without-target + stale-deps-with-target ⇒ not-affected) |
+
+## Round 6 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C18 | Identity normalization used string replace on spaced JSON — real tracemap facts are COMPACT; satellite name survived | **P1** | **Accepted** | Parse-and-rewrite (per-line JsonNode for facts; whole-doc for the manifest); unparseable lines stand as scanned |
+| C19 | SafeIterate leaked its manually owned enumerator; acquisition failures bypassed markTruncated | medium | **Accepted** | try/finally disposal on every exit; acquisition routed through markTruncated |
