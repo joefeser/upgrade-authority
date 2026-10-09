@@ -520,7 +520,8 @@ public static class Ingest
             try
             {
                 using var seDoc = JsonDocument.Parse(File.ReadAllText(sePath));
-                if (seDoc.RootElement.TryGetProperty("buildFreshness", out var bf) && bf.ValueKind == JsonValueKind.String)
+                if (seDoc.RootElement.ValueKind == JsonValueKind.Object
+                    && seDoc.RootElement.TryGetProperty("buildFreshness", out var bf) && bf.ValueKind == JsonValueKind.String)
                 {
                     var dirName = Path.GetFileName(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar));
                     var value = bf.GetString()!;

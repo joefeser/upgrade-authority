@@ -81,16 +81,20 @@ public sealed class Engine
         }
         foreach (var kv in _produced) kv.Value.Sort(new NaturalComparer());
         _mirrors.Clear();
-        if (_pendingFreshness is not null) // SPEC-019: normalize freshness keys through the SAME identity as every input (Codex P2)
-        {
-            foreach (var e in _pendingFreshness.Repos) _depsFreshness[Norm(e.Repo)] = e.Freshness;
-            _pendingFreshness = null;
-        }
         foreach (var m in ow.Mirrors)
         {
             var canonical = NormBasic(m.Canonical);
             foreach (var a in m.Aliases) _mirrors[NormBasic(a)] = canonical;
             if (NormBasic(m.Canonical) != canonical) _mirrors[NormBasic(m.Canonical)] = canonical;
+        }
+        if (_pendingFreshness is not null) // SPEC-019: applied AFTER mirrors load (Codex P2 r2); under BOTH the raw
+        {                                // key (lockfile rows key RepoKey verbatim) and Norm (aliases + URL hosts resolve)
+            foreach (var e in _pendingFreshness.Repos)
+            {
+                _depsFreshness[e.Repo] = e.Freshness;
+                _depsFreshness[Norm(e.Repo)] = e.Freshness;
+            }
+            _pendingFreshness = null;
         }
         foreach (var o in ow.Ownerships) _team[Norm(o.Repo)] = o.Team;
         foreach (var f in px.Facts) { f.Repo = Norm(f.Repo); f.Projects.Sort(StringComparer.Ordinal); (_facts.GetValueOrDefault(f.Repo) ?? (_facts[f.Repo] = new())).Add(f); }

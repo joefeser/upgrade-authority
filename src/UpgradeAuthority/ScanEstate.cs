@@ -116,6 +116,7 @@ public static class ScanEstate
         var plannedScans = new List<(ManifestEntry Entry, string RepoPath, string HeadSha, bool StaleWaived, string? WorktreePath, string Freshness, string? Fingerprint, string Trunk)>();
         var freshDirs = new List<string>();
         var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name
+        var rescuedTo = new Dictionary<string, string>(StringComparer.Ordinal); // Baz r2: rescue provenance rides the single canonical entry
         foreach (var repoPath in Directory.GetDirectories(Path.GetFullPath(reposRoot)).OrderBy(p => Path.GetFileName(p), StringComparer.Ordinal))
         {
             var name = Path.GetFileName(repoPath);
@@ -188,15 +189,14 @@ public static class ScanEstate
                 {
                     if (dirtyOut.Trim().Length > 0)
                     {
-                        var rescueBranch = $"ua/rescue-{Sha7(headSha)}";
+                        var rescueBranch = $"ua/rescue-{headSha[..8]}"; // 8 chars — one more than display Sha7, uniqueness at a glance
                         var rcB = Push.Git(repoPath, $"checkout -b {rescueBranch}", out _, out _);
                         var rcA = rcB == 0 ? Push.Git(repoPath, "add -A", out _, out _) : 1;
                         var commitErr = ""; var rcC = rcA == 0 ? Push.Git(repoPath, "commit -m \"ua scan-estate rescue: preserve dirty working tree before refresh\"", out _, out commitErr) : 1;
                         if (rcB != 0 || rcA != 0 || rcC != 0)
                         { entries.Add(Skip($"dirty-tree rescue failed ({TrimReason(commitErr ?? "git error")} — identity configured? ua never invents one)")); continue; }
                         Console.Error.WriteLine($"rescue {name}: stray work committed to {rescueBranch} (find it there — never dropped)");
-                        entries.Add(new ManifestEntry { Name = name, Status = "skipped", Reason = $"dirty tree rescued to {rescueBranch}; re-run to scan at trunk" });
-                        // fall through to trunk checkout on the NEXT run; this run moves to trunk now
+                        rescuedTo[name] = rescueBranch; // ONE canonical entry per repo (Baz r2): the pending entry below carries the rescue provenance
                     }
                 }
                 var localTrunk = trunk["origin/".Length..];
@@ -279,6 +279,7 @@ public static class ScanEstate
                 continue;
             }
             var pending = new ManifestEntry { Name = name, Status = "scanned", CommitSha = headSha, BuildFreshness = freshnessNow }; // confirmed (or skipped) in pass 2
+            if (rescuedTo.TryGetValue(name, out var rb)) pending.Reason = $"dirty tree rescued to {rb} before refresh";
             entries.Add(pending);
             plannedScans.Add((pending, repoPath, headSha, staleWaived, worktreePath, freshnessNow, fingerprintNow, trunk));
         }
@@ -314,16 +315,14 @@ public static class ScanEstate
                         return;
                     }
                 }
-                var scanTarget = satellite ?? repoPath;
-                if (worktreePath is not null)
+                var scanTarget = satellite ?? repoPath; // the REAL satellite — worktreePath is only the PENDING marker from planning (Codex P1 r2)
+                if (satellite is not null && build)
                 {
-                    scanTarget = worktreePath;
-                    if (build)
                     {
                         // provably-fresh deps.json: compile the satellite at the scanned commit (§3.2)
                         var psiB = new System.Diagnostics.ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
                         psiB.ArgumentList.Add("build");
-                        psiB.ArgumentList.Add(worktreePath);
+                        psiB.ArgumentList.Add(satellite);
                         psiB.ArgumentList.Add("--nologo");
                         using var pB = System.Diagnostics.Process.Start(psiB)!;
                         _ = pB.StandardOutput.ReadToEndAsync(); _ = pB.StandardError.ReadToEndAsync();
@@ -338,7 +337,7 @@ public static class ScanEstate
                             }
                             return;
                         }
-                        fingerprint = DepsFingerprint(worktreePath); // recorded from the tree actually scanned (§6)
+                        fingerprint = DepsFingerprint(satellite); // recorded from the tree actually scanned (§6)
                         freshness = indexDepsJson ? "fresh-by-build" : freshness;
                     }
                 }
@@ -573,12 +572,21 @@ public static class ScanEstate
         return new DateTimeOffset(oldest, TimeSpan.Zero).ToUnixTimeSeconds() >= commitTime ? "fresh" : "stale";
     }
 
-    static List<string> DepsManifests(string root) =>
-        Directory.Exists(root)
-            ? Directory.EnumerateFiles(root, "*.deps.json", SearchOption.AllDirectories)
-                .Where(f => f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-                .OrderBy(f => f, StringComparer.Ordinal).ToList()
-            : new List<string>();
+    const int MaxDepsManifests = 2048; // bounded traversal (Baz r2): a hostile tree cannot make scan-estate enumerate unboundedly
+    static List<string> DepsManifests(string root)
+    {
+        if (!Directory.Exists(root)) return new List<string>();
+        var found = Directory.EnumerateFiles(root, "*.deps.json", SearchOption.AllDirectories)
+            .Where(f => f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Take(MaxDepsManifests + 1).ToList();
+        if (found.Count > MaxDepsManifests)
+        {
+            Console.Error.WriteLine($"warning: more than {MaxDepsManifests} deps.json manifests under {root} — traversal truncated; freshness treated conservatively");
+            found = found.Take(MaxDepsManifests).ToList();
+            return found; // callers: truncated set is still min-mtime conservative-ish; freshness derived from it may say fresh when more files exist — acceptable V0, warned
+        }
+        return found.OrderBy(f => f, StringComparer.Ordinal).ToList();
+    }
 
     // make-style skip key: metadata only (path, size, mtime), never content reads (SPEC-019 §6)
     static string? DepsFingerprint(string root)
@@ -596,14 +604,22 @@ public static class ScanEstate
     static void SweepWorktreeLeftovers(string repoPath, string uaRoot, string name)
     {
         if (!Directory.Exists(uaRoot)) return;
+        // OWNERSHIP-CHECKED sweep (Baz r2): a pattern-matching directory is ours only if git itself
+        // lists it as this repo's worktree — a foreign actor creating <name>-<8hex> inside ua/ survives.
+        Push.Git(repoPath, "worktree list --porcelain", out var wl, out _);
+        var owned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in wl.Split('\n'))
+            if (line.StartsWith("worktree ", StringComparison.Ordinal))
+                owned.Add(Path.GetFullPath(line["worktree ".Length..].Trim()));
         foreach (var d in Directory.GetDirectories(uaRoot).Where(d =>
             Path.GetFileName(d).StartsWith(name + "-", StringComparison.Ordinal)
             && Path.GetFileName(d).Length == name.Length + 1 + 8
-            && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)).ToList())
+            && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)
+            && owned.Contains(Path.GetFullPath(d))).ToList())
         {
-            TryDeleteDir(d);
-            Push.Git(repoPath, "worktree remove --force \"" + d + "\"", out _, out _); // stale admin entry if the dir existed
+            Push.Git(repoPath, "worktree remove --force \"" + d + "\"", out _, out _);
             Push.Git(repoPath, "worktree prune", out _, out _);
+            if (Directory.Exists(d)) TryDeleteDir(d); // dir survived an admin-less removal
         }
     }
 

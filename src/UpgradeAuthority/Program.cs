@@ -382,8 +382,12 @@ public static class Program
             catch (JsonException ex) { throw new UaException($"malformed input build-freshness.v0.json: {ex.Message}"); }
             if (parsed?.SchemaVersion != "build-freshness.v0")
                 throw new UaException($"malformed input build-freshness.v0.json: unsupported schemaVersion '{parsed?.SchemaVersion}' (expected build-freshness.v0)");
+            if (parsed.Repos is null)
+                throw new UaException("malformed input build-freshness.v0.json: repos is null — a file with no entries must not exist at all");
             foreach (var fe in parsed.Repos)
             {
+                if (fe is null)
+                    throw new UaException("malformed input build-freshness.v0.json: null repos[] element — every entry must be an object");
                 if (fe.Freshness is not ("fresh" or "stale" or "none" or "fresh-by-build"))
                     throw new UaException($"malformed input build-freshness.v0.json: repo '{fe.Repo}' freshness '{fe.Freshness}' not in fresh|stale|none|fresh-by-build");
                 if (string.IsNullOrEmpty(fe.Repo))
