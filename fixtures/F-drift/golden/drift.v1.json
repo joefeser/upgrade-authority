@@ -1,0 +1,130 @@
+{
+  "schemaVersion": "drift.v1",
+  "feed": {
+    "source": "operator-provided",
+    "asOf": "2026-10-09",
+    "packageCount": 3
+  },
+  "summary": {
+    "packagesObserved": 4,
+    "behind": 1,
+    "current": 2,
+    "ahead": 1,
+    "unclassified": 4,
+    "unknownFeedPackages": 1
+  },
+  "packages": [
+    {
+      "packageId": "Contoso.Core",
+      "latest": null,
+      "statuses": {
+        "behind": 0,
+        "current": 0,
+        "ahead": 0,
+        "unclassified": 0
+      },
+      "installations": [
+        {
+          "repo": "svc",
+          "version": "0.9.0",
+          "evidence": "lockfile",
+          "status": "unknown-feed"
+        },
+        {
+          "repo": "svc",
+          "version": "1.0.0",
+          "evidence": "lockfile",
+          "status": "unknown-feed"
+        }
+      ]
+    },
+    {
+      "packageId": "Contoso.Payments",
+      "latest": "1.5.0",
+      "statuses": {
+        "behind": 1,
+        "current": 0,
+        "ahead": 1,
+        "unclassified": 0
+      },
+      "installations": [
+        {
+          "repo": "billing",
+          "version": "1.0.0",
+          "evidence": "lockfile",
+          "status": "behind"
+        },
+        {
+          "repo": "shipping",
+          "version": "2.0.0",
+          "evidence": "lockfile",
+          "status": "ahead"
+        }
+      ]
+    },
+    {
+      "packageId": "Newtonsoft.Json",
+      "latest": "13.0.3-beta.1",
+      "statuses": {
+        "behind": 0,
+        "current": 0,
+        "ahead": 0,
+        "unclassified": 4
+      },
+      "installations": [
+        {
+          "repo": "billing",
+          "version": "13.0.3",
+          "evidence": "lockfile",
+          "status": "unclassified",
+          "reason": "feed latest 13.0.3-beta.1 not a plain numeric pin"
+        },
+        {
+          "repo": "shipping",
+          "version": "12.0.3",
+          "evidence": "lockfile",
+          "status": "unclassified",
+          "reason": "feed latest 13.0.3-beta.1 not a plain numeric pin"
+        },
+        {
+          "repo": "svc",
+          "version": "12.0.3",
+          "evidence": "lockfile",
+          "status": "unclassified",
+          "reason": "feed latest 13.0.3-beta.1 not a plain numeric pin"
+        },
+        {
+          "repo": "svc",
+          "version": "13.0.1",
+          "evidence": "lockfile",
+          "status": "unclassified",
+          "reason": "feed latest 13.0.3-beta.1 not a plain numeric pin"
+        }
+      ]
+    },
+    {
+      "packageId": "Serilog",
+      "latest": "3.1.1",
+      "statuses": {
+        "behind": 0,
+        "current": 2,
+        "ahead": 0,
+        "unclassified": 0
+      },
+      "installations": [
+        {
+          "repo": "cleanrepo",
+          "version": "3.1.1",
+          "evidence": "declared-pin",
+          "status": "current"
+        },
+        {
+          "repo": "svc",
+          "version": "3.1.1",
+          "evidence": "lockfile",
+          "status": "current"
+        }
+      ]
+    }
+  ]
+}

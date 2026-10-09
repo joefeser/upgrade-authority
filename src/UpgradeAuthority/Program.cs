@@ -136,6 +136,21 @@ public static class Program
                 { Console.Error.WriteLine("error: --scope requires a value (<file>)"); return 1; }
                 return Ingest.Run(scanDirs, outDir, GetOpt(args, "--producer"), GetOpt(args, "--ownership"), GetOpt(args, "--delta"), scansRootOpt, scopeOpt);
             }
+            if (args.Length >= 2 && args[0] == "drift")
+            {
+                // SPEC-018: outdated discovery — installed inventory vs feed truth → drift.v1 (+ delta candidates)
+                foreach (var f in new[] { "--feed", "--folder-feed", "--out", "-o", "--emit-deltas" })
+                {
+                    int? bad = ValueFlagError(args, f);
+                    if (bad is not null) { Console.Error.WriteLine($"error: {args[bad.Value]} requires a value"); return 1; }
+                }
+                var outFileD = GetOpt(args, "--out") ?? GetOpt(args, "-o");
+                var (_, canonical, rcD) = Drift.Run(args[1], GetOpt(args, "--feed"), GetOpt(args, "--folder-feed"), GetOpt(args, "--emit-deltas"));
+                if (rcD != 0) return rcD;
+                if (outFileD is null) WriteCanonical(() => Console.Write(canonical), outWriter);
+                else WriteArtifactFile(outFileD, canonical);
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
@@ -2050,6 +2065,231 @@ public static class Program
             ForceDelete(root15); ForceDelete(out15); ForceDelete(out15b);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-baz-round1: {ex.Message}"); }
+
+        // SPEC-018: ua drift — feed truth, inventory, classification, canonical output, delta candidates
+        try
+        {
+            var fd = Path.Combine(fixturesRoot, "F-drift");
+            var feedFd = Path.Combine(fd, "input", "feed-versions.v1.json");
+            // golden + determinism + emitted deltas (acceptance 6/7/8)
+            var (rep1, canon1, rc1) = Drift.Run(fd, feedFd, null, null);
+            if (rc1 != 0 || canon1 is null) throw new Exception($"drift exited {rc1}");
+            if (canon1 != File.ReadAllText(Path.Combine(fd, "golden", "drift.v1.json"))) throw new Exception("drift.v1 differs from golden");
+            var (rep2, canon2, rc2) = Drift.Run(fd, feedFd, null, null);
+            if (rc2 != 0 || canon2 != canon1) throw new Exception("drift not deterministic");
+            var emit18 = Path.Combine(Path.GetTempPath(), "ua-dr18-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Drift.Run(fd, feedFd, null, emit18).Item3 != 0) throw new Exception("emit run failed");
+            var goldenDeltas = Path.Combine(fd, "golden", "deltas");
+            var emitted = Directory.GetFiles(emit18).OrderBy(f => f, StringComparer.Ordinal).Select(Path.GetFileName).ToArray();
+            var wanted = Directory.GetFiles(goldenDeltas).OrderBy(f => f, StringComparer.Ordinal).Select(Path.GetFileName).ToArray();
+            if (!emitted.SequenceEqual(wanted) || emitted.Length != 1) throw new Exception($"emitted {emitted.Length} candidates, expected exactly the golden set");
+            foreach (var f in emitted)
+                if (File.ReadAllText(Path.Combine(emit18, f)) != File.ReadAllText(Path.Combine(goldenDeltas, f))) throw new Exception($"emitted {f} differs from golden");
+            // summary table pinned by the spec (verified against the committed scans)
+            var doc18 = JsonDocument.Parse(canon1).RootElement;
+            var sum18 = doc18.GetProperty("summary");
+            if (sum18.GetProperty("packagesObserved").GetInt32() != 4 || sum18.GetProperty("behind").GetInt32() != 1
+                || sum18.GetProperty("current").GetInt32() != 2 || sum18.GetProperty("ahead").GetInt32() != 1
+                || sum18.GetProperty("unclassified").GetInt32() != 4 || sum18.GetProperty("unknownFeedPackages").GetInt32() != 1)
+                throw new Exception("summary table drifted: " + sum18.GetRawText());
+            var declPin18 = doc18.GetProperty("packages").EnumerateArray().First(p => p.GetProperty("packageId").GetString() == "Serilog")
+                .GetProperty("installations").EnumerateArray().Single(i => i.GetProperty("evidence").GetString() == "declared-pin");
+            if (declPin18.GetProperty("repo").GetString() != "cleanrepo" || declPin18.GetProperty("status").GetString() != "current") throw new Exception("cleanrepo declared-pin survivor wrong");
+            Directory.Delete(emit18, true);
+            Console.WriteLine("ok   drift-golden (F-drift bytes + deltas + determinism + pinned summary)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL drift-golden: {ex.Message}"); }
+
+        // folder feeds: conversion shapes, unresolvable skip, two-versions refusal, missing dir (acceptance 1)
+        try
+        {
+            var ff = Path.Combine(Path.GetTempPath(), "ua-dr-ff-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(ff);
+            foreach (var n in new[] { "Newtonsoft.Json.13.0.3.nupkg", "X.13.0.3-beta.1.nupkg", "Foo-Bar.1.0.0.nupkg", "Foo.1.2.0.0.nupkg", "notaversion.nupkg" })
+                File.WriteAllText(Path.Combine(ff, n), "empty");
+            var fd19 = Path.Combine(fixturesRoot, "F-drift");
+            var (_, canon19, rc19) = Drift.Run(fd19, null, ff, null);
+            if (rc19 != 0 || canon19 is null) throw new Exception($"folder-feed drift exited {rc19}");
+            var doc19 = JsonDocument.Parse(canon19).RootElement;
+            var feed19 = doc19.GetProperty("feed");
+            if (feed19.GetProperty("source").GetString() != "folder-feed" || feed19.GetProperty("packageCount").GetInt32() != 4)
+                throw new Exception($"folder conversion wrong: {feed19.GetRawText()}");
+            if (feed19.TryGetProperty("asOf", out _)) throw new Exception("folder feed must not carry asOf");
+            // the folder's own truth classifies the estate: Newtonsoft latest 13.0.3 → no longer unclassified
+            var nj19 = doc19.GetProperty("packages").EnumerateArray().First(p => p.GetProperty("packageId").GetString() == "Newtonsoft.Json");
+            if (!nj19.GetProperty("installations").EnumerateArray().All(i => new[] { "current", "behind" }.Contains(i.GetProperty("status").GetString())))
+                throw new Exception("folder-derived latest must classify numeric Newtonsoft rows");
+            if (Drift.Run(fd19, null, ff + "-absent", null).Item3 != 1) throw new Exception("missing folder-feed dir must exit 1");
+            var beforeCount19 = JsonDocument.Parse(Drift.Run(fd19, null, ff, null).Item2!).RootElement.GetProperty("feed").GetProperty("packageCount").GetInt32();
+            File.WriteAllText(Path.Combine(ff, "newtonsoft.json.13.0.3.nupkg"), "empty"); // case-variant SAME version -> collapses
+            if (Drift.Run(fd19, null, ff, null).Item3 != 0
+                || JsonDocument.Parse(Drift.Run(fd19, null, ff, null).Item2!).RootElement.GetProperty("feed").GetProperty("packageCount").GetInt32() != beforeCount19)
+                throw new Exception("case-variant same-version folder files must collapse (not refuse, not double-count)");
+            File.WriteAllText(Path.Combine(ff, "Foo.1.2.0.nupkg"), "empty"); // second version of Foo
+            if (Drift.Run(fd19, null, ff, null).Item3 != 5) throw new Exception("one id at two versions in a folder must exit 5");
+            // parse-shape unit pins (greedy-longest, prerelease-with-dots, hyphen ids, numeric-ending ids)
+            if (Drift.ParseNupkgName("Newtonsoft.Json.13.0.3") != ("Newtonsoft.Json", "13.0.3")) throw new Exception("dotted id parse wrong");
+            if (Drift.ParseNupkgName("X.13.0.3-beta.1") != ("X", "13.0.3-beta.1")) throw new Exception("prerelease-with-dots parse wrong");
+            if (Drift.ParseNupkgName("Foo-Bar.1.0.0") != ("Foo-Bar", "1.0.0")) throw new Exception("hyphenated id parse wrong");
+            if (Drift.ParseNupkgName("Foo.1.2.0.0") != ("Foo", "1.2.0.0")) throw new Exception("numeric-ending id must resolve longest-version");
+            if (Drift.ParseNupkgName("notaversion").Item1 is not null) throw new Exception("unresolvable must be null");
+            Console.WriteLine("ok   drift-folder-feed (shapes, skip, two-versions exit 5, missing dir)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL drift-folder-feed: {ex.Message}"); }
+
+        // feed validation + casing + parity + CLI contract (acceptance 2/3/4/5)
+        try
+        {
+            var fd20 = Path.Combine(fixturesRoot, "F-drift");
+            string FeedPath(string name, string content)
+            {
+                var p = Path.Combine(Path.GetTempPath(), "ua-dr20-" + Guid.NewGuid().ToString("N")[..8], name);
+                Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+                File.WriteAllText(p, content);
+                return p;
+            }
+            if (Drift.Run(fd20, FeedPath("f1.json", "{\"schemaVersion\":\"feed-versions.v0\",\"packages\":[]}"), null, null).Item3 != 5) throw new Exception("schemaVersion mismatch must exit 5");
+            if (Drift.Run(fd20, FeedPath("f2.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"weird\",\"packages\":[]}"), null, null).Item3 != 5) throw new Exception("bad source must exit 5");
+            if (Drift.Run(fd20, FeedPath("f2n1.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":null}"), null, null).Item3 != 5) throw new Exception("packages:null must exit 5 (typed), not crash");
+            if (Drift.Run(fd20, FeedPath("f2n2.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[null]}"), null, null).Item3 != 5) throw new Exception("null packages[] element must exit 5 (typed), not crash");
+            if (Drift.Run(fd20, FeedPath("f2n3.json", "{\"schemaVersion\":null,\"source\":null,\"packages\":[]}"), null, null).Item3 != 5) throw new Exception("null schemaVersion/source must exit 5 (typed), not crash");
+            if (Drift.Run(fd20, FeedPath("f2n4.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"X\",\"version\":\"1.0.0\"},{\"packageId\":\"x\",\"version\":\"2.0.0\"}]}"), null, null).Item3 != 5) throw new Exception("case-variant id at two versions must exit 5");
+            if (Drift.Run(fd20, FeedPath("f3.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"serilog\",\"version\":\"4.0.0\"}]}"), null, null).Item3 != 5) throw new Exception("same id two versions must exit 5");
+            var dupPath = FeedPath("f4.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"}]}");
+            var (_, dupCanon, dupRc) = Drift.Run(fd20, dupPath, null, null);
+            if (dupRc != 0 || JsonDocument.Parse(dupCanon!).RootElement.GetProperty("feed").GetProperty("packageCount").GetInt32() != 1)
+                throw new Exception("identical duplicates must collapse to packageCount 1");
+            if (Drift.Run(fd20, fd20 + "-absent.json", null, null).Item3 != 1) throw new Exception("missing feed file must exit 1");
+            if (Drift.Run(fd20, dupPath, dupPath, null).Item3 != 1) throw new Exception("both truth sources must exit 1");
+            if (Drift.Run(fd20, null, null, null).Item3 != 1) throw new Exception("no truth source must exit 1");
+
+            // casing: lowercased shipping lockfile rows + lowercased feed → ONE Newtonsoft entry, estate spelling
+            var scratch20 = Path.Combine(Path.GetTempPath(), "ua-dr20x-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fd20, scratch20);
+            var lockPath20 = Path.Combine(scratch20, "input", "lockfile-rows.v2.json");
+            var lockNode20 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(lockPath20))!;
+            foreach (var rep20 in lockNode20["repos"]!.AsArray())
+                if (rep20!["repo"]!.GetValue<string>() == "shipping")
+                    foreach (var row20 in rep20["rows"]!.AsArray())
+                        if (row20!["packageId"]!.GetValue<string>() == "Newtonsoft.Json") row20["packageId"] = "newtonsoft.json";
+            File.WriteAllText(lockPath20, lockNode20.ToJsonString());
+            var lowerFeed = FeedPath("f5.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"newtonsoft.json\",\"version\":\"13.0.3\"}]}");
+            var (_, canonCasing, rcCasing) = Drift.Run(scratch20, lowerFeed, null, null);
+            if (rcCasing != 0) throw new Exception($"casing run exited {rcCasing}");
+            var pkgs20 = JsonDocument.Parse(canonCasing!).RootElement.GetProperty("packages").EnumerateArray().Select(p => p.GetProperty("packageId").GetString()).ToList();
+            if (pkgs20.Count(p => p.Equals("Newtonsoft.Json", StringComparison.OrdinalIgnoreCase)) != 1 || !pkgs20.Contains("Newtonsoft.Json"))
+                throw new Exception($"case-variant rows must merge to ONE entry with the estate spelling: {string.Join(",", pkgs20)}");
+
+            // classification parity, structural: the shapes apply also judges (CompareCore rows)
+            (string, string, string)[] shapes =
+            {
+                ("13.0.3", "13.0.3.0", "current"), ("13", "13.0.0.0", "current"), ("12.0.3", "13.0.3", "behind"),
+                ("14.0.0", "13.0.3", "ahead"), ("13.0.3-beta", "13.0.3", "unclassified"), ("13.0.3", "13.0.3-beta.1", "unclassified"),
+                ("1.0.*", "2.0.0", "unclassified"), ("01.2", "2.0.0", "behind"), // CompareCore parses "01"->1 (its guard rejects only zero-valued pads) — parity means agreeing with it
+            };
+            foreach (var (installed, latest, want) in shapes)
+            {
+                var cmp = Apply.CompareCore(installed, latest);
+                var got = cmp switch { < 0 => "behind", 0 => "current", > 0 => "ahead", _ => "unclassified" };
+                if (got != want) throw new Exception($"parity shape {installed} vs {latest}: {got}, expected {want}");
+            }
+            if (Drift.Run(fd20, FeedPath("f6.json", "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Contoso.Core\",\"version\":\"13.0.3-beta\"}]}"), null, null).Item1!
+                    .Packages.First(p => p.PackageId == "Contoso.Core").Installations.All(i => i.Status != "unclassified" || i.Reason is null))
+                throw new Exception("unclassified rows must carry a D-template reason");
+            Directory.Delete(scratch20, true);
+            Console.WriteLine("ok   drift-feed-validation (exits 5/1; collapse; casing merge; CompareCore parity)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL drift-feed-validation: {ex.Message}"); }
+
+        // CLI contract: --out byte-equality + sanitized identity + bare flag + delta-precondition refusals (acceptance 5/7)
+        try
+        {
+            var exe21 = Environment.ProcessPath ?? throw new Exception("ProcessPath unavailable");
+            var fd21 = Path.Combine(fixturesRoot, "F-drift");
+            var feed21 = Path.Combine(fd21, "input", "feed-versions.v1.json");
+            var out21 = Path.Combine(Path.GetTempPath(), "ua-dr21.tmp");
+            var psiOut = new System.Diagnostics.ProcessStartInfo(exe21) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
+            psiOut.ArgumentList.Add("drift"); psiOut.ArgumentList.Add(fd21); psiOut.ArgumentList.Add("--feed"); psiOut.ArgumentList.Add(feed21);
+            psiOut.ArgumentList.Add("--out"); psiOut.ArgumentList.Add(out21);
+            psiOut.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            using (var p = System.Diagnostics.Process.Start(psiOut)!)
+            {
+                var so = p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(30000);
+                if (p.ExitCode != 0 || so.Length != 0) throw new Exception($"drift --out exited {p.ExitCode}, stdout {so.Length} chars");
+            }
+            var psiCap = new System.Diagnostics.ProcessStartInfo(exe21) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
+            psiCap.ArgumentList.Add("drift"); psiCap.ArgumentList.Add(fd21); psiCap.ArgumentList.Add("--feed"); psiCap.ArgumentList.Add(feed21);
+            psiCap.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            string stdoutCap;
+            using (var p = System.Diagnostics.Process.Start(psiCap)!)
+            { stdoutCap = p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(30000); }
+            if (!File.ReadAllBytes(out21).SequenceEqual(new System.Text.UTF8Encoding(false).GetBytes(stdoutCap))) throw new Exception("--out file differs from stdout bytes");
+            if (File.ReadAllBytes(out21).Take(3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF })) throw new Exception("--out file has a BOM");
+            File.Delete(out21);
+            // sanitized stdout is byte-identical (canonical artifact bypass)
+            var psiSan = new System.Diagnostics.ProcessStartInfo(exe21) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
+            psiSan.ArgumentList.Add("drift"); psiSan.ArgumentList.Add(fd21); psiSan.ArgumentList.Add("--feed"); psiSan.ArgumentList.Add(feed21); psiSan.ArgumentList.Add("--sanitized");
+            psiSan.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            string stdoutSan;
+            using (var p = System.Diagnostics.Process.Start(psiSan)!)
+            { stdoutSan = p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(30000); }
+            if (stdoutSan != stdoutCap) throw new Exception("--sanitized drift stdout differs from canonical");
+            if (Main(new[] { "drift", fd21, "--feed", feed21, "--out" }) != 1) throw new Exception("bare trailing --out must exit 1");
+            if (Main(new[] { "drift", fd21, "--feed", feed21, "-o" }) != 1) throw new Exception("bare trailing -o must exit 1");
+            var emitDir21 = Path.Combine(Path.GetTempPath(), "ua-dr21e-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Drift.Run(fd21, feed21, null, emitDir21).Item3 != 0) throw new Exception("emit seed failed");
+            if (Drift.Run(fd21, feed21, null, emitDir21).Item3 != 3) throw new Exception("re-emit into the non-empty dir must exit 3 (stale-set refusal)");
+            // all-current rerun must ALSO refuse the stale dir (the no-behind path checks the destination first)
+            var feedCur21 = Path.Combine(Path.GetTempPath(), "ua-dr21cur-" + Guid.NewGuid().ToString("N")[..8] + ".json");
+            File.WriteAllText(feedCur21, "{\"schemaVersion\":\"feed-versions.v1\",\"source\":\"operator-provided\",\"packages\":[{\"packageId\":\"Contoso.Payments\",\"version\":\"1.0.0\"},{\"packageId\":\"Serilog\",\"version\":\"3.1.1\"},{\"packageId\":\"Newtonsoft.Json\",\"version\":\"13.0.3\"},{\"packageId\":\"Contoso.Core\",\"version\":\"1.0.0\"}]}");
+            if (Drift.Run(fd21, feedCur21, null, emitDir21).Item3 != 3)
+                throw new Exception("all-current rerun into the stale dir must exit 3 — no-behind must not skip the destination check");
+            File.Delete(feedCur21);
+            Directory.Delete(emitDir21, true);
+            // delta = loader precondition: deleted → exit 3 naming it; 2-change → exit 3; dual-fault (fixture+feed) → 3
+            var scratch21 = Path.Combine(Path.GetTempPath(), "ua-dr21x-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fd21, scratch21);
+            File.Delete(Path.Combine(scratch21, "input", "delta.json"));
+            if (Drift.Run(scratch21, feed21, null, null).Item3 != 3) throw new Exception("delta-less fixture must exit 3");
+            File.WriteAllText(Path.Combine(scratch21, "input", "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"x\",\"sourceCommitSha\":\"0\",\"changes\":[{\"id\":\"a\",\"packageName\":\"P\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"},{\"id\":\"b\",\"packageName\":\"Q\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"}]}");
+            if (Drift.Run(scratch21, feed21, null, null).Item3 != 3) throw new Exception("2-change delta must exit 3");
+            if (Drift.Run(scratch21, feed21 + "-absent", null, null).Item3 != 3) throw new Exception("dual fault must resolve fixture-first (exit 3)");
+            Directory.Delete(scratch21, true);
+            Console.WriteLine("ok   drift-cli-contract (--out==stdout no BOM; sanitized identical; refusals)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL drift-cli-contract: {ex.Message}"); }
+
+        // permutation + swap-plan: array order never reaches the bytes; emitted delta drives a real plan (acceptance 6/8)
+        try
+        {
+            var fd22 = Path.Combine(fixturesRoot, "F-drift");
+            var scratch22 = Path.Combine(Path.GetTempPath(), "ua-dr22-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(Path.Combine(scratch22, "input"));
+            foreach (var f in Directory.GetFiles(Path.Combine(fd22, "input"))) File.Copy(f, Path.Combine(scratch22, "input", Path.GetFileName(f)));
+            foreach (var f in Directory.GetFiles(Path.Combine(scratch22, "input")))
+            {
+                var doc = JsonDocument.Parse(File.ReadAllText(f));
+                File.WriteAllText(f, CanonicalJson(doc.RootElement));
+            }
+            var (_, permCanon, permRc) = Drift.Run(scratch22, Path.Combine(scratch22, "input", "feed-versions.v1.json"), null, null);
+            if (permRc != 0 || permCanon != File.ReadAllText(Path.Combine(fd22, "golden", "drift.v1.json")))
+                throw new Exception("drift bytes depend on input array order (incl. feed packages[])");
+            Directory.Delete(scratch22, true);
+
+            // swap the emitted candidate in: the estate-spelled packageName plans to the expected affected set
+            var swap22 = Path.Combine(Path.GetTempPath(), "ua-dr22x-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fd22, swap22);
+            File.Copy(Path.Combine(fd22, "golden", "deltas", "Contoso.Payments.1.0.0.delta.json"), Path.Combine(swap22, "input", "delta.json"), true);
+            var plan22 = LoadEngine(swap22).BuildPlan();
+            var affected22 = plan22.Repos.Where(r => r.Classification == "affected").Select(r => r.Repo).ToList();
+            if (!affected22.Contains("billing") || !affected22.Contains("shipping"))
+                throw new Exception($"swap-plan affected set wrong: {string.Join(",", affected22)} (billing pins 1.0.0, shipping observes the package)");
+            if (affected22.Contains("cleanrepo")) throw new Exception("cleanrepo does not reference Contoso.Payments");
+            if (!plan22.Delta.PackageName.Contains("Contoso.Payments")) throw new Exception("delta packageName not the estate spelling");
+            Directory.Delete(swap22, true);
+            Console.WriteLine("ok   drift-permutation-swap-plan (order-independent bytes; candidate plans the expected set)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL drift-permutation-swap-plan: {ex.Message}"); }
 
         // working-tree EOL guard: a CRLF checkout (core.autocrlf=true on Windows) converts unpinned
         // text files and silently breaks byte-exact apply goldens (seen on a real work machine: apply-F13).
