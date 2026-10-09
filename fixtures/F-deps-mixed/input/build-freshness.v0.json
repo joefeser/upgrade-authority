@@ -1,0 +1,6 @@
+{
+  "schemaVersion": "build-freshness.v0",
+  "repos": [
+    { "repo": "repo", "freshness": "fresh" }
+  ]
+}

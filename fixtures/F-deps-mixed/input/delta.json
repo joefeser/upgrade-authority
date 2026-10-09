@@ -1,0 +1,1 @@
+{"version":"package-delta.v1","sourceRepo":"https://example.invalid/x.git","sourceCommitSha":"0000000000000000000000000000000000000000","changes":[{"id":"d","packageName":"Serilog","ecosystem":"nuget","changeType":"updated","oldVersion":"2.0.0","newVersion":"3.0.0"}]}

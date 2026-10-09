@@ -188,7 +188,7 @@ for (const d of dirs) {
           if (JSON.stringify(rowKeys) !== JSON.stringify([...rowKeys].sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])))) errs.push("drift installations not sorted " + p.packageId);
           for (const r of rows) {
             if (!statuses.has(r.status)) errs.push("drift row status " + r.status);
-            if (!["lockfile", "declared-pin"].includes(r.evidence)) errs.push("drift row evidence " + r.evidence);
+            if (!["lockfile", "declared-pin", "deps.json"].includes(r.evidence)) errs.push("drift row evidence " + r.evidence);
             if ((r.status === "unclassified") !== (r.reason != null)) errs.push("drift reason must ride unclassified rows only " + p.packageId);
           }
           nBehind += rows.filter(r => r.status === "behind").length;

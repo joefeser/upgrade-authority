@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace UpgradeAuthority;
@@ -19,14 +20,21 @@ public static class ScanEstate
         public string ScanOutDir = "";
         public string HeadSha = "";
         public string[] Excludes = Array.Empty<string>();
+        public string RepoName = ""; // SPEC-019 §3.2: the CANONICAL estate name — in worktree mode RepoPath is the satellite (its folder leaf is a ua hex name, never an identity)
+        public bool IndexDepsJson; // pass-through flag for the real runner (stubs read RepoName/HeadSha)
     }
 
     public sealed class CacheMeta
     {
-        [JsonPropertyName("schemaVersion")] public string SchemaVersion { get; set; } = "scan-estate-cache.v1";
+        [JsonPropertyName("schemaVersion")] public string SchemaVersion { get; set; } = "scan-estate-cache.v2"; // SPEC-019 §6: v1/unknown ⇒ rescan
         [JsonPropertyName("exclude")] public List<string> Exclude { get; set; } = new();
         [JsonPropertyName("tracemapSha256")] public string? TracemapSha256 { get; set; }
         [JsonPropertyName("staleScan")] public bool StaleScan { get; set; }
+        [JsonPropertyName("depsFingerprint")] public string? DepsFingerprint { get; set; } // sorted (path,size,mtime) hash of bin/**/*.deps.json — make-style skip key
+        [JsonPropertyName("indexDepsJson")] public bool IndexDepsJson { get; set; }
+        [JsonPropertyName("buildFreshness")] public string? BuildFreshness { get; set; } // fresh|stale|none|fresh-by-build
+        [JsonPropertyName("scanMode")] public string ScanMode { get; set; } = "in-place"; // in-place|worktree
+        [JsonPropertyName("trunk")] public string? Trunk { get; set; } // RESOLVED, e.g. origin/main
     }
 
     public sealed class ManifestEntry
@@ -35,6 +43,7 @@ public static class ScanEstate
         [JsonPropertyName("status")] public string Status { get; set; } = "";
         [JsonPropertyName("reason")] public string? Reason { get; set; }
         [JsonPropertyName("commitSha")] public string? CommitSha { get; set; }
+        [JsonPropertyName("buildFreshness")] public string? BuildFreshness { get; set; } // SPEC-019 §5.2
     }
 
     // argv AFTER the assembly (the default runner prefixes the dll): scan --repo <abs> --out <dir>
@@ -57,6 +66,7 @@ public static class ScanEstate
         { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         psi.ArgumentList.Add(tracemapDll);
         foreach (var a in ComposeScanArgs(r)) psi.ArgumentList.Add(a);
+        if (r.IndexDepsJson) psi.ArgumentList.Add("--index-deps-json");
         using var p = System.Diagnostics.Process.Start(psi)!;
         var outTask = p.StandardOutput.ReadToEndAsync();
         var errTask = p.StandardError.ReadToEndAsync();
@@ -67,9 +77,15 @@ public static class ScanEstate
 
     public static int Run(string reposRoot, string outDir, string? tracemapDll, string? scopePath,
         string? selfTeam, bool allowStale, string[] tracemapExcludes,
-        string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null)
+        string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
+        bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
+        int parallel = 2, bool build = false, bool indexDepsJson = false)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
+        if (updateCheckouts && worktreeMode)
+        { Console.Error.WriteLine("error: --update-checkouts and --worktree are mutually exclusive refresh modes — pick in-place refresh or isolated worktree scans"); return 1; }
+        if (parallel < 1 || parallel > 64)
+        { Console.Error.WriteLine("error: --parallel requires a value in 1..64"); return 1; }
         if (Push.Git(reposRoot, "--version", out _, out _) != 0)
         { Console.Error.WriteLine("error: git not found on PATH (required for freshness checks)"); return 1; }
         // scope is read ONCE, here: the parsed form filters this run and the exact bytes are
@@ -92,12 +108,50 @@ public static class ScanEstate
 
         var scansDir = Path.Combine(Path.GetFullPath(outDir), "scans");
         Directory.CreateDirectory(scansDir);
+        // ResolvedTrunk is per-repo in principle; the cache records the run's resolution basis per repo
+        // via the value computed in pass 1 — captured here as the default (overridden per-repo below when
+        // --trunk is set, since the override IS the resolution for every repo that accepts it).
 
         // ---- pass 1: eligibility, freshness, cache evaluation (fetches are the only side effect) ----
         var entries = new List<ManifestEntry>();
-        var plannedScans = new List<(ManifestEntry Entry, string RepoPath, string HeadSha, bool StaleWaived)>();
+        var plannedScans = new List<(ManifestEntry Entry, string RepoPath, string HeadSha, bool StaleWaived, string? WorktreePath, string Freshness, string? Fingerprint, string Trunk)>();
         var freshDirs = new List<string>();
         var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name
+        // C30 r9 / spec §2: plain-mode FETCHES parallelize (the network-bound phase); every decision
+        // below stays sequential in name-ordinal order and reads only the fetched state.
+        var fetched = new HashSet<string>(StringComparer.Ordinal);
+        var fetchFailures = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!updateCheckouts && !worktreeMode && parallel > 1)
+        {
+            var fetchUnits = Directory.GetDirectories(Path.GetFullPath(reposRoot))
+                .Where(d => !Path.GetFileName(d).StartsWith('.'))
+                .Where(d => new DirectoryInfo(d).LinkTarget is null) // C31 r10: a symlinked child is never fetched (the eligibility loop rejects it for the same reason)
+                .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
+                .Where(d => Push.Git(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
+                .Where(d => UsableOriginUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
+                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? Ingest.NormalizeRepoBasic(u34.Trim()) : d, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).First()) // name-ordinal first-wins over one origin — SAME rule as the sequential loop (C34 r11: alternates are not fetched)
+                .Select(d => (Action)(() =>
+                {
+                    var n30 = Path.GetFileName(d);
+                    if (Push.Git(d, "fetch origin", out _, out var ferr30) != 0)
+                        lock (fetchFailures) fetchFailures[n30] = ferr30;
+                    else lock (fetched) fetched.Add(n30);
+                })).ToArray();
+            System.Threading.Tasks.Parallel.Invoke(new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = parallel }, fetchUnits);
+        }
+        var rescuedTo = new Dictionary<string, string>(StringComparer.Ordinal); // Baz r2: rescue provenance rides the single canonical entry
+        void WriteManifest()
+        {
+            // Baz r3/r4: rescue provenance rides EVERY terminal state (reused entries, failure paths,
+            // early precondition exits) — applied here, the single durable-write site
+            foreach (var e2 in entries)
+                if (rescuedTo.TryGetValue(e2.Name, out var rb2) && (e2.Reason is null || !e2.Reason.Contains(rb2)))
+                    e2.Reason = e2.Reason is null ? $"dirty tree rescued to {rb2} before refresh" : $"{e2.Reason}; dirty tree rescued to {rb2} before refresh";
+            var mf = Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json");
+            File.WriteAllText(mf, JsonSerializer.Serialize(
+                new { schemaVersion = "scan-estate.v1", repos = entries }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+        }
         foreach (var repoPath in Directory.GetDirectories(Path.GetFullPath(reposRoot)).OrderBy(p => Path.GetFileName(p), StringComparer.Ordinal))
         {
             var name = Path.GetFileName(repoPath);
@@ -132,19 +186,87 @@ public static class ScanEstate
             { entries.Add(Skip($"alternate checkout of {firstName} (same origin) — one scan per repo; pass scan dirs to ingest explicitly to combine deliberately")); continue; }
             seenOrigins[normOrigin] = name;
 
-            // F3–F6, always evaluated: the outcome feeds the staleScan cache rule under --allow-stale
+            // ---- refresh mode + freshness (SPEC-019 §3) ----
             string? fail = null;
             var trunk = "";
-            if (Push.Git(repoPath, "fetch origin", out _, out var fetchErr) != 0)
-                fail = $"fetch failed: {TrimReason(fetchErr)}";
-            else if (Push.Git(repoPath, "rev-parse --verify origin/main", out var mainOut, out _) == 0)
-                trunk = "origin/main";
-            else if (Push.Git(repoPath, "rev-parse --verify origin/dev", out var devOut, out _) == 0)
-                trunk = "origin/dev";
-            else
-                fail = "no origin/main or origin/dev branch";
-            if (fail is null)
+            string? worktreePath = null;
+            var scanMode = worktreeMode ? "worktree" : "in-place";
+            if (updateCheckouts && Push.Git(repoPath, "status --porcelain", out var preStatus, out _) != 0)
+            { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree (checked before fetch)")); continue; } // Baz r13: before ANY mutation, fetch included
+            if (fetchFailures.TryGetValue(name, out var fetchErr))
+            { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
+            if (!fetched.Contains(name) && Push.Git(repoPath, "fetch origin", out _, out fetchErr) != 0) // sequential fallback (parallel=1 or refresh modes fetch inline)
+            { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
+            // trunk resolution: --trunk override (validated), else origin/main -> origin/dev; recorded RESOLVED
+            if (trunkOverride is not null)
             {
+                if (Push.Git(repoPath, $"rev-parse --verify origin/{trunkOverride}", out _, out _) != 0)
+                { entries.Add(Skip($"--trunk origin/{trunkOverride} does not exist on this repo")); continue; }
+                trunk = $"origin/{trunkOverride}";
+            }
+            else if (Push.Git(repoPath, "rev-parse --verify origin/main", out _, out _) == 0) trunk = "origin/main";
+            else if (Push.Git(repoPath, "rev-parse --verify origin/dev", out _, out _) == 0) trunk = "origin/dev";
+            else { entries.Add(Skip("no origin/main or origin/dev branch (pass --trunk <branch> to override)")); continue; }
+
+            if (worktreeMode)
+            {
+                // isolated scan: a satellite at the trunk tip — the operator's checkout is never touched.
+                // All worktrees live under <worktreeRoot>/ua/ (the shared-root namespace; SPEC-019 §3.2).
+                var wtRoot = Path.Combine(Path.GetFullPath(worktreeRoot ?? Path.Combine(outDir, ".worktrees")), "ua");
+                SweepWorktreeLeftovers(repoPath, wtRoot, name);
+                // The satellite is created INSIDE the bounded worker (Codex P1): materializing N worktrees
+                // in the sequential pass would defeat --parallel's disk bound. The sha needs no satellite:
+                Push.Git(repoPath, $"rev-parse {trunk}", out var tipWt, out _);
+                headSha = tipWt.Trim(); // the scanned sha is the trunk tip, not the checkout HEAD
+                worktreePath = Path.Combine(wtRoot, $"{name}-PENDING"); // real path minted by the worker
+                // F5/F6 do not apply: the satellite is pristine by construction; staleScan stays false
+            }
+            else if (updateCheckouts)
+            {
+                // Joe's script: dirty => rescue branch + commit (never silent, never dropped); then trunk + ff-only.
+                if (Push.Git(repoPath, "status --porcelain", out var dirtyOut, out _) != 0)
+                { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree")); continue; } // C36 r12
+                if (dirtyOut.Trim().Length > 0)
+                {
+                    {
+                        var rescueBranch = "";
+                        var rescueOk = false;
+                        for (var suf = 1; suf <= 15; suf++) // Baz r10: EVERY candidate is probed (incl. the last); an exhausted range is a visible refusal
+                        {
+                            var candidate = suf == 1 ? $"ua/rescue-{headSha[..8]}" : $"ua/rescue-{headSha[..8]}-{suf}";
+                            Push.Git(repoPath, $"rev-parse --verify {candidate}", out var rbChk, out _);
+                            if (rbChk.Trim().Length == 0) { rescueBranch = candidate; rescueOk = true; break; }
+                        }
+                        if (!rescueOk)
+                        { entries.Add(Skip("rescue branch range exhausted (15 prior rescues at this HEAD) — clean up ua/rescue-* branches")); continue; }
+                        var rcB = Push.Git(repoPath, $"checkout -b {rescueBranch}", out _, out _);
+                        var rcA = rcB == 0 ? Push.Git(repoPath, "add -A", out _, out _) : 1;
+                        var commitErr = ""; var rcC = rcA == 0 ? Push.Git(repoPath, "commit -m \"ua scan-estate rescue: preserve dirty working tree before refresh\"", out _, out commitErr) : 1;
+                        if (rcB != 0 || rcA != 0 || rcC != 0)
+                        { entries.Add(Skip($"dirty-tree rescue failed ({TrimReason(commitErr ?? "git error")} — identity configured? ua never invents one)")); continue; }
+                        Console.Error.WriteLine($"rescue {name}: stray work committed to {rescueBranch} (find it there — never dropped)");
+                        rescuedTo[name] = rescueBranch; // ONE canonical entry per repo (Baz r2): the pending entry below carries the rescue provenance
+                    }
+                }
+                var localTrunk = trunk["origin/".Length..];
+                if (Push.Git(repoPath, $"rev-parse --verify {localTrunk}", out _, out _) != 0)
+                {
+                    if (Push.Git(repoPath, $"checkout -b {localTrunk} --track {trunk}", out _, out var coErr) != 0)
+                    { entries.Add(Skip($"checkout trunk failed: {TrimReason(coErr)}")); continue; }
+                }
+                else if (Push.Git(repoPath, $"checkout {localTrunk}", out _, out var coErr) != 0)
+                { entries.Add(Skip($"checkout trunk failed: {TrimReason(coErr)}")); continue; }
+                Push.Git(repoPath, $"rev-list --count {trunk}..{localTrunk}", out var aheadOut, out _);
+                if (int.TryParse(aheadOut.Trim(), out var ahead) && ahead > 0)
+                { entries.Add(Skip("local commits ahead of the trunk tip — refresh refused rather than merge (rebase deliberately and re-run)")); continue; }
+                if (Push.Git(repoPath, $"merge --ff-only {trunk}", out _, out var ffErr) != 0)
+                { entries.Add(Skip($"fast-forward failed: {TrimReason(ffErr)}")); continue; }
+                Push.Git(repoPath, "rev-parse HEAD", out var newHead, out _);
+                headSha = newHead.Trim();
+            }
+            else
+            {
+                // F5/F6, always evaluated: the outcome feeds the staleScan cache rule under --allow-stale
                 Push.Git(repoPath, $"rev-parse {trunk}", out var tipOut, out _);
                 var tip = tipOut.Trim();
                 if (tip != headSha)
@@ -171,6 +293,9 @@ public static class ScanEstate
                 entries.Add(Skip("cached scan has facts.ndjson but no scan-manifest.json — remove or complete it"));
                 continue;
             }
+            // build freshness + fingerprint (in-place: computed here; worktree: none now, recorded after build/scan)
+            var freshnessNow = worktreeMode ? "none" : ComputeBuildFreshness(repoPath, headSha, indexDepsJson); // C26 r9: fresh-by-build is assigned by the worker AFTER the build succeeds — never optimistically
+            var fingerprintNow = worktreeMode || !indexDepsJson ? null : DepsFingerprint(repoPath); // C20 r7: no deps indexing => no build-output skip key (a local rebuild must not rescan a source-only scan); worktree records at scan time instead
             CacheMeta? meta = null;
             if (hasManifest && hasFacts && File.Exists(Path.Combine(scanDir, "scan-estate.json")))
             {
@@ -179,7 +304,7 @@ public static class ScanEstate
                     var candidate = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(scanDir, "scan-estate.json")), JsonOpts);
                     // hand-edited/foreign metadata must invalidate, never crash or silently reuse
                     // (PR #2 Baz round 2): wrong schemaVersion or a null exclude list ⇒ rescan
-                    if (candidate is { SchemaVersion: "scan-estate-cache.v1", Exclude: not null })
+                    if (candidate is { SchemaVersion: "scan-estate-cache.v2", Exclude: not null })
                         meta = candidate;
                 }
                 catch (JsonException) { meta = null; } // broken metadata ⇒ rescan (safe default)
@@ -188,70 +313,249 @@ public static class ScanEstate
                 && CachedCommitSha(manifestPath) == headSha
                 && meta.Exclude.SequenceEqual(tracemapExcludes)
                 && (tracemapDll is null || meta.TracemapSha256 == dllHash) // hash compared only when --tracemap given
-                && meta.StaleScan == staleWaived; // a dirty/behind scan never speaks for a clean run at the same SHA
+                && meta.StaleScan == staleWaived // a dirty/behind scan never speaks for a clean run at the same SHA
+                && meta.IndexDepsJson == indexDepsJson
+                && meta.ScanMode == (worktreeMode ? "worktree" : "in-place")
+                && meta.Trunk == trunk
+                && Ord(meta.BuildFreshness) == Ord(freshnessNow)
+                && (worktreeMode || Ord(meta.DepsFingerprint) == Ord(fingerprintNow)) // in-place: a rebuild with same HEAD changes the fingerprint ⇒ rescan (SPEC-019 §6)
+                && !build // Codex P2: --build is an explicit freshness-seeking action — it always executes (a pre-build cache match must not skip the requested build)
+                && Ord(fingerprintNow) != "!truncated" && Ord(meta.DepsFingerprint) != "!truncated"; // C12 r4: sentinel-to-sentinel equality must never authorize reuse
             if (reuse)
             {
                 Console.Error.WriteLine($"reuse  {name} (HEAD unchanged: {Sha7(headSha)})");
-                entries.Add(new ManifestEntry { Name = name, Status = "reused", CommitSha = headSha });
+                entries.Add(new ManifestEntry { Name = name, Status = "reused", CommitSha = headSha, BuildFreshness = meta!.BuildFreshness });
                 freshDirs.Add(scanDir);
                 continue;
             }
-            var pending = new ManifestEntry { Name = name, Status = "scanned", CommitSha = headSha }; // confirmed (or skipped) in pass 2
+            var pending = new ManifestEntry { Name = name, Status = "scanned", CommitSha = headSha, BuildFreshness = freshnessNow }; // confirmed (or skipped) in pass 2
+            if (rescuedTo.TryGetValue(name, out var rb)) pending.Reason = $"dirty tree rescued to {rb} before refresh";
             entries.Add(pending);
-            plannedScans.Add((pending, repoPath, headSha, staleWaived));
+            plannedScans.Add((pending, repoPath, headSha, staleWaived, worktreePath, freshnessNow, fingerprintNow, trunk));
         }
 
         // ---- scan precondition: a needed scan with neither dll nor seam is a typed error ----
         if (plannedScans.Count > 0 && tracemapDll is null && scanner is null)
         {
             Console.Error.WriteLine($"error: {plannedScans.Count} repo(s) need a scan — pass --tracemap <path-to-tracemap.dll>");
+            foreach (var u40 in plannedScans) { u40.Entry.Status = "skipped"; u40.Entry.BuildFreshness = null; u40.Entry.Reason = u40.Entry.Reason is null ? "scan not run (--tracemap missing)" : $"{u40.Entry.Reason}; scan not run (--tracemap missing)"; } // C40/C43 r14: rescue provenance preserved AND the missing-scanner cause appended
+            WriteManifest(); // C14 r4: a rescue that already moved the operator's WIP MUST be recorded durably even on this exit
             return 1;
         }
 
-        // ---- pass 2: execute scans (atomic swap; failures keep the previous cache) ----
-        foreach (var (entry, repoPath, headSha, staleWaived) in plannedScans)
+        // ---- pass 2: execute scans in parallel (SPEC-019 §2: decisions were all made sequentially
+        //      above in name-ordinal order; ONLY the work parallelizes, so outputs are N-independent) ----
+        var gate = new object();
+        var workerFault = false;
+        var workers = plannedScans.Select(unit => (Action)(() =>
         {
+            var (entry, repoPath, headSha, staleWaived, worktreePath, freshness, fingerprint, resolvedTrunk) = unit;
             var scanDir = Path.Combine(scansDir, entry.Name);
-            ClearLeftovers(scansDir, entry.Name);
-            var tmp = Path.Combine(scansDir, "." + entry.Name + ".tmp-" + Guid.NewGuid().ToString("N")[..8]);
-            var rc = scanner is not null
-                ? scanner(new ScanRequest { RepoPath = repoPath, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes })
-                : DefaultRunner(new ScanRequest { RepoPath = repoPath, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes }, tracemapDll!);
-            if (rc != 0 || !File.Exists(Path.Combine(tmp, "facts.ndjson")) || !File.Exists(Path.Combine(tmp, "scan-manifest.json")))
-            {
-                TryDeleteDir(tmp);
-                entry.Status = "skipped";
-                entry.Reason = rc == 0 ? "scanner exited 0 but produced no facts.ndjson/scan-manifest.json" : $"tracemap exited {rc}";
-                Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
-                continue;
-            }
-            var meta = new CacheMeta { Exclude = tracemapExcludes.ToList(), TracemapSha256 = dllHash, StaleScan = staleWaived };
-            File.WriteAllText(Path.Combine(tmp, "scan-estate.json"),
-                JsonSerializer.Serialize(meta, JsonOpts).ReplaceLineEndings("\n") + "\n");
-            var old = Path.Combine(scansDir, "." + entry.Name + ".old-" + Guid.NewGuid().ToString("N")[..8]);
+            var wtRoot = Path.GetDirectoryName(worktreePath ?? ""); // namespace dir when in worktree mode
+            var satellite = worktreePath is not null ? Path.Combine(wtRoot ?? "", $"{entry.Name}-{Guid.NewGuid().ToString("N")[..8]}") : null;
             try
             {
-                if (Directory.Exists(scanDir)) Directory.Move(scanDir, old);
-                try { Directory.Move(tmp, scanDir); }
-                catch { if (Directory.Exists(old)) Directory.Move(old, scanDir); throw; }
-                if (Directory.Exists(old)) TryDeleteDir(old);
+                if (worktreePath is not null)
+                {
+                    if (Push.Git(repoPath, $"worktree add --detach \"{satellite}\" {resolvedTrunk}", out _, out var wtErr) != 0)
+                    {
+                        lock (gate)
+                        {
+                            entry.Status = "skipped";
+                            entry.BuildFreshness = null; entry.Reason = $"worktree add failed: {TrimReason(wtErr)}"; // C33 r10: no build happened
+                            Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
+                        }
+                        return;
+                    }
+                }
+                var scanTarget = satellite ?? repoPath; // the REAL satellite — worktreePath is only the PENDING marker from planning (Codex P1 r2)
+                if (satellite is not null && build)
+                {
+                    {
+                        // provably-fresh deps.json: compile the satellite at the scanned commit (§3.2)
+                        var psiB = new System.Diagnostics.ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+                        psiB.ArgumentList.Add("build");
+                        psiB.ArgumentList.Add(satellite);
+                        psiB.ArgumentList.Add("--nologo");
+                        using var pB = System.Diagnostics.Process.Start(psiB)!;
+                        var errB = pB.StandardError.ReadToEndAsync();
+                        _ = pB.StandardOutput.ReadToEndAsync();
+                        pB.WaitForExit();
+                        if (pB.ExitCode != 0)
+                        {
+                            lock (gate)
+                            {
+                                entry.Status = "skipped";
+                                entry.BuildFreshness = null; entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
+                                Console.Error.WriteLine($"skip   {entry.Name} (build failed; worktree discarded)");
+                            }
+                            return;
+                        }
+                        fingerprint = DepsFingerprint(satellite); // recorded from the tree actually scanned (§6)
+                        freshness = indexDepsJson ? "fresh-by-build" : freshness;
+                    }
+                }
+                else if (build)
+                {
+                    // in-place build: only repos that passed freshness/rescue reach here
+                    var psiB = new System.Diagnostics.ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+                    psiB.ArgumentList.Add("build");
+                    psiB.ArgumentList.Add(repoPath);
+                    psiB.ArgumentList.Add("--nologo");
+                    using var pB = System.Diagnostics.Process.Start(psiB)!;
+                    var errB = pB.StandardError.ReadToEndAsync();
+                    _ = pB.StandardOutput.ReadToEndAsync();
+                    pB.WaitForExit();
+                    if (pB.ExitCode != 0)
+                    {
+                        lock (gate)
+                        {
+                            entry.Status = "skipped";
+                            entry.BuildFreshness = null; entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
+                            Console.Error.WriteLine($"skip   {entry.Name} (build failed)");
+                        }
+                        return;
+                    }
+                    fingerprint = indexDepsJson ? DepsFingerprint(repoPath) : null; // C24 r8: no indexing => no build-output skip key stored (a stored hash would force one needless rescan on the next source-only run)
+                    freshness = indexDepsJson ? ComputeBuildFreshness(repoPath, headSha, true) : freshness;
+                }
+                ClearLeftovers(scansDir, entry.Name);
+                var tmp = Path.Combine(scansDir, "." + entry.Name + ".tmp-" + Guid.NewGuid().ToString("N")[..8]);
+                var request = new ScanRequest { RepoPath = scanTarget, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes, RepoName = entry.Name, IndexDepsJson = indexDepsJson };
+                var rc = scanner is not null ? scanner(request) : DefaultRunner(request, tracemapDll!);
+                if (satellite is not null)
+                {
+                    // satellite lifecycle: remove what we created, only what we created (§3.2 safety rules)
+                    Push.Git(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _);
+                    Push.Git(repoPath, "worktree prune", out _, out _);
+                }
+                if (rc != 0 || !File.Exists(Path.Combine(tmp, "facts.ndjson")) || !File.Exists(Path.Combine(tmp, "scan-manifest.json")))
+                {
+                    TryDeleteDir(tmp);
+                    lock (gate)
+                    {
+                        entry.Status = "skipped";
+                        entry.BuildFreshness = null; // C38 r12: no successful scan established freshness
+                        entry.Reason = rc == 0 ? "scanner exited 0 but produced no facts.ndjson/scan-manifest.json" : $"tracemap exited {rc}";
+                        Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
+                    }
+                    return;
+                }
+                if (satellite is not null)
+                {
+                    // C15/C18: real scanners derive repoName/repo from the SATELLITE path (alpha-<hex8>) —
+                    // an artifact of OUR orchestration, not repo identity. Parse-and-rewrite (compact JSON is
+                    // real tracemap's shape; string replace missed it) so ingest identity and freshness match.
+                    var leaf = Path.GetFileName(satellite);
+                    var factsPath = Path.Combine(tmp, "facts.ndjson");
+                    if (File.Exists(factsPath))
+                    {
+                        var outLines = new List<string>();
+                        foreach (var line in File.ReadLines(factsPath))
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) { outLines.Add(line); continue; }
+                            try
+                            {
+                                var node = JsonNode.Parse(line);
+                                if (node?["repo"]?.GetValue<string>() == leaf) node["repo"] = entry.Name;
+                                outLines.Add(node?.ToJsonString() ?? line);
+                            }
+                            catch (JsonException) { outLines.Add(line); } // never rewrite what we can't parse — the scan output stands
+                        }
+                        File.WriteAllLines(factsPath, outLines);
+                    }
+                    var manifestPathW = Path.Combine(tmp, "scan-manifest.json");
+                    if (File.Exists(manifestPathW))
+                    {
+                        try
+                        {
+                            var mNode = JsonNode.Parse(File.ReadAllText(manifestPathW));
+                            if (mNode?["repoName"]?.GetValue<string>() == leaf) mNode["repoName"] = entry.Name;
+                            File.WriteAllText(manifestPathW, mNode?.ToJsonString() ?? File.ReadAllText(manifestPathW));
+                        }
+                        catch (JsonException) { /* unparseable manifest is the scanner's problem; left as-is */ }
+                    }
+                }
+                var meta = new CacheMeta
+                {
+                    Exclude = tracemapExcludes.ToList(), TracemapSha256 = dllHash, StaleScan = staleWaived,
+                    DepsFingerprint = fingerprint, IndexDepsJson = indexDepsJson, BuildFreshness = freshness,
+                    ScanMode = worktreePath is not null ? "worktree" : "in-place",
+                    Trunk = resolvedTrunk, // recorded RESOLVED so --trunk main == auto-detect (§6)
+                };
+                File.WriteAllText(Path.Combine(tmp, "scan-estate.json"),
+                    JsonSerializer.Serialize(meta, JsonOpts).ReplaceLineEndings("\n") + "\n");
+                var old = Path.Combine(scansDir, "." + entry.Name + ".old-" + Guid.NewGuid().ToString("N")[..8]);
+                try
+                {
+                    if (Directory.Exists(scanDir)) Directory.Move(scanDir, old);
+                    try { Directory.Move(tmp, scanDir); }
+                    catch { if (Directory.Exists(old)) Directory.Move(old, scanDir); throw; }
+                    if (Directory.Exists(old)) TryDeleteDir(old);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"warning: {entry.Name}: scan swap failed ({ex.Message}) — cached scan left as-is");
+                    TryDeleteDir(tmp);
+                    lock (gate)
+                    {
+                        entry.Status = "skipped";
+                        entry.BuildFreshness = null; // C35 r11
+                        entry.BuildFreshness = null; entry.Reason = $"scan swap failed: {TrimReason(ex.Message)}";
+                    }
+                    return;
+                }
+                lock (gate)
+                {
+                    entry.BuildFreshness = freshness;
+                    Console.Error.WriteLine($"scan   {entry.Name} ({Sha7(headSha)})");
+                    freshDirs.Add(scanDir);
+                }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"warning: {entry.Name}: scan swap failed ({ex.Message}) — cached scan left as-is");
-                TryDeleteDir(tmp);
-                entry.Status = "skipped";
-                entry.Reason = $"scan swap failed: {TrimReason(ex.Message)}";
-                continue;
+                lock (gate)
+                {
+                    entry.Status = "skipped";
+                    entry.BuildFreshness = null; // C38 r12
+                    entry.Reason = $"scan worker failed: {TrimReason(ex.Message)}";
+                    Console.Error.WriteLine($"skip   {entry.Name} ({entry.Reason})");
+                    workerFault = true; // Baz r8: an internal fault never masquerades as a successful estate run
+                }
             }
-            Console.Error.WriteLine($"scan   {entry.Name} ({Sha7(headSha)})");
-            freshDirs.Add(scanDir);
+            finally
+            {
+                if (satellite is not null && Directory.Exists(satellite))
+                {
+                    Push.Git(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _); // every exit path cleans its own satellite (Codex P1)
+                    Push.Git(repoPath, "worktree prune", out _, out _);
+                }
+            }
+        })).ToArray();
+        if (workers.Length > 0 && parallel > 1)
+            System.Threading.Tasks.Parallel.Invoke(new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = parallel }, workers);
+        else
+            foreach (var w in workers) w();
+        if (workerFault)
+        {
+            WriteManifest();
+            // Baz r9: a faulted run must never leave the PREVIOUS run's artifacts masquerading as current
+            foreach (var stale in new[] { "fixture", "plan.json", "report.md" })
+            {
+                var sp = Path.Combine(Path.GetFullPath(outDir), stale);
+                if (Directory.Exists(sp)) TryDeleteDir(sp);
+                if (File.Exists(sp)) File.Delete(sp);
+            }
+            Console.Error.WriteLine("internal error: one or more scan workers faulted — estate artifacts removed (a faulted run must not present stale results); see the skip reasons in the run manifest");
+            return 4;
         }
 
+        freshDirs.Sort(StringComparer.Ordinal); // SPEC-019 §2: downstream inputs are name-ordinal regardless of worker completion order
+
         // ---- run manifest: written before anything downstream can fail (§4.4) ----
-        var manifestFile = Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json");
-        File.WriteAllText(manifestFile, JsonSerializer.Serialize(
-            new { schemaVersion = "scan-estate.v1", repos = entries }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+        WriteManifest();
+
+
 
         // ---- empty fresh set: typed error naming the composition, no sidecars ----
         if (freshDirs.Count == 0)
@@ -259,7 +563,7 @@ public static class ScanEstate
             var nSkipped = entries.Count(e => e.Status == "skipped");
             var nOos = entries.Count(e => e.Status == "out-of-scope");
             var nIgn = entries.Count(e => e.Status == "ignored");
-            Console.Error.WriteLine($"error: no repos to ingest (0 fresh: {nSkipped} skipped, {nOos} out-of-scope, {nIgn} ignored — see {manifestFile})");
+            Console.Error.WriteLine($"error: no repos to ingest (0 fresh: {nSkipped} skipped, {nOos} out-of-scope, {nIgn} ignored — see {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")})");
             return 1;
         }
 
@@ -356,11 +660,146 @@ public static class ScanEstate
         var nOos2 = entries.Count(e => e.Status == "out-of-scope");
         var nIgn2 = entries.Count(e => e.Status == "ignored");
         Console.Error.WriteLine($"estate: {nScan} scanned, {nReuse} reused, {nSkip} skipped, {nOos2} out-of-scope, {nIgn2} ignored → {Path.Combine(Path.GetFullPath(outDir), "report.md")}");
-        if (nSkip > 0) Console.Error.WriteLine($"note: skipped repos are listed in {manifestFile}");
+        if (nSkip > 0) Console.Error.WriteLine($"note: skipped repos are listed in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
         return 0;
     }
 
+    static bool UsableOriginUrl(string repoPath) =>
+        Push.Git(repoPath, "config --get remote.origin.url", out var u, out _) == 0
+        && Ingest.NormalizeRepoBasic(u.Trim()).Length > 0;
+
+    static bool IsGitRepoWithOrigin(string repoPath)
+    {
+        if (Push.Git(repoPath, "remote", out var remotes, out _) != 0) return false;
+        return remotes.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Contains("origin");
+    }
+
     static string Sha7(string sha) => sha.Length <= 7 ? sha : sha[..7];
+    static string Ord(string? s) => s ?? "";
+
+    // SPEC-019 §5.2: OLDEST bin/**/*.deps.json mtime (min — conservative) vs the HEAD COMMITTER date, boundary >=.
+    static string ComputeBuildFreshness(string repoPath, string headSha, bool indexDepsJson)
+    {
+        if (!indexDepsJson) return "none";
+        var (files, truncated) = DepsManifests(repoPath);
+        if (files.Count == 0 && !truncated) return "none";
+        if (truncated) return "stale"; // fail closed: a discarded suffix could hold the OLDEST manifest (Codex P1 r3)
+        if (Push.Git(repoPath, "log -1 --format=%ct HEAD", out var ctOut, out _) != 0) return "stale"; // no committer date ⇒ cannot certify fresh
+        if (!long.TryParse(ctOut.Trim(), out var commitTime)) return "stale";
+        var oldest = files.Min(f => new FileInfo(f).LastWriteTimeUtc.Ticks);
+        return new DateTimeOffset(oldest, TimeSpan.Zero).ToUnixTimeSeconds() >= commitTime ? "fresh" : "stale";
+    }
+
+    // Bounded manual walk (Codex P2 r3): Take() bounds matches, NOT the traversal — the walk itself
+    // carries the budget. Truncation FAILS CLOSED everywhere it flows (freshness => stale; fingerprint
+    // => "!truncated" sentinel that never equals a real hash).
+    const int MaxDepsManifests = 2048;
+    const int MaxWalkedDirs = 50_000;
+    const int MaxWalkedEntries = 500_000; // C13 r4: a single wide directory must not defeat the budget either
+    static (List<string> Files, bool Truncated) DepsManifests(string root)
+    {
+        if (!Directory.Exists(root)) return (new List<string>(), false);
+        var found = new List<string>();
+        var truncated = false;
+        var stack = new Stack<(string Dir, bool InBin)>();
+        stack.Push((root, false));
+        var walked = 0;
+        long entriesSeen = 0;
+        while (stack.Count > 0)
+        {
+            if (++walked > MaxWalkedDirs) { truncated = true; break; }
+            var (dir, inBin) = stack.Pop();
+            System.Collections.Generic.IEnumerable<string> entries;
+            try { entries = Directory.EnumerateFileSystemEntries(dir); }
+            catch (Exception) when (ex581(dir)) { truncated = true; continue; } // unreadable subtree = incomplete evidence — FAIL CLOSED (C11 r4)
+            var broke = false;
+            foreach (var e in SafeIterate(entries, () => truncated = true)) // C16 r5: lazy enumeration throws from MoveNext, not creation
+            {
+                if (++entriesSeen > MaxWalkedEntries) { truncated = true; broke = true; break; }
+                string name;
+                FileAttributes attrs;
+                try { name = Path.GetFileName(e); attrs = File.GetAttributes(e); }
+                catch (Exception) when (ex581(e)) { truncated = true; continue; }
+                if ((attrs & FileAttributes.Directory) != 0)
+                {
+                    if ((attrs & FileAttributes.ReparsePoint) != 0) continue; // links never followed (Baz r4) — an outside-the-repo deps.json is not this repo's evidence
+                    if (name is ".git" or "node_modules" or ".vs" or "packages") continue; // never productive
+                    stack.Push((e, inBin || name.Equals("bin", StringComparison.OrdinalIgnoreCase)));
+                }
+                else if (inBin && name.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    found.Add(e);
+                    if (found.Count > MaxDepsManifests) { truncated = true; broke = true; break; }
+                }
+            }
+            if (broke || truncated) break;
+        }
+        if (truncated) { /* single warning site below */ }
+        if (truncated)
+            Console.Error.WriteLine($"warning: deps.json discovery under {root} exceeded its budget ({MaxDepsManifests} manifests / {MaxWalkedDirs} dirs) — evidence treated conservatively (stale; fingerprint sentinel)");
+        return (found.OrderBy(f => f, StringComparer.Ordinal).ToList(), truncated);
+        static bool ex581(string d) => true; // unreadable path: skip, never abort the estate
+        static IEnumerable<string> SafeIterate(IEnumerable<string> source, Action markTruncated)
+        {
+            IEnumerator<string>? it = null;
+            try
+            {
+                try { it = source.GetEnumerator(); }
+                catch (Exception) { markTruncated(); yield break; } // acquisition failure = incomplete evidence, fail closed
+                while (true)
+                {
+                    string current;
+                    try { if (!it.MoveNext()) yield break; current = it.Current; }
+                    catch (Exception) { markTruncated(); yield break; } // MoveNext failure (mid-iteration removal etc.)
+                    yield return current;
+                }
+            }
+            finally { it?.Dispose(); } // Baz r6: manually owned enumerators are disposed on EVERY exit
+        }
+    }
+
+    // make-style skip key: metadata only (path, size, mtime), never content reads (SPEC-019 §6)
+    static string? DepsFingerprint(string root)
+    {
+        var (files, truncated) = DepsManifests(root);
+        if (truncated) return "!truncated"; // never equals a real hash ⇒ no false cache reuse (Codex P1 r3)
+        if (files.Count == 0) return null;
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var parts = files.Select(f => { var fi = new FileInfo(f); return $"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}"; });
+        var bytes = System.Text.Encoding.UTF8.GetBytes(string.Join("\n", parts));
+        var hash = Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
+        return hash;
+    }
+
+    // crash-leftover sweep: exact-pattern children for THIS repo under <root>/ua/ only — never beyond the namespace (§3.2)
+    static void SweepWorktreeLeftovers(string repoPath, string uaRoot, string name)
+    {
+        if (!Directory.Exists(uaRoot)) return;
+        // OWNERSHIP-CHECKED sweep (Baz r2): a pattern-matching directory is ours only if git itself
+        // lists it as this repo's worktree — a foreign actor creating <name>-<8hex> inside ua/ survives.
+        Push.Git(repoPath, "worktree list --porcelain", out var wl, out _);
+        var owned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in wl.Split('\n'))
+            if (line.StartsWith("worktree ", StringComparison.Ordinal))
+                owned.Add(Path.GetFullPath(line["worktree ".Length..].Trim()));
+        var swept = 0;
+        var sweepBound = MaxWalkedDirs * 4;
+        try
+        {
+        foreach (var d in Directory.EnumerateDirectories(uaRoot).Take(sweepBound + 1)) // +1 lookahead: the boundary entry IS processed; the warning fires only on overflow (Baz r9)
+        {
+            if (++swept > sweepBound) { Console.Error.WriteLine($"warning: worktree cleanup under {uaRoot} hit its enumeration bound — sweep incomplete this run"); break; }
+            if (!(Path.GetFileName(d).StartsWith(name + "-", StringComparison.Ordinal)
+                && Path.GetFileName(d).Length == name.Length + 1 + 8
+                && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)
+                && owned.Contains(Path.GetFullPath(d)))) continue;
+            Push.Git(repoPath, "worktree remove --force \"" + d + "\"", out _, out _);
+            Push.Git(repoPath, "worktree prune", out _, out _);
+            if (Directory.Exists(d)) TryDeleteDir(d); // dir survived an admin-less removal
+        }
+        }
+        catch (Exception) { Console.Error.WriteLine($"warning: worktree cleanup under {uaRoot} could not enumerate — leftover satellites may remain; remove manually"); } // C29 r9
+    }
 
     // Reason strings reach BOTH the console and scan-estate.v1.json — a file artifact --sanitized
     // never transforms by design — so credential-bearing URL userinfo is scrubbed HERE, at the
@@ -397,9 +836,19 @@ public static class ScanEstate
     // stale .tmp/.old swap siblings for one repo — an interrupted run must not strand discoverable garbage
     static void ClearLeftovers(string scansDir, string name)
     {
-        foreach (var prefix in new[] { "." + name + ".tmp-", "." + name + ".old-" })
-            foreach (var d in Directory.GetDirectories(scansDir).Where(d => Path.GetFileName(d).StartsWith(prefix, StringComparison.Ordinal)))
-                TryDeleteDir(d);
+        // EXACT forms .{name}.tmp-<8hex> / .{name}.old-<8hex> — the marker sits immediately after the
+        // name; a sibling repo foo.tmp-bar's active .foo.tmp-bar.tmp-<hex> can NEVER match (C32 r10)
+        foreach (var d in Directory.EnumerateDirectories(scansDir))
+        {
+            var fn = Path.GetFileName(d);
+            foreach (var marker in new[] { ".tmp-", ".old-" })
+            {
+                var prefix = "." + name + marker;
+                if (fn.StartsWith(prefix, StringComparison.Ordinal)
+                    && fn.Length == prefix.Length + 8
+                    && fn[(prefix.Length)..].All(Uri.IsHexDigit)) { TryDeleteDir(d); break; }
+            }
+        }
     }
 
     static void TryDeleteDir(string dir)

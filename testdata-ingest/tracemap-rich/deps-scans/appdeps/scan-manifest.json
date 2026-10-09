@@ -1,0 +1,31 @@
+{
+  "scanId": "scan-e00164f0e5a81fe6583a",
+  "repoName": "repo",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "afb7999a7b8195e40f28aa9cdb8c9f502dc302f6",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-09T16:26:54.763303+00:00",
+  "analysisLevel": "Level1SemanticAnalysis",
+  "buildStatus": "Succeeded",
+  "solutions": [],
+  "projects": [
+    "src/App/App.csproj"
+  ],
+  "targetFrameworks": [
+    "net10.0"
+  ],
+  "knownGaps": [],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "00e4aa3d19f597a812da1e94eebf73f7",
+  "gitRootHash": "d5f09660b34d9af50cc9fb393d7d5911",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "682ddd07c403c55e6707e04e447ccd2f19bee942257f089606a8d839d4c6bb08"
+}

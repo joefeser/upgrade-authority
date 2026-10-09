@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "Serilog",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "2.0.0",
+    "newVersion": "3.0.0"
+  },
+  "repos": [
+    {
+      "repo": "repo",
+      "classification": "not-affected",
+      "reasons": [
+        "positive evidence: complete scan coverage AND repo's own build-resolved closure (Newtonsoft.Json direct, no Serilog row) — transitive exposure ruled out, closure evidenced by build output (deps.json), freshness: fresh"
+      ],
+      "ownership": "self",
+      "actionType": "none",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v2",
+        "scan-coverage"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 2
+      }
+    }
+  ],
+  "waves": [],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "Serilog producer",
+        "detail": "Serilog is declared external via producer-evidence.v0 externalPackages — attribution is evidence-backed; no scanner/advisory input is claimed (V0 does not ingest scanners)"
+      }
+    ]
+  }
+}

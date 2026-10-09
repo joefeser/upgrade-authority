@@ -11,6 +11,9 @@ public sealed class Engine
     readonly ProducerEvidence _pe; readonly OwnershipFile _ow; readonly PackageEvidence _px;
     readonly DeltaChange _c; readonly List<LockfileRows> _lockRepos = new(); // SPEC-008: 0..n lockfile repos (one entry per repo)
     readonly EstateScope? _scope; // SPEC-017: optional estate scope echo
+    readonly Dictionary<string, string> _depsFreshness = new(); // SPEC-019 §5.3: repo -> fresh|stale|none|fresh-by-build; absent entry = conservative
+    HashSet<string>? _affectedPkgsForReasons; // set in BuildPlan before BuildRepo runs (stale-reason scope)
+    BuildFreshnessFile? _pendingFreshness; // ctor staging: applied once mirrors are loaded
     string _lockKind = "lockfile-rows.v0"; // evidence kind cites the input's actual schemaVersion (SPEC-007 §5.6)
 
     readonly Dictionary<string, List<string>> _produced = new();
@@ -60,11 +63,12 @@ public sealed class Engine
 
     static readonly List<(string Repo, string Pkg)> _noDeps = new();
 
-    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos, EstateScope? scope = null)
+    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos, EstateScope? scope = null, BuildFreshnessFile? buildFreshness = null)
     {
         if (delta.Changes.Count != 1)
             throw new UaException($"rejected: package-delta.v1 must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)");
         _c = delta.Changes[0]; _pe = pe; _ow = ow; _px = px; _scope = scope;
+        _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
         foreach (var e in pe.ExternalPackages) _external.Add(e.PackageId);
         foreach (var p in pe.Producers)
         {
@@ -82,6 +86,19 @@ public sealed class Engine
             var canonical = NormBasic(m.Canonical);
             foreach (var a in m.Aliases) _mirrors[NormBasic(a)] = canonical;
             if (NormBasic(m.Canonical) != canonical) _mirrors[NormBasic(m.Canonical)] = canonical;
+        }
+        if (_pendingFreshness is not null) // SPEC-019: applied AFTER mirrors load (Codex P2 r2); under BOTH the raw
+        {                                // key (lockfile rows key RepoKey verbatim) and Norm (aliases + URL hosts resolve)
+            foreach (var e in _pendingFreshness.Repos)
+            {
+                foreach (var key in new[] { e.Repo, Norm(e.Repo) })
+                {
+                    if (_depsFreshness.TryGetValue(key, out var prior) && prior != e.Freshness)
+                        throw new UaException($"malformed input build-freshness.v0.json: '{e.Repo}' and an alias resolve to one repo with conflicting freshness ({prior} and {e.Freshness}) — the file contradicts itself"); // C10 r4: normalization must not turn conflicts into last-wins
+                    _depsFreshness[key] = e.Freshness;
+                }
+            }
+            _pendingFreshness = null;
         }
         foreach (var o in ow.Ownerships) _team[Norm(o.Repo)] = o.Team;
         foreach (var f in px.Facts) { f.Repo = Norm(f.Repo); f.Projects.Sort(StringComparer.Ordinal); (_facts.GetValueOrDefault(f.Repo) ?? (_facts[f.Repo] = new())).Add(f); }
@@ -116,12 +133,18 @@ public sealed class Engine
     internal List<Fact> ApplyFacts(string repo) => FactsOf(repo); // SPEC-009: ua apply reads the same evidence
     internal bool ProducesTarget(string repo) => ProducersOf(Target).Contains(repo);
     List<LockRow> LockOf(string repo) => _lockRows.GetValueOrDefault(repo, new List<LockRow>());
+    // SPEC-019 §5.3: build-resolved rows participate in PROOF (rule-c affectedness, producer/consumer
+    // edges, not-affected closure) only when fresh — stale/absent rows stay visible for suspicion
+    // (touches) and findings (input observations) but prove nothing in either direction.
+    bool DepsFresh(string repo) => _depsFreshness.GetValueOrDefault(repo) is "fresh" or "fresh-by-build";
+    List<LockRow> LockProvable(string repo) => LockOf(repo).Where(r => r.Provenance is null || (DepsFresh(repo) && !string.IsNullOrEmpty(r.Provenance.ManifestSha256))).ToList(); // Baz r13/r14: incomplete provenance ({} shells, null hashes) is never proof and never crashes
+    bool HasStaleDepsRow(string repo, HashSet<string> pkgs) => LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo) && pkgs.Contains(r.PackageId));
     List<string> ProducedOf(string repo) => _produced.GetValueOrDefault(repo, new List<string>());
 
     IEnumerable<string> ConsumersOf(string pkg)
     {
         foreach (var (repo, facts) in _facts) if (facts.Any(f => f.PackageId == pkg)) yield return repo;
-        foreach (var (repo, rows) in _lockRows) if (rows.Any(r => r.PackageId == pkg && r.Type == "direct")) yield return repo;
+        foreach (var (repo, rows) in _lockRows) if (LockProvable(repo).Any(r => r.PackageId == pkg && r.Type == "direct")) yield return repo; // SPEC-019: provable rows only
     }
 
     IEnumerable<string> AllRepos()
@@ -159,8 +182,8 @@ public sealed class Engine
     }
 
     // the produced package through which some consumer's lockfile evidences target flow
-    string? CarrierPkg(string repo) =>
-        ProducedOf(repo).FirstOrDefault(p2 => _lockRows.Any(kv => kv.Key != repo && kv.Value.Any(r => r.PackageId == Target && r.Via == p2)));
+    string? CarrierPkg(string repo) => // C37 r12: corroboration honors the freshness gate — stale build output never corroborates
+        ProducedOf(repo).FirstOrDefault(p2 => _lockRows.Any(kv => kv.Key != repo && LockProvable(kv.Key).Any(r => r.PackageId == Target && r.Via == p2)));
 
     static string Range(List<string> pkgs)
     {
@@ -207,7 +230,7 @@ public sealed class Engine
         _dEdge.Clear(); // causative ripple edge per consumer (this plan's closure)
         foreach (var r in producers) { affected.Add(r); AddRule(r, 'a'); }
         foreach (var (repo, facts) in _facts.Where(kv => kv.Value.Any(f => f.PackageId == Target))) { affected.Add(repo); AddRule(repo, 'b'); }
-        foreach (var lf in _lockRepos.Where(l => l.Rows.Any(r => r.PackageId == Target && r.Type == "transitive"))) { affected.Add(lf.Repo); AddRule(lf.Repo, 'c'); }
+        foreach (var lf in _lockRepos.Where(l => LockProvable(l.Repo).Any(r => r.PackageId == Target && r.Type == "transitive"))) { affected.Add(lf.Repo); AddRule(lf.Repo, 'c'); } // SPEC-019: freshness-gated — stale build output never schedules work
         for (bool changed = true; changed;)
         {
             changed = false;
@@ -230,7 +253,7 @@ public sealed class Engine
         {
             var ds = new List<(string Repo, string Pkg)>();
             foreach (var f in FactsOf(repo)) { if (ProducerInPlan(f.PackageId) is { } pp && pp != repo) ds.Add((pp, f.PackageId)); }
-            foreach (var row in LockOf(repo).Where(r => r.Type == "direct")) { if (ProducerInPlan(row.PackageId) is { } pp && pp != repo) ds.Add((pp, row.PackageId)); }
+            foreach (var row in LockProvable(repo).Where(r => r.Type == "direct")) { if (ProducerInPlan(row.PackageId) is { } pp && pp != repo) ds.Add((pp, row.PackageId)); }
             ds = ds.Distinct().ToList(); // SPEC-007 §5.2: same package in two lockfiles = one edge
             ds.Sort((x, y) => string.CompareOrdinal(x.Repo + "\0" + x.Pkg, y.Repo + "\0" + y.Pkg));
             if (ds.Count > 0) deps[repo] = ds;
@@ -240,14 +263,21 @@ public sealed class Engine
         // applies to cycle-stop plans too — the stop must not hide unclassified repos) ----
         var affectedPkgs = new HashSet<string> { Target };
         foreach (var r in affected) foreach (var p2 in ProducedOf(r)) affectedPkgs.Add(p2);
+        _affectedPkgsForReasons = affectedPkgs;
 
         var classification = new Dictionary<string, string>();
         foreach (var repo in AllRepos())
         {
             if (affected.Contains(repo)) { classification[repo] = "affected"; continue; }
             bool complete = _coverage.GetValueOrDefault(repo)?.Status == "complete";
-            bool hasLock = _lockRows.ContainsKey(repo);
-            bool touches = FactsOf(repo).Any(f => affectedPkgs.Contains(f.PackageId)) || LockOf(repo).Any(r => affectedPkgs.Contains(r.PackageId));
+            bool hasIndependentLockfile = LockOf(repo).Any(r => r.Provenance is null); // checked-in resolution truth
+            bool hasLock = LockProvable(repo).Count > 0; // SPEC-019: a stale build-resolved closure proves nothing — only lockfile rows or FRESH deps.json rows can
+            // Suspicion: facts + provable rows always; STALE deps rows only demote repos with NO independent
+            // lockfile closure (C17 r5 / spec 19-5: a complete lockfile closure stands on its own — the
+            // stale build row becomes an unactionable observation, never a demotion of checked-in proof)
+            bool touches = FactsOf(repo).Any(f => affectedPkgs.Contains(f.PackageId))
+                || LockProvable(repo).Any(r => affectedPkgs.Contains(r.PackageId))
+                || (!hasIndependentLockfile && LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo) && affectedPkgs.Contains(r.PackageId)));
             classification[repo] = complete && hasLock && !touches ? "not-affected" : "unknown";
         }
 
@@ -586,8 +616,24 @@ public sealed class Engine
         if (e.Classification == "not-affected")
         {
             e.ActionType = "none";
-            var rows = LockOf(repo).Select(r => $"{r.PackageId} {r.Type}").Distinct().ToList(); // SPEC-007 §5.4: multi-row closure enumerates distinct (packageId, type) pairs
-            e.Reasons.Add($"positive evidence: complete scan coverage AND {repo}'s own lockfile closure ({string.Join(", ", rows)}, no {Target} row) — transitive exposure ruled out by lockfile evidence, not by absence-of-match");
+            var provable = LockProvable(repo);
+            var lockRows = provable.Where(r => r.Provenance is null).Select(r => $"{r.PackageId} {r.Type}").Distinct().ToList();
+            var depsRows = provable.Where(r => r.Provenance is not null).Select(r => $"{r.PackageId} {r.Type}").Distinct().ToList();
+            // SPEC-007 §5.4: multi-row closure enumerates distinct (packageId, type) pairs.
+            // SPEC-019 §5.3: lockfile-only closures stay BYTE-IDENTICAL to the pre-019 text (Q1/Q2 ride only
+            // when build-resolved rows participated); mixed closures name both evidence kinds.
+            if (depsRows.Count == 0)
+            {
+                e.Reasons.Add($"positive evidence: complete scan coverage AND {repo}'s own lockfile closure ({string.Join(", ", lockRows)}, no {Target} row) — transitive exposure ruled out by lockfile evidence, not by absence-of-match");
+            }
+            else
+            {
+                var fresh = _depsFreshness.GetValueOrDefault(repo) == "fresh-by-build" ? "fresh-by-build (built at the scanned commit)" : "fresh";
+                var closureText = lockRows.Count > 0
+                    ? $"lockfile closure ({string.Join(", ", lockRows)}) and build-resolved closure ({string.Join(", ", depsRows)})"
+                    : $"build-resolved closure ({string.Join(", ", depsRows)}, no {Target} row)";
+                e.Reasons.Add($"positive evidence: complete scan coverage AND {repo}'s own {closureText} — transitive exposure ruled out, closure evidenced by build output (deps.json), freshness: {fresh}");
+            }
             kinds.AddRange(new[] { "package-evidence.v0", _lockKind, "scan-coverage" });
             corroboration = 2;
             e.EvidenceKinds = OrderKinds(kinds); e.Confidence = (rung, corroboration);
@@ -596,6 +642,10 @@ public sealed class Engine
         if (e.Classification == "unknown")
         {
             e.ActionType = "unknown";
+            // SPEC-019 §5.3: a stale build-resolved closure names both sides (HEAD commit vs build) —
+            // it can neither prove exposure (no rule-c edge) nor safety (no closure credit)
+            if (_depsFreshness.GetValueOrDefault(repo) == "stale" && LockOf(repo).Any(r => r.Provenance is not null)) // C21 r7: the predates-commit claim requires a RECORDED stale verdict — absence/none is uncertainty, never a timestamp claim
+                e.Reasons.Add("build evidence stale: deps.json closure predates the current commit — neither exposure nor safety can be proven from it");
             e.Reasons.Add("classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence");
             kinds.Add("package-evidence.v0");
             e.EvidenceKinds = OrderKinds(kinds); e.Confidence = (rung, corroboration);
@@ -646,8 +696,12 @@ public sealed class Engine
                         e.Reasons.Add($"direct reference to {Target} ({bFact!.Path}); produces {carrier} — bump + republish flows the update");
                     else if (!externalTarget && carrier is not null)
                     {
-                        var corrRepo = _lockRows.First(kv => kv.Value.Any(r => r.PackageId == Target && r.Via == carrier)).Key;
-                        e.Reasons.Add($"direct reference to {Target} on the producer side ({bFact!.Path}); produces {carrier} — {corrRepo}'s lockfile corroborates that {carrier}'s closure carries {Target} (transitive via {carrier})");
+                        // Baz r13: the corroborator and its evidence KIND come from the gated rows —
+                        // a stale deps.json row never corroborates, and a deps.json corroborator says so
+                        var corrKv = _lockRows.First(kv => LockProvable(kv.Key).Any(r => r.PackageId == Target && r.Via == carrier));
+                        var corrRow = LockProvable(corrKv.Key).First(r => r.PackageId == Target && r.Via == carrier);
+                        var corrBasis = corrRow.Provenance is null ? "lockfile" : "build output (deps.json)";
+                        e.Reasons.Add($"direct reference to {Target} on the producer side ({bFact!.Path}); produces {carrier} — {corrKv.Key}'s {corrBasis} corroborates that {carrier}'s closure carries {Target} (transitive via {carrier})");
                     }
                     else if (facts.Any(f => f.PackageId != Target))
                         e.Reasons.Add($"direct references to {string.Join(" and ", facts.Select(f => f.PackageId).Distinct().OrderBy(p2 => p2))}; the delta targets {Target}");
@@ -657,17 +711,21 @@ public sealed class Engine
                 case 'c':
                     // SPEC-007 §5.3: rule (c) is established by a transitive row; narrate THAT row's
                     // evidence — never a direct row's absent via (mixed-relation case, F11).
-                    var via = (LockOf(repo).FirstOrDefault(r => r.PackageId == Target && r.Type == "transitive")
-                               ?? LockOf(repo).First(r => r.PackageId == Target)).Via;
+                    var cRow = LockProvable(repo).FirstOrDefault(r => r.PackageId == Target && r.Type == "transitive")
+                               ?? LockProvable(repo).First(r => r.PackageId == Target);
+                    var via = cRow.Via;
+                    // C39 r12: a deps.json row is build output, never checked-in resolution truth — say so
+                    var cBasis = cRow.Provenance is null ? "lockfile"
+                        : $"build output (deps.json), freshness: {(_depsFreshness.GetValueOrDefault(repo) == "fresh-by-build" ? "fresh-by-build (built at the scanned commit)" : "fresh")}";
                     var direct = via is not null
                         ? (LockOf(repo).FirstOrDefault(r => r.PackageId == via && r.Type == "direct") is { } vp ? vp.PackageId : null)
                         : null;
                     if (via is null)
-                        e.Reasons.Add($"transitive exposure to {Target} evidenced by {repo}'s lockfile rows (parent not evidenced — dependencyNames absent or exceeded 256 chars)");
+                        e.Reasons.Add($"transitive exposure to {Target} evidenced by {repo}'s {cBasis} rows (parent not evidenced — dependencyNames absent or exceeded 256 chars)");
                     else if (externalTarget)
-                        e.Reasons.Add($"transitive path {repo} -> {direct ?? via} -> {Target} evidenced by {repo}'s lockfile rows ({Target} transitive via {direct ?? via})");
+                        e.Reasons.Add($"transitive path {repo} -> {direct ?? via} -> {Target} evidenced by {repo}'s {cBasis} rows ({Target} transitive via {direct ?? via})");
                     else
-                        e.Reasons.Add($"transitive path {repo} -> {via} -> {Target} reconstructed from {repo}'s own lockfile ({direct ?? via} direct; {Target} transitive via {via})");
+                        e.Reasons.Add($"transitive path {repo} -> {via} -> {Target} reconstructed from {repo}'s own {cBasis} ({direct ?? via} direct; {Target} transitive via {via})");
                     break;
                 case 'd':
                     if (!dMat) break;

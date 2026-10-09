@@ -189,6 +189,7 @@ public static class Drift
         // among case-variants of one source, ordinal-first wins (input-order-independent — permutation-stable).
         var byPackage = new SortedDictionary<string, DriftPackage>(StringComparer.OrdinalIgnoreCase);
         var lockSpellings = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase); // packageKey -> spellings from lockfile rows
+        var depsSpellings = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase); // SPEC-019: build-output spellings (lockfile wins the reported spelling)
         var pinSpellings = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
         var rows = new List<(string Repo, string PackageKey, string Version, string Evidence)>();
 
@@ -196,9 +197,18 @@ public static class Drift
             foreach (var row in lockRows)
             {
                 if (string.IsNullOrEmpty(row.Version)) continue; // unevidenced resolution never counts (SPEC-007)
-                rows.Add((repo, row.PackageId, row.Version, "lockfile"));
-                if (!lockSpellings.TryGetValue(row.PackageId, out var set)) lockSpellings[row.PackageId] = set = new SortedSet<string>(StringComparer.Ordinal);
-                set.Add(row.PackageId);
+                var evidence = row.Provenance is not null ? "deps.json" : "lockfile"; // SPEC-019 §4: an inventory reader can always tell resolution truth from build output
+                rows.Add((repo, row.PackageId, row.Version, evidence));
+                if (evidence == "lockfile")
+                {
+                    if (!lockSpellings.TryGetValue(row.PackageId, out var set)) lockSpellings[row.PackageId] = set = new SortedSet<string>(StringComparer.Ordinal);
+                    set.Add(row.PackageId);
+                }
+                else
+                {
+                    if (!depsSpellings.TryGetValue(row.PackageId, out var set)) depsSpellings[row.PackageId] = set = new SortedSet<string>(StringComparer.Ordinal);
+                    set.Add(row.PackageId);
+                }
             }
         foreach (var (repo, facts) in engine.FactsView)
             foreach (var f in facts)
@@ -217,8 +227,9 @@ public static class Drift
         foreach (var key in rows.Select(r => r.PackageKey).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var pkg = new DriftPackage();
-            // reported spelling: ordinal-first lockfile spelling, else ordinal-first pin spelling
+            // reported spelling: lockfile > deps.json > declared-pin, ordinal-first within each (SPEC-019 §4 precedence)
             pkg.PackageId = lockSpellings.TryGetValue(key, out var ls) && ls.Count > 0 ? ls.Min!
+                          : depsSpellings.TryGetValue(key, out var ds) && ds.Count > 0 ? ds.Min!
                           : pinSpellings.TryGetValue(key, out var ps) && ps.Count > 0 ? ps.Min!
                           : key;
             byPackage[key] = pkg;
@@ -228,8 +239,12 @@ public static class Drift
         foreach (var g in rows.GroupBy(r => r.PackageKey, StringComparer.OrdinalIgnoreCase))
         {
             var pkg = byPackage[g.Key];
-            // dedup on (repo, package, version): lockfile evidence wins over declared-pin (SPEC-018 §4)
-            foreach (var r in g.GroupBy(x => (x.Repo, x.Version)).Select(x => x.Any(e => e.Evidence == "lockfile") ? x.First(e => e.Evidence == "lockfile") : x.First()))
+            // dedup on (repo, package, version): lockfile > deps.json > declared-pin (SPEC-018 §4 + SPEC-019 §4)
+            foreach (var grp in g.GroupBy(x => (x.Repo, x.Version)))
+            {
+                var r = grp.FirstOrDefault(e => e.Evidence == "lockfile");
+                if (r.Evidence is null) { var d = grp.FirstOrDefault(e => e.Evidence == "deps.json"); if (d.Evidence is not null) r = d; }
+                if (r.Evidence is null) r = grp.First();
             {
                 var inst = new Installation { Repo = r.Repo, Version = r.Version, Evidence = r.Evidence };
                 if (!latestById.TryGetValue(g.Key, out var latest))
@@ -260,6 +275,7 @@ public static class Drift
                     }
                 }
                 pkg.Installations.Add(inst);
+            }
             }
             if (latestById.TryGetValue(g.Key, out var latestForCounts)) pkg.Latest = latestForCounts;
             pkg.Installations = pkg.Installations.OrderBy(i => i.Repo, StringComparer.Ordinal).ThenBy(i => i.Version, StringComparer.Ordinal).ToList();
