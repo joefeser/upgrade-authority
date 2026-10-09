@@ -80,3 +80,16 @@ Baz confirmed all round-2 fixes in-thread (10 addressed replies). New findings:
 | C25 | Repeated dirty state at the same HEAD collided on the rescue branch name ⇒ skip | P2 | **Accepted** | Suffix probing (`ua/rescue-<sha8>-2`, `-3`, …) |
 | Baz | Worker exceptions masked as a successful estate run (exit 0 + artifacts) | medium | **Accepted** | `workerFault` flag ⇒ manifest written, artifacts NOT written, exit 4 |
 | Baz | Sweep materialized the shared namespace eagerly | medium | **Accepted** | Lazy bounded enumeration + incomplete-sweep warning |
+
+## Round 9 (2026-10-09)
+
+| # | Finding | Severity | Disposition | Fix |
+|---|---|---|---|---|
+| C26 | `fresh-by-build` assigned optimistically in pass 1 — a failed build left it in the manifest | P2 | **Accepted** | Pass-1 worktree freshness is `none`; the worker upgrades it only after the build succeeds |
+| C27 | `WaitForExit` doesn't flush async reads — `IsCompleted` could persist an empty diagnostic | P2 | **Accepted** | Bounded `Wait(5000)` on the stderr task |
+| C28 | `ClearLeftovers` prefix-matched sibling repo names in parallel (`foo` vs `foo.tmp-bar`) | P2 | **Accepted** | Exact `.{name}.tmp-<8hex>` pattern matching |
+| C29 | Sweep enumeration failures escaped; boundary entry skipped by `Take` | P2 | **Accepted** | try/catch with visible warning; +1 lookahead (warning only on true overflow) |
+| C30 | Plain-mode fetches stayed sequential — `--parallel` never touched the network-bound phase | P2 | **Accepted** | Bounded parallel fetch pre-pass; decisions remain sequential name-ordinal (exactly spec §2) |
+| Baz | Rescue suffix probing unbounded | medium | **Accepted** | Bounded at 15; exhaustion is a visible refusal |
+| Baz | Faulted runs left the previous run's artifacts masquerading as current | medium | **Accepted** | Faulted runs remove fixture/plan/report with a console note |
+| Baz | (sweep boundary — folded into C29) | medium | Accepted | — |

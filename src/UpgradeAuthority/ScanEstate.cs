@@ -117,6 +117,23 @@ public static class ScanEstate
         var plannedScans = new List<(ManifestEntry Entry, string RepoPath, string HeadSha, bool StaleWaived, string? WorktreePath, string Freshness, string? Fingerprint, string Trunk)>();
         var freshDirs = new List<string>();
         var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name
+        // C30 r9 / spec §2: plain-mode FETCHES parallelize (the network-bound phase); every decision
+        // below stays sequential in name-ordinal order and reads only the fetched state.
+        var fetched = new HashSet<string>(StringComparer.Ordinal);
+        var fetchFailures = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!updateCheckouts && !worktreeMode && parallel > 1)
+        {
+            var fetchUnits = Directory.GetDirectories(Path.GetFullPath(reposRoot))
+                .Where(d => !Path.GetFileName(d).StartsWith('.'))
+                .Select(d => (Action)(() =>
+                {
+                    var n30 = Path.GetFileName(d);
+                    if (Push.Git(d, "fetch origin", out _, out var ferr30) != 0)
+                        lock (fetchFailures) fetchFailures[n30] = ferr30;
+                    else lock (fetched) fetched.Add(n30);
+                })).ToArray();
+            System.Threading.Tasks.Parallel.Invoke(new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = parallel }, fetchUnits);
+        }
         var rescuedTo = new Dictionary<string, string>(StringComparer.Ordinal); // Baz r2: rescue provenance rides the single canonical entry
         void WriteManifest()
         {
@@ -168,7 +185,9 @@ public static class ScanEstate
             var trunk = "";
             string? worktreePath = null;
             var scanMode = worktreeMode ? "worktree" : "in-place";
-            if (Push.Git(repoPath, "fetch origin", out _, out var fetchErr) != 0)
+            if (fetchFailures.TryGetValue(name, out var fetchErr))
+            { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
+            if (!fetched.Contains(name) && Push.Git(repoPath, "fetch origin", out _, out fetchErr) != 0) // sequential fallback (parallel=1 or refresh modes fetch inline)
             { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
             // trunk resolution: --trunk override (validated), else origin/main -> origin/dev; recorded RESOLVED
             if (trunkOverride is not null)
@@ -202,12 +221,16 @@ public static class ScanEstate
                     if (dirtyOut.Trim().Length > 0)
                     {
                         var rescueBranch = $"ua/rescue-{headSha[..8]}"; // 8 chars — one more than display Sha7, uniqueness at a glance
-                        for (var suf = 2; ; suf++) // C25 r8: repeated dirty states at the same HEAD get suffixed branches, never a failed checkout -b
+                        var rescueOk = true;
+                        for (var suf = 2; suf < 16; suf++) // Baz r9: bounded probing — an exhausted range is a visible refusal, never a stall
                         {
                             Push.Git(repoPath, $"rev-parse --verify {rescueBranch}", out var rbChk, out _);
                             if (rbChk.Trim().Length == 0) break;
                             rescueBranch = $"ua/rescue-{headSha[..8]}-{suf}";
+                            if (suf == 15) rescueOk = false;
                         }
+                        if (!rescueOk)
+                        { entries.Add(Skip("rescue branch range exhausted (15 prior rescues at this HEAD) — clean up ua/rescue-* branches")); continue; }
                         var rcB = Push.Git(repoPath, $"checkout -b {rescueBranch}", out _, out _);
                         var rcA = rcB == 0 ? Push.Git(repoPath, "add -A", out _, out _) : 1;
                         var commitErr = ""; var rcC = rcA == 0 ? Push.Git(repoPath, "commit -m \"ua scan-estate rescue: preserve dirty working tree before refresh\"", out _, out commitErr) : 1;
@@ -263,7 +286,7 @@ public static class ScanEstate
                 continue;
             }
             // build freshness + fingerprint (in-place: computed here; worktree: none now, recorded after build/scan)
-            var freshnessNow = worktreeMode ? (build && indexDepsJson ? "fresh-by-build" : "none") : ComputeBuildFreshness(repoPath, headSha, indexDepsJson);
+            var freshnessNow = worktreeMode ? "none" : ComputeBuildFreshness(repoPath, headSha, indexDepsJson); // C26 r9: fresh-by-build is assigned by the worker AFTER the build succeeds — never optimistically
             var fingerprintNow = worktreeMode || !indexDepsJson ? null : DepsFingerprint(repoPath); // C20 r7: no deps indexing => no build-output skip key (a local rebuild must not rescan a source-only scan); worktree records at scan time instead
             CacheMeta? meta = null;
             if (hasManifest && hasFacts && File.Exists(Path.Combine(scanDir, "scan-estate.json")))
@@ -354,7 +377,7 @@ public static class ScanEstate
                             lock (gate)
                             {
                                 entry.Status = "skipped";
-                                entry.Reason = $"build failed: {TrimReason(errB.IsCompleted ? errB.Result : "")} (--build refuses to scan without fresh evidence)";
+                                entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
                                 Console.Error.WriteLine($"skip   {entry.Name} (build failed; worktree discarded)");
                             }
                             return;
@@ -379,7 +402,7 @@ public static class ScanEstate
                         lock (gate)
                         {
                             entry.Status = "skipped";
-                            entry.Reason = $"build failed: {TrimReason(errB.IsCompleted ? errB.Result : "")} (--build refuses to scan without fresh evidence)";
+                            entry.Reason = $"build failed: {TrimReason(errB.Wait(5000) ? errB.Result : "")} (--build refuses to scan without fresh evidence)"; // C27 r9: WaitForExit does not flush async reads — bounded wait
                             Console.Error.WriteLine($"skip   {entry.Name} (build failed)");
                         }
                         return;
@@ -504,7 +527,14 @@ public static class ScanEstate
         if (workerFault)
         {
             WriteManifest();
-            Console.Error.WriteLine("internal error: one or more scan workers faulted — estate artifacts NOT written; see the skip reasons in the run manifest");
+            // Baz r9: a faulted run must never leave the PREVIOUS run's artifacts masquerading as current
+            foreach (var stale in new[] { "fixture", "plan.json", "report.md" })
+            {
+                var sp = Path.Combine(Path.GetFullPath(outDir), stale);
+                if (Directory.Exists(sp)) TryDeleteDir(sp);
+                if (File.Exists(sp)) File.Delete(sp);
+            }
+            Console.Error.WriteLine("internal error: one or more scan workers faulted — estate artifacts removed (a faulted run must not present stale results); see the skip reasons in the run manifest");
             return 4;
         }
 
@@ -731,9 +761,12 @@ public static class ScanEstate
             if (line.StartsWith("worktree ", StringComparison.Ordinal))
                 owned.Add(Path.GetFullPath(line["worktree ".Length..].Trim()));
         var swept = 0;
-        foreach (var d in Directory.EnumerateDirectories(uaRoot).Take(MaxWalkedDirs * 4)) // Baz r8: lazy + bounded — a huge shared namespace cannot stall cleanup unreported
+        var sweepBound = MaxWalkedDirs * 4;
+        try
         {
-            if (++swept >= MaxWalkedDirs * 4) { Console.Error.WriteLine($"warning: worktree cleanup under {uaRoot} hit its enumeration bound — sweep incomplete this run"); break; }
+        foreach (var d in Directory.EnumerateDirectories(uaRoot).Take(sweepBound + 1)) // +1 lookahead: the boundary entry IS processed; the warning fires only on overflow (Baz r9)
+        {
+            if (++swept > sweepBound) { Console.Error.WriteLine($"warning: worktree cleanup under {uaRoot} hit its enumeration bound — sweep incomplete this run"); break; }
             if (!(Path.GetFileName(d).StartsWith(name + "-", StringComparison.Ordinal)
                 && Path.GetFileName(d).Length == name.Length + 1 + 8
                 && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)
@@ -742,6 +775,8 @@ public static class ScanEstate
             Push.Git(repoPath, "worktree prune", out _, out _);
             if (Directory.Exists(d)) TryDeleteDir(d); // dir survived an admin-less removal
         }
+        }
+        catch (Exception) { Console.Error.WriteLine($"warning: worktree cleanup under {uaRoot} could not enumerate — leftover satellites may remain; remove manually"); } // C29 r9
     }
 
     // Reason strings reach BOTH the console and scan-estate.v1.json — a file artifact --sanitized
@@ -779,9 +814,18 @@ public static class ScanEstate
     // stale .tmp/.old swap siblings for one repo — an interrupted run must not strand discoverable garbage
     static void ClearLeftovers(string scansDir, string name)
     {
-        foreach (var prefix in new[] { "." + name + ".tmp-", "." + name + ".old-" })
-            foreach (var d in Directory.GetDirectories(scansDir).Where(d => Path.GetFileName(d).StartsWith(prefix, StringComparison.Ordinal)))
-                TryDeleteDir(d);
+        // exact pattern .{name}.tmp-<8hex> / .{name}.old-<8hex> — a sibling repo named foo.tmp-bar must
+        // never have ITS active temps matched by repo foo's prefix (C28 r9)
+        foreach (var d in Directory.EnumerateDirectories(scansDir))
+        {
+            var fn = Path.GetFileName(d);
+            if (!fn.StartsWith("." + name + ".", StringComparison.Ordinal)) continue;
+            var marker = fn.LastIndexOf(".tmp-", StringComparison.Ordinal);
+            if (marker < 0) marker = fn.LastIndexOf(".old-", StringComparison.Ordinal);
+            if (marker < 0) continue;
+            var suffix = fn[(marker + 5)..];
+            if (suffix.Length == 8 && suffix.All(Uri.IsHexDigit)) TryDeleteDir(d);
+        }
     }
 
     static void TryDeleteDir(string dir)
