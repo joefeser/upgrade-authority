@@ -10,6 +10,10 @@ public static class Apply
 {
     public const int RefusalExit = 6;
 
+    // Resolved-identity comparison follows FILESYSTEM semantics (PR6 Codex r13): a case-insensitive
+    // Windows checkout makes src/App.csproj and SRC/APP.CSPROJ one file — the alias fold must agree.
+    static readonly StringComparer FsIdentity = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
     // ---- manifest model (apply.v1) ----
     public sealed class ApplyManifest { public string SchemaVersion = "apply.v1"; public ApplyDelta Delta = new(); public List<ApplyWave> Waves = new(); }
     public sealed class ApplyDelta { public string PackageName = "", Ecosystem = "", ChangeType = "", OldVersion = "", NewVersion = ""; }
@@ -188,7 +192,7 @@ public static class Apply
         {
             var anyUnit = w.Units.Count > 0;
             var edited = new List<(string Path, string Resolved, string Text, List<(int Line, string Old, string New, int Col)> Changes)>();
-        var verifiedTexts = new Dictionary<string, (string Resolved, string Text)>(); // per-path snapshot: one read, every edit of the path verifies against it (PR6 Codex r11)
+        var verifiedTexts = new Dictionary<string, (string Resolved, string Text)>(FsIdentity); // per-RESOLVED-file snapshot (PR6 r11-r13)
             foreach (var u in w.Units)
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
@@ -203,9 +207,10 @@ public static class Apply
                     // PR6 Baz r12: aggregate by the RESOLVED identity — two raw aliases of one file (a
                     // symlink) are ONE file: one snapshot, one patch section (duplicate sections would
                     // fail git apply). The header keeps the ordinal-first raw path (edits arrive sorted).
-                    var file = edited.FirstOrDefault(x => x.Resolved == change!.Value.Resolved);
+                    var file = edited.FirstOrDefault(x => FsIdentity.Equals(x.Resolved, change!.Value.Resolved));
                     if (file.Resolved is null) edited.Add((e.Path, change!.Value.Resolved, change!.Value.Text, new List<(int, string, string, int)> { (change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col) }));
-                    else file.Changes.Add((change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col));
+                    else if (!file.Changes.Contains((change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col)))
+                        file.Changes.Add((change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col)); // PR6 Baz r13: the SAME occurrence evidenced via two aliases replaces ONCE
                 }
             }
             if (edited.Count == 0)
