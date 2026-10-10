@@ -529,7 +529,7 @@ public static class Ingest
                 var top = new List<string?>(); // ordinal-sorted, capacity 5
                 foreach (var v in byProv.Select(p => p.ProducedVersion))
                 {
-                    if (!seen.Add(v)) { if (seen.Count >= claimCap) { overflowed = true; break; } continue; }
+                    if (!seen.Add(v)) continue; // a duplicate proves nothing new — only the honest 65th DISTINCT value signals overflow (PR7 Codex r5)
                     if (seen.Count > claimCap) { overflowed = true; break; }
                     if (top.Count < 5 || string.CompareOrdinal(Ord(v), Ord(top[^1])) < 0)
                     {
