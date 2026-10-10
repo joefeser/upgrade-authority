@@ -182,7 +182,7 @@ public sealed class Engine
     // (major, version, packages) groups from actual ProducedVersion values; dominant group first (largest, tie: lowest major)
     List<(string Major, string Version, List<string> Pkgs)> VersionGroups(string repo)
     {
-        var entries = _pe.Producers.Where(p => p.Repo == repo && p.ProducedVersion is not null && ProducedOf(repo).Contains(p.PackageId));
+        var entries = _pe.Producers.Where(p => Norm(p.Repo) == repo && p.ProducedVersion is not null && ProducedOf(repo).Any(x => PkgEq(x, p.PackageId))); // PR6 Codex r2: resolve the RAW sidecar spelling through Norm (an aliased producer keeps its versioning evidence); the membership check folds with the rest of SPEC-021
         var groups = entries.GroupBy(p => p.ProducedVersion!.Split('.')[0])
             .Select(g => (Major: g.Key, Version: g.Select(p => p.ProducedVersion!).OrderBy(v => v, StringComparer.Ordinal).First(), Pkgs: g.Select(p => p.PackageId).OrderBy(p2 => p2, new NaturalComparer()).ToList()))
             .OrderByDescending(g => g.Pkgs.Count).ThenBy(g => g.Major, StringComparer.Ordinal).ToList();
