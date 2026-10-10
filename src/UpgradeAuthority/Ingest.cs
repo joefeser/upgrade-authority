@@ -500,11 +500,12 @@ public static class Ingest
         var dedupedScan = new List<ProducerEntry>();
         foreach (var g in producedProducers.GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant())))
         {
-            int ProvRank(string? prov) => prov switch { "ci-defined" => 0, _ => 1 }; // ci-defined first; project-declared (the only other scan provenance) after
-            // the raw repo spelling is the FINAL tie-breaker: spellings NormBasic collapses ("R" vs "R/")
-            // must never make the persisted entry fact-order dependent (PR5 Baz round 3)
-            var ordered = g.OrderBy(p => ProvRank(p.Provenance))
-                           .ThenBy(p => Ord(p.ProducedVersion) == "" ? 1 : 0)
+            int ProvRank(string? prov) => prov switch { "ci-defined" => 0, _ => 1 }; // ci-defined first AMONG CONFLICTS (equal evidence)
+            // PR7 Baz r6: EVIDENCE outranks class — a versionless claim conflicts with nothing, so a
+            // concrete lower-class version must not be dropped from planning (VersionGroups) by an
+            // unevidenced higher-class claim; class breaks ties among equally-evidenced claims.
+            var ordered = g.OrderBy(p => Ord(p.ProducedVersion) == "" ? 1 : 0)
+                           .ThenBy(p => ProvRank(p.Provenance))
                            .ThenBy(p => Ord(p.ProducedVersion), StringComparer.Ordinal)
                            .ThenBy(p => p.PackageId, StringComparer.Ordinal)
                            .ThenBy(p => Ord(p.EvidenceNote), StringComparer.Ordinal)
@@ -512,9 +513,20 @@ public static class Ingest
             var winner = ordered[0];
             // SPEC-020 §2: cross-source precedence notes the loser (both provenances named) — once per
             // DISTINCT losing (provenance, version) claim; identical duplicate facts never flood stderr (PR7 Codex r1)
-            foreach (var loser in ordered.Where(p => ProvRank(p.Provenance) > ProvRank(winner.Provenance))
+            foreach (var loser in ordered.Where(p => p != winner && p.Provenance != winner.Provenance)
                                          .GroupBy(p => (p.Provenance, p.ProducedVersion)).Select(grp => grp.First()))
-                Console.Error.WriteLine($"warning: producer precedence for {Esc(NormBasic(winner.Repo))}/{Esc(winner.PackageId)} — {Esc(winner.Provenance!)} '{Esc(winner.ProducedVersion ?? "unevidenced")}' kept over {Esc(loser.Provenance!)} '{Esc(loser.ProducedVersion ?? "unevidenced")}'; operator sidecar still wins over both at merge (SPEC-020 §2)");
+            {
+                // three shapes: the class conflict (ci over project at equal evidence — the SPEC-020 §2
+                // rule); the evidence inversion (a versionless ci claim cannot drop a concrete project
+                // version — precedence resolves CONFLICTS, and a versionless claim conflicts with
+                // nothing); and the mirrored versionless-project loser under a versioned ci winner
+                var why = loser.ProducedVersion is null && ProvRank(loser.Provenance) < ProvRank(winner.Provenance)
+                    ? "evidence beats unevidence — the losing ci-workflow claim carries no version (not a conflict); operator sidecar still wins at merge"
+                    : loser.ProducedVersion is null && ProvRank(loser.Provenance) > ProvRank(winner.Provenance)
+                        ? "the losing project claim carries no version (not a conflict)"
+                        : "operator sidecar still wins over both at merge (SPEC-020 §2)";
+                Console.Error.WriteLine($"warning: producer precedence for {Esc(NormBasic(winner.Repo))}/{Esc(winner.PackageId)} — {Esc(winner.Provenance!)} '{Esc(winner.ProducedVersion ?? "unevidenced")}' kept over {Esc(loser.Provenance!)} '{Esc(loser.ProducedVersion ?? "unevidenced")}'; {why}");
+            }
             // the self-contradiction check runs PER SOURCE CLASS (PR7 Codex r1): a losing provenance that is
             // internally inconsistent (two versions inside project-declared, say) still gets its honest
             // diagnostic — precedence resolving the classes must not silence a class contradicting itself
@@ -523,26 +535,23 @@ public static class Ingest
                 // bounded rendering (PR7 Baz r2 + Codex r4, ACTUALLY LANDED THIS TIME — the round-3
                 // commit claimed this cap but shipped only the Program.cs half): distinct tracking is
                 // CAPPED at 64 — no unbounded internal set, no fabricated exact count past the cap
+                // deterministic + bounded (PR7 Baz r6): sort the class's version strings ONCE (references
+                // to already-materialized input — no new memory), walk the distinct run, cap at 64; the
+                // shown five are the TRUE ordinal-first regardless of fact order, and the cap point is fixed
                 const int claimCap = 64;
                 var seen = new HashSet<string?>();
                 var overflowed = false;
-                var top = new List<string?>(); // ordinal-sorted, capacity 5
-                foreach (var v in byProv.Select(p => p.ProducedVersion))
+                var top = new List<string?>();
+                foreach (var v in byProv.Select(p => p.ProducedVersion).OrderBy(v2 => Ord(v2), StringComparer.Ordinal))
                 {
-                    if (!seen.Add(v)) continue; // a duplicate proves nothing new — only the honest 65th DISTINCT value signals overflow (PR7 Codex r5)
+                    if (!seen.Add(v)) continue; // duplicates prove nothing new; only the honest 65th DISTINCT value overflows (PR7 Codex r5)
                     if (seen.Count > claimCap) { overflowed = true; break; }
-                    if (top.Count < 5 || string.CompareOrdinal(Ord(v), Ord(top[^1])) < 0)
-                    {
-                        var idx = top.FindIndex(x => string.CompareOrdinal(Ord(v), Ord(x)) < 0);
-                        if (idx < 0) idx = top.Count;
-                        top.Insert(idx, v);
-                        if (top.Count > 5) top.RemoveAt(5);
-                    }
+                    if (top.Count < 5) top.Add(v); // the stream is ordinal-sorted — the first 5 distinct ARE the smallest
                 }
                 var total = seen.Count;
                 if (total <= 1 && !overflowed) continue;
                 var totalText = overflowed ? $"{claimCap}+" : $"{total}";
-                var shown = top.Take(5).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v!)}'").ToList();
+                var shown = top.Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v!)}'").ToList();
                 if (overflowed) shown.Add("(+more)"); else if (total > shown.Count) shown.Add($"(+{total - shown.Count} more)");
                 var classWinner = ordered.First(p => p.Provenance == byProv.Key); // the class's own ordinal-ordered pick
                 Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {totalText} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
