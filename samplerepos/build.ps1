@@ -86,7 +86,7 @@ function Invoke-StageScan {
                     throw "no packages.lock.json beside $($p.Name) — run -Stage restore first (a pins-only scan would silently degrade the harness)"
                 }
             }
-            Set-Content (Join-Path $dest '.gitignore') "bin/`nobj/`n"
+            Set-Content -Encoding Ascii (Join-Path $dest '.gitignore') "bin/`nobj/`n"   # explicit encoding: 5.1 Set-Content defaults to UTF-16LE, which git cannot parse (PR8 Codex r1)
             Invoke-Checked 'git' (@('-C', $dest, 'init', '-q') ) "git init $repo"
             Invoke-Checked 'git' (@('-C', $dest, 'add', '-A') ) "git add $repo"
             Invoke-Checked 'git' (@('-C', $dest, '-c', 'user.name=cassowary-harness', '-c', 'user.email=harness@example.invalid',
@@ -147,13 +147,16 @@ function Invoke-StagePlan {
 
     $drift = Get-Content (Join-Path $out 'drift-core.v1.json') -Raw | ConvertFrom-Json
     $core = $drift.packages | Where-Object { $_.packageId -eq 'Cassowary.Core' }
-    $behind = @($core.installations | Where-Object { $_.status -eq 'behind' })
-    $current = @($core.installations | Where-Object { $_.status -eq 'current' })
-    if ($behind.Count -lt 1) { throw 'drift: Cassowary.CrewWeb must be behind (1.1.0 vs feed 1.2.0)' }
-    if ($current.Count -lt 1) { throw 'drift: Cassowary.Booker must be current (1.2.0)' }
-    if (($behind | Where-Object { $_.evidence -eq 'lockfile' }).Count -lt 1) { throw 'drift: installations must carry evidence "lockfile" (the whole point of this tier)' }
+    $behind = @($core.installations | Where-Object { $_.repo -eq 'Cassowary.CrewWeb' -and $_.status -eq 'behind' })      # repo-BOUND (PR8 Codex r1): a swapped regression must fail
+    $current = @($core.installations | Where-Object { $_.repo -eq 'Cassowary.Booker' -and $_.status -eq 'current' })
+    if ($behind.Count -ne 1) { throw 'drift: Cassowary.CrewWeb must be the one behind row (1.1.0 vs feed 1.2.0)' }
+    if ($current.Count -ne 1) { throw 'drift: Cassowary.Booker must be the one current row (1.2.0)' }
+    foreach ($row in ($behind + $current)) {
+        if ($row.evidence -ne 'lockfile') { throw "drift: $($row.repo) must carry evidence 'lockfile' (the whole point of this tier), got '$($row.evidence)'" }
+    }
     $diesel = $drift.packages | Where-Object { $_.packageId -eq 'Cassowary.GroundOps.Diesel' }
-    if (-not $diesel -or @($diesel.installations | Where-Object { $_.status -eq 'current' }).Count -lt 1) { throw 'drift: Diesel must be current' }
+    $dieselRow = @($diesel.installations | Where-Object { $_.repo -eq 'Cassowary.Booker' -and $_.status -eq 'current' -and $_.evidence -eq 'lockfile' })
+    if ($dieselRow.Count -ne 1) { throw 'drift: Diesel must be current via lockfile evidence on Booker' }
 
     $plan1 = Get-Content (Join-Path $out 'plan-core.json') -Raw | ConvertFrom-Json
     foreach ($must in @('Cassowary.Booker', 'Cassowary.CrewWeb')) {
@@ -164,6 +167,10 @@ function Invoke-StagePlan {
     $plan2 = Get-Content (Join-Path $out 'plan-diesel.json') -Raw | ConvertFrom-Json
     $prereqs = @($plan2.waves | ForEach-Object { $_.prerequisites } | ForEach-Object { $_ })
     if (($prereqs | Where-Object { $_ -like '*available from the public feed*' }).Count -lt 1) { throw 'plan (Diesel): T5 must fire' }
+    $conditions = @($plan2.waves | ForEach-Object { $_.condition } | Where-Object { $_ })
+    if (($conditions | Where-Object { $_ -like '*external ground-crew releases*' }).Count -lt 1) { throw 'plan (Diesel): T6 (external team coordination) must fire' }
+    $ground = $plan2.repos | Where-Object { $_.repo -eq 'Cassowary.GroundOps' }
+    if (-not $ground -or $ground.actionType -ne 'external-request-await') { throw 'plan (Diesel): the GroundOps producer must be external-request-await (coordination, not executable work)' }
     $booker = $plan2.repos | Where-Object { $_.repo -eq 'Cassowary.Booker' }
     if (-not $booker -or $booker.classification -ne 'affected') { throw 'plan (Diesel): Booker must be affected through the external target' }
 
