@@ -3132,8 +3132,10 @@ public static class Program
                     {
                     scanF = Path.Combine(Path.GetTempPath(), "ua-ci21-inv-" + Guid.NewGuid().ToString("N")[..8]);
                     Directory.CreateDirectory(scanF);
+                    // the shadow carries a CASE-VARIANT spelling (PR7 Codex r8): it must adopt the
+                    // winner's identity, never trip the loader's same-sidecar rejection
                     File.WriteAllText(Path.Combine(scanF, "facts.ndjson"),
-                        CiFact("Contoso.Inv", null) + "\n" + CiFact("Contoso.Inv", "1.0.0", "build-file") + "\n");
+                        CiFact("contoso.inv", null) + "\n" + CiFact("Contoso.Inv", "1.0.0", "build-file") + "\n");
                     File.Copy(Path.Combine(richD, "..", "sidecars-estate2", "delta.json"), Path.Combine(scanF, "delta.json"));
                     outF = Path.Combine(Path.GetTempPath(), "ua-ci21-invo-" + Guid.NewGuid().ToString("N")[..8]);
                     var errPrevF = Console.Error;
@@ -3146,6 +3148,8 @@ public static class Program
                         throw new Exception("the versionless-ci loser must be noted with the inversion rationale: " + swF);
                     var peF = JsonDocument.Parse(File.ReadAllText(Path.Combine(outF, "input", "producer-evidence.v0.json"))).RootElement;
                     var invRows = peF.GetProperty("producers").EnumerateArray().ToList();
+                    if (invRows.Any(r2 => r2.GetProperty("packageId").GetString() != "Contoso.Inv"))
+                        throw new Exception("shadow rows must adopt the winner's spelling: " + peF.GetRawText());
                     var invVersioned = invRows.Single(r2 => r2.TryGetProperty("producedVersion", out _));
                     if (invVersioned.GetProperty("producedVersion").GetString() != "1.0.0" || invVersioned.GetProperty("provenance").GetString() != "project-declared")
                         throw new Exception("the CONCRETE project version must survive a versionless ci claim: " + invVersioned.GetRawText());

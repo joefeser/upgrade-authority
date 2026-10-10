@@ -564,7 +564,10 @@ public static class Ingest
             // holds exactly where versions actually conflict.
             foreach (var shadow in g.Where(p => p != winner && p.Provenance != winner.Provenance && Ord(p.ProducedVersion) == "")
                                     .GroupBy(p => p.Provenance).Select(grp => grp.First()))
-                dedupedScan.Add(shadow);
+                // PR7 Codex r8: the shadow adopts the WINNER's identity spelling — the group is one
+                // package (case-folded), and a variant-spelled shadow would trip the loader's own
+                // SPEC-021 same-sidecar rejection; the shadow's provenance + versionless-ness is the claim
+                dedupedScan.Add(new ProducerEntry { Repo = winner.Repo, PackageId = winner.PackageId, ProducedVersion = null, EvidenceNote = shadow.EvidenceNote, Provenance = shadow.Provenance });
         }
         producedProducers = dedupedScan;
 
