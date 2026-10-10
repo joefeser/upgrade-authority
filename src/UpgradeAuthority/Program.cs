@@ -2857,6 +2857,37 @@ public static class Program
                 throw new Exception("exactly one ua/wave-* branch may exist: " + refs9);
             ForceDelete(repo9); Directory.Delete(scoped9, true); Directory.Delete(out9, true);
             Console.WriteLine("ok   pkgcase-push-spelling-idempotency (variant-spelling delta refuses; one branch)"); pass++;
+
+        // PR6 Codex round 3: the STATIC mirror map follows the newest Engine ctor — an older engine's
+        // plan must not re-Norm producer rows through a newer engine's ownership. Snapshot at ctor.
+        try
+        {
+            var f1b = Path.Combine(fixturesRoot, "F1b-independent-versioning");
+            var sA = Path.Combine(Path.GetTempPath(), "ua-pc21-mirA-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(f1b, sA);
+            // re-spell the independent-line producer rows as an ALIAS of R1 (resolves to R1 via mirrors)
+            var peA = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sA, "input", "producer-evidence.v0.json")))!;
+            foreach (var pr in peA["producers"]!.AsArray())
+                if (pr!["packageId"]!.GetValue<string>() is var pid && (pid == "P9" || pid == "P10"))
+                    pr["repo"] = "R1-alias";
+            File.WriteAllText(Path.Combine(sA, "input", "producer-evidence.v0.json"), peA.ToJsonString());
+            var owA = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sA, "input", "ownership.v0.json")))!;
+            owA["mirrors"] = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse("{ \"canonical\": \"R1\", \"aliases\": [\"R1-alias\"] }")!);
+            File.WriteAllText(Path.Combine(sA, "input", "ownership.v0.json"), owA.ToJsonString());
+            var engineA = LoadEngine(sA);
+            var engineB = LoadEngine(Path.Combine(fixturesRoot, "F-case")); // newer ctor: mirrors reset, EMPTY
+            var planA = engineA.BuildPlan();
+            var gapsA = string.Join("\n", planA.Uncertainty.Gaps.Select(g2 => g2.Subject));
+            if (!gapsA.Contains("R1 release coupling"))
+                throw new Exception("engine A's aliased producer must keep its versioning evidence after engine B's ctor cleared the static mirrors: " + gapsA);
+            var unitA = planA.Waves.SelectMany(w2 => w2.ReleaseUnits).FirstOrDefault(u2 => u2.Repo == "R1");
+            if (unitA?.Notes is not { Count: > 0 } || !unitA.Notes.Any(n2 => n2.Contains("ASSUMPTION FLAGGED")))
+                throw new Exception("the independent-versioning note must survive the newer engine's ctor");
+            Directory.Delete(sA, true);
+            Console.WriteLine("ok   pkgcase-static-mirrors (older engine's plan never re-Norms through a newer engine's mirrors)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-static-mirrors: {ex.Message}"); }
+
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-push-spelling-idempotency: {ex.Message}"); }
 

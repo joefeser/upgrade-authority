@@ -17,6 +17,7 @@ public sealed class Engine
     string _lockKind = "lockfile-rows.v0"; // evidence kind cites the input's actual schemaVersion (SPEC-007 §5.6)
 
     readonly Dictionary<string, List<string>> _produced = new();
+    readonly List<(string Repo, ProducerEntry Entry)> _producerRows = new(); // SPEC-021 (PR6 r3): normalized at ctor under this engine's mirrors
     readonly Dictionary<string, List<string>> _producerRepos = new(StringComparer.OrdinalIgnoreCase); // SPEC-021 §2(c): keys are the folded form
     readonly HashSet<string> _external = new(StringComparer.OrdinalIgnoreCase); // SPEC-021 §2(c)
     readonly Dictionary<string, string> _team = new();
@@ -99,6 +100,7 @@ public sealed class Engine
         foreach (var p in pe.Producers)
         {
             var repo = Norm(p.Repo);
+            _producerRows.Add((repo, p)); // PR6 Codex r3: snapshot the NORMALIZED repo per row, under THIS engine's mirrors — VersionGroups must never re-Norm at plan time (the static map follows the newest ctor)
             var foldKey = (repo, Pk(p.PackageId));
             if (claimedCaseFolded.TryGetValue(foldKey, out var priorSpelling) && priorSpelling != p.PackageId)
                 throw new UaException($"malformed input producer-evidence.v0.json: producer claims '{priorSpelling}' and '{p.PackageId}' for one repo — case variants of one package id in the SAME sidecar are a typed conflict (merge deliberately via one spelling)");
@@ -182,9 +184,9 @@ public sealed class Engine
     // (major, version, packages) groups from actual ProducedVersion values; dominant group first (largest, tie: lowest major)
     List<(string Major, string Version, List<string> Pkgs)> VersionGroups(string repo)
     {
-        var entries = _pe.Producers.Where(p => Norm(p.Repo) == repo && p.ProducedVersion is not null && ProducedOf(repo).Any(x => PkgEq(x, p.PackageId))); // PR6 Codex r2: resolve the RAW sidecar spelling through Norm (an aliased producer keeps its versioning evidence); the membership check folds with the rest of SPEC-021
-        var groups = entries.GroupBy(p => p.ProducedVersion!.Split('.')[0])
-            .Select(g => (Major: g.Key, Version: g.Select(p => p.ProducedVersion!).OrderBy(v => v, StringComparer.Ordinal).First(), Pkgs: g.Select(p => p.PackageId).OrderBy(p2 => p2, new NaturalComparer()).ToList()))
+        var entries = _producerRows.Where(x => x.Repo == repo && x.Entry.ProducedVersion is not null && ProducedOf(repo).Any(px => PkgEq(px, x.Entry.PackageId))); // PR6 r2/r3: the ctor-normalized snapshot — an aliased producer keeps its versioning evidence, and no plan-time Norm rides the STATIC mirror map
+        var groups = entries.GroupBy(x => x.Entry.ProducedVersion!.Split('.')[0])
+            .Select(g => (Major: g.Key, Version: g.Select(x => x.Entry.ProducedVersion!).OrderBy(v => v, StringComparer.Ordinal).First(), Pkgs: g.Select(x => x.Entry.PackageId).OrderBy(p2 => p2, new NaturalComparer()).ToList()))
             .OrderByDescending(g => g.Pkgs.Count).ThenBy(g => g.Major, StringComparer.Ordinal).ToList();
         return groups;
     }
