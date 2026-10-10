@@ -48,6 +48,9 @@ function Invoke-StagePack {
     # STAGE-then-PROMOTE (PR8 Baz r3): both feeds are built beside their targets and swapped in only
     # after EVERY pack succeeds — a mid-pack failure never destroys the last usable feed
     $stageFeed = "$feed.staging"; $stageHistory = "$feedHistory.staging"
+    # staging dirs are gitignored (.staging suffix) and swept on FAILURE too (PR8 Codex r4)
+    if (Test-Path $stageFeed) { Remove-Item -Recurse -Force $stageFeed }
+    if (Test-Path $stageHistory) { Remove-Item -Recurse -Force $stageHistory }
     foreach ($dir in @($stageFeed, $stageHistory)) {
         if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -176,11 +179,12 @@ function Invoke-StagePlan {
     $expectedRepos = @{
         'Cassowary.Core' = 'affected'; 'Cassowary.Booker' = 'affected'; 'Cassowary.CrewWeb' = 'affected'; 'Cassowary.GroundOps' = 'unknown'   # no lockfile of its own — never not-affected without positive evidence (the strict set caught my wrong first guess)
     }
-    if ($plan1.repos.Count -ne $expectedRepos.Count) { throw "plan (Core): expected exactly $($expectedRepos.Count) repos, got $($plan1.repos.Count)" }
-    foreach ($repo in $plan1.repos) {
-        if (-not $expectedRepos.ContainsKey($repo.repo)) { throw "plan (Core): unexpected repo $($repo.repo)" }
-        if ($repo.classification -ne $expectedRepos[$repo.repo]) { throw "plan (Core): $($repo.repo) must be $($expectedRepos[$repo.repo]), got $($repo.classification)" }
+    foreach ($entry in $expectedRepos.GetEnumerator()) {
+        $rows = @($plan1.repos | Where-Object { $_.repo -eq $entry.Key })
+        if ($rows.Count -ne 1) { throw "plan (Core): $($entry.Key) must appear EXACTLY once, got $($rows.Count)" }
+        if ($rows[0].classification -ne $entry.Value) { throw "plan (Core): $($entry.Key) must be $($entry.Value), got $($rows[0].classification)" }
     }
+    if ($plan1.repos.Count -ne $expectedRepos.Count) { throw "plan (Core): expected exactly $($expectedRepos.Count) repos (no extras, no duplicates), got $($plan1.repos.Count)" }
 
     $plan2 = Get-Content (Join-Path $out 'plan-diesel.json') -Raw | ConvertFrom-Json
     $prereqs = @($plan2.waves | ForEach-Object { $_.prerequisites } | ForEach-Object { $_ })
