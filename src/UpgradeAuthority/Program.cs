@@ -3026,7 +3026,7 @@ public static class Program
             foreach (var gen in Directory.GetFiles(Path.Combine(fcC, "input")))
             {
                 var produced = Path.Combine(outC, "input", Path.GetFileName(gen));
-                if (!File.Exists(produced) || File.ReadAllText(produced) != File.ReadAllText(gen))
+                if (!File.Exists(produced) || !File.ReadAllBytes(produced).SequenceEqual(File.ReadAllBytes(gen))) // BYTES — encoding/BOM differences are differences (PR7 Codex r3)
                     throw new Exception($"generated ingest artifact differs from the F-ci fixture input: {Path.GetFileName(gen)}");
             }
             if (Directory.GetFiles(Path.Combine(outC, "input")).Length != Directory.GetFiles(Path.Combine(fcC, "input")).Length)
