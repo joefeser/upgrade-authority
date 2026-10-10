@@ -3001,17 +3001,18 @@ public static class Program
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-n4-honesty: {ex.Message}"); }
 
         // SPEC-020 §2b consuming half (tracemap #851): ci-workflow producer facts — real-byte e2e
+        string? sideC = null, outC = null;
         try
         {
+            sideC = Path.Combine(Path.GetTempPath(), "ua-ci21-side-" + Guid.NewGuid().ToString("N")[..8]);
+            outC = Path.Combine(Path.GetTempPath(), "ua-ci21-out-" + Guid.NewGuid().ToString("N")[..8]);
             var fcC = Path.Combine(fixturesRoot, "F-ci");
             var richC = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich", "ci-scans"));
             // REAL ingest over the committed --index-ci-producers scans (pure-CI, both-sources, versionless)
-            var sideC = Path.Combine(Path.GetTempPath(), "ua-ci21-side-" + Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(sideC);
             File.WriteAllText(Path.Combine(sideC, "producer.json"), "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[]}");
             File.WriteAllText(Path.Combine(sideC, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"pure-ci\",\"team\":\"team-a\"},{\"repo\":\"both\",\"team\":\"team-a\"},{\"repo\":\"vers\",\"team\":\"team-a\"}]}");
             File.WriteAllText(Path.Combine(sideC, "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"https://example.invalid/x.git\",\"sourceCommitSha\":\"0000000000000000000000000000000000000000\",\"changes\":[{\"id\":\"ci\",\"packageName\":\"Contoso.Sample\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"0.1.0\",\"newVersion\":\"0.2.0\"}]}");
-            var outC = Path.Combine(Path.GetTempPath(), "ua-ci21-out-" + Guid.NewGuid().ToString("N")[..8]);
             var errPrevC = Console.Error;
             var swC = new System.IO.StringWriter();
             int rcC;
@@ -3051,10 +3052,15 @@ public static class Program
                 .First(p2 => p2.GetProperty("repo").GetString() == "vers");
             if (versC2.TryGetProperty("producedVersion", out _))
                 throw new Exception("an unresolvable template version omits producedVersion entirely (never guessed)");
-            Directory.Delete(outC, true); Directory.Delete(sideC, true);
             Console.WriteLine("ok   ci-provenance-real-e2e (real #851 scans: ci-defined at fusion, precedence notes loser, note flips, versionless honest)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ci-provenance-real-e2e: {ex.Message}"); }
+        finally
+        {
+            // PR7 Baz r4: every assertion path removes the run-owned scratch dirs
+            if (Directory.Exists(sideC)) Directory.Delete(sideC, true);
+            if (Directory.Exists(outC)) Directory.Delete(outC, true);
+        }
 
         // SPEC-020 §2b: operator > ci at the merge; same-source two versions stay a self-contradiction;
         // the pre-spec marker fallback classifies a provenance-less ci entry as project-declared (honest pre-spec)

@@ -520,13 +520,17 @@ public static class Ingest
             // diagnostic — precedence resolving the classes must not silence a class contradicting itself
             foreach (var byProv in g.GroupBy(p => p.Provenance ?? ""))
             {
-                // bounded rendering (PR7 Baz r2): one pass, a ≤5 ordinal-ordered window and a remainder
-                // count — no unbounded distinct-set materialization, no full sort of a hostile claim list
+                // bounded rendering (PR7 Baz r2 + Codex r4, ACTUALLY LANDED THIS TIME — the round-3
+                // commit claimed this cap but shipped only the Program.cs half): distinct tracking is
+                // CAPPED at 64 — no unbounded internal set, no fabricated exact count past the cap
+                const int claimCap = 64;
+                var seen = new HashSet<string?>();
+                var overflowed = false;
                 var top = new List<string?>(); // ordinal-sorted, capacity 5
-                var total = 0;
-                foreach (var v in byProv.Select(p => p.ProducedVersion).Distinct())
+                foreach (var v in byProv.Select(p => p.ProducedVersion))
                 {
-                    total++;
+                    if (!seen.Add(v)) { if (seen.Count >= claimCap) { overflowed = true; break; } continue; }
+                    if (seen.Count > claimCap) { overflowed = true; break; }
                     if (top.Count < 5 || string.CompareOrdinal(Ord(v), Ord(top[^1])) < 0)
                     {
                         var idx = top.FindIndex(x => string.CompareOrdinal(Ord(v), Ord(x)) < 0);
@@ -535,11 +539,13 @@ public static class Ingest
                         if (top.Count > 5) top.RemoveAt(5);
                     }
                 }
-                if (total <= 1) continue;
-                var shown = top.Take(Math.Min(5, total)).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v!)}'").ToList();
-                if (total > shown.Count) shown.Add($"(+{total - shown.Count} more)");
+                var total = seen.Count;
+                if (total <= 1 && !overflowed) continue;
+                var totalText = overflowed ? $"{claimCap}+" : $"{total}";
+                var shown = top.Take(5).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v!)}'").ToList();
+                if (overflowed) shown.Add("(+more)"); else if (total > shown.Count) shown.Add($"(+{total - shown.Count} more)");
                 var classWinner = ordered.First(p => p.Provenance == byProv.Key); // the class's own ordinal-ordered pick
-                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {total} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {totalText} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
             }
             dedupedScan.Add(winner);
         }
