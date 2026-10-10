@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Cassowary.Core</PackageId>
+    <Version>1.2.0</Version>
+    <Authors>Cassowary Air platform team (fictional)</Authors>
+    <Description>Core booking domain types for the fictional Cassowary Air estate.</Description>
+  </PropertyGroup>
+
+</Project>

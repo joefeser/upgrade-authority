@@ -1,0 +1,9 @@
+name: pack
+on: push
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pack
+        run: dotnet pack Cassowary.Core.csproj -p:PackageVersion=1.2.0

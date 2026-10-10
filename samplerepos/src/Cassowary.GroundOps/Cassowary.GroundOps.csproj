@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Cassowary.GroundOps.Diesel</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Cassowary Air ground crew (fictional)</Authors>
+    <Description>Ground-operations fueling contracts for the fictional Cassowary Air estate.</Description>
+  </PropertyGroup>
+
+</Project>

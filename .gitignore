@@ -1,3 +1,10 @@
 bin/
 obj/
 *.user
+
+# SPEC-022: the samplerepos harness generates these (nothing binary is committed)
+samplerepos/feed/
+samplerepos/feed-history/
+samplerepos/out/
+samplerepos/.scratch/
+samplerepos/**/packages.lock.json

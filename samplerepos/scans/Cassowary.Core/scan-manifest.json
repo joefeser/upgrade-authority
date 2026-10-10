@@ -1,0 +1,31 @@
+{
+  "scanId": "scan-3930768c055ea9052748",
+  "repoName": "Cassowary.Core",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "deb82407d1c6793207a2e766814a9019e6d4dce4",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-10T21:01:20.189953+00:00",
+  "analysisLevel": "Level1SemanticAnalysis",
+  "buildStatus": "Succeeded",
+  "solutions": [],
+  "projects": [
+    "Cassowary.Core.csproj"
+  ],
+  "targetFrameworks": [
+    "net10.0"
+  ],
+  "knownGaps": [],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "95cf717ca3f42a982bc5f2ef07e0f8ab",
+  "gitRootHash": "95cf717ca3f42a982bc5f2ef07e0f8ab",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "61bdb8d6d157f12c6dad6b9ede2cbc762498a486c65046b48d311fc4d504a027"
+}

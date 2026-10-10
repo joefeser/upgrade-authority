@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/cassowary-groundops.git",
+  "sourceCommitSha": "0000000000000000000000000000000000000000",
+  "changes": [
+    { "id": "cassowary-diesel-1.0.0-to-1.1.0", "packageName": "Cassowary.GroundOps.Diesel", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.0.0", "newVersion": "1.1.0" }
+  ]
+}

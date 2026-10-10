@@ -1,0 +1,8 @@
+{
+  "version": "package-delta.v1",
+  "sourceRepo": "https://example.invalid/cassowary-core.git",
+  "sourceCommitSha": "0000000000000000000000000000000000000000",
+  "changes": [
+    { "id": "cassowary-core-1.2.0-to-1.3.0", "packageName": "Cassowary.Core", "ecosystem": "nuget", "changeType": "updated", "oldVersion": "1.2.0", "newVersion": "1.3.0" }
+  ]
+}

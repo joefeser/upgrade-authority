@@ -11,7 +11,7 @@ scan() {
     local file="${line%%:*}"
     if [ "$file" = "docs/COMPARISONS.md" ]; then continue; fi
     echo "FAIL [$label] $line"; fail=1
-  done < <(grep -rniE "$pattern" --include="*.md" --include="*.json" --include="*.cs" --include="*.mjs" --include="*.props" --include="*.csproj" . 2>/dev/null | grep -v "testdata-ingest" || true)
+  done < <(grep -rniE "$pattern" --include="*.md" --include="*.json" --include="*.cs" --include="*.mjs" --include="*.props" --include="*.csproj" --include="*.yml" --include="*.config" . 2>/dev/null | grep -v "testdata-ingest" || true)
 }
 scan '\bunited\b|united'"'"'s' "employer-name"
 scan '\bwiz\b|sonarqube|sonarqube' "alert-stack"
