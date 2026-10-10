@@ -237,29 +237,38 @@ public static class Apply
 
     // ---- site verification (SPEC-009 §5): exactly one full-selector match in the window ----
 
+    // Resolve EVERY path component through its symlinks (chained links included), top-down: an
+    // ancestor symlinked directory escapes FileInfo.LinkTarget checks on the final file (PR6 Codex r8).
+    static string ResolveSymlinks(string absolute)
+    {
+        var root = Path.GetPathRoot(absolute) ?? string.Empty;
+        var cur = root.Length > 0 ? root : absolute[..absolute.IndexOf(Path.DirectorySeparatorChar)];
+        foreach (var seg in absolute[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var next = Path.Combine(cur, seg);
+            string? target = null;
+            if (File.Exists(next)) target = new FileInfo(next).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            else if (Directory.Exists(next)) target = new DirectoryInfo(next).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            cur = target ?? next;
+        }
+        return cur;
+    }
+
     static (bool Ok, string Error, (int Line, string Old, string New, int Col)? Change) VerifySite(string repoDir, ApplyEdit e)
     {
-        // PR6 Baz r7: the edit's Path is untrusted evidence — verify it stays INSIDE the canonical
-        // checkout (no ../ escapes, no symlink tricks to files outside) and carries no control
-        // characters (a newline would forge patch headers push later reparses for staging).
-        if (e.Path.IndexOfAny(new[] { '\n', '\r', '\0' }) >= 0)
-            return (false, $"stale evidence: edit path contains control characters — refused: {e.Path.Replace("\n", "\\n").Replace("\r", "\\r")}", null);
-        var checkoutRoot = Path.GetFullPath(repoDir);
-        var full = Path.GetFullPath(Path.Combine(checkoutRoot, e.Path));
-        if (!full.StartsWith(checkoutRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) && full != checkoutRoot)
+        // PR6 Baz r7/Codex r8: the edit's Path is untrusted evidence — it must resolve INSIDE the
+        // canonical checkout with EVERY symlink component (and chained links) resolved (an ancestor
+        // symlinked directory escapes FileInfo.LinkTarget checks), and carry no control characters
+        // (a newline forges patch headers; a tab corrupts unified-diff filename delimiters).
+        if (e.Path.Any(c => c < 0x20 || c == 0x7f))
+            return (false, "stale evidence: edit path contains control characters — refused", null);
+        var checkoutRoot = ResolveSymlinks(Path.GetFullPath(repoDir));
+        var full = Path.GetFullPath(Path.Combine(Path.GetFullPath(repoDir), e.Path));
+        var resolved = ResolveSymlinks(full);
+        if (!resolved.StartsWith(checkoutRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) && resolved != checkoutRoot)
             return (false, $"stale evidence: {e.Path} resolves outside the checkout — refused", null);
-        if (File.Exists(full))
-        {
-            var fi = new FileInfo(full);
-            if (fi.LinkTarget is { } target) // symlink: the target must also live inside the checkout
-            {
-                var targetFull = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(full) ?? ".", target));
-                if (!targetFull.StartsWith(checkoutRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) && targetFull != checkoutRoot)
-                    return (false, $"stale evidence: {e.Path} is a symlink outside the checkout — refused", null);
-            }
-        }
-        if (!File.Exists(full)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
-        var lines = File.ReadAllLines(full);
+        if (!File.Exists(resolved)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
+        var lines = File.ReadAllLines(resolved); // the containment-cleared resolved path
         // window: ±2 around the COMPLETE evidence span (PR14 Q1/C2) — a multiline element's value
         // can sit several lines below its opening tag.
         var start = Math.Max(1, e.Line - 2);
