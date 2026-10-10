@@ -187,7 +187,7 @@ public static class Apply
         foreach (var w in manifest.Waves)
         {
             var anyUnit = w.Units.Count > 0;
-            var edited = new List<(string Path, string Resolved, List<(int Line, string Old, string New, int Col, string Path2)> Changes)>();
+            var edited = new List<(string Path, string Resolved, string Text, List<(int Line, string Old, string New, int Col)> Changes)>();
             foreach (var u in w.Units)
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
@@ -200,8 +200,8 @@ public static class Apply
                     }
                     if (change is null) continue;
                     var file = edited.FirstOrDefault(x => x.Path == e.Path);
-                    if (file.Path is null) edited.Add((e.Path, change!.Value.Resolved, new List<(int, string, string, int, string)> { change!.Value }));
-                    else file.Changes.Add(change!.Value);
+                    if (file.Path is null) edited.Add((e.Path, change!.Value.Resolved, change!.Value.Text, new List<(int, string, string, int)> { (change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col) }));
+                    else file.Changes.Add((change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col));
                 }
             }
             if (edited.Count == 0)
@@ -210,10 +210,10 @@ public static class Apply
                 continue;
             }
             var sb = new StringBuilder();
-            foreach (var (path, resolvedPath, changes) in edited.OrderBy(x => x.Path, StringComparer.Ordinal))
+            foreach (var (path, resolvedPath, verifiedText, changes) in edited.OrderBy(x => x.Path, StringComparer.Ordinal))
             {
-                var full = resolvedPath; // the containment-cleared target the sites were verified against — never a fresh resolve (PR6 Codex r9)
-                var text = File.ReadAllText(full);
+                _ = resolvedPath; // retained for diagnostics; the DIFF reads the VERIFIED bytes below
+                var text = verifiedText; // PR6 Codex r10: the exact bytes VerifySite read — the filesystem is never consulted a second time
                 var crlf = text.Contains("\r\n");
                 var hadFinalNewline = text.EndsWith("\n");
                 var raw = text.Split('\n');
@@ -224,7 +224,7 @@ public static class Apply
                 // right-to-left within a line — a same-line neighbor carrying the identical version
                 // attribute is never rewritten by a site that did not verify it.
                 foreach (var g in changes.GroupBy(c => c.Line).OrderByDescending(g => g.Key))
-                    foreach (var (line, old, @new, col, _) in g.OrderByDescending(c => c.Col))
+                    foreach (var (line, old, @new, col) in g.OrderByDescending(c => c.Col))
                         after[line - 1] = after[line - 1].Remove(col, old.Length).Insert(col, @new);
                 var nl = crlf ? "\r\n" : "\n";
                 sb.Append(UnifiedDiff(path, before.ToArray(), after.ToArray(), nl, hadFinalNewline));
@@ -254,7 +254,7 @@ public static class Apply
         return cur;
     }
 
-    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved)? Change) VerifySite(string repoDir, ApplyEdit e)
+    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved, string Text)? Change) VerifySite(string repoDir, ApplyEdit e)
     {
         // PR6 Baz r7/Codex r8: the edit's Path is untrusted evidence — it must resolve INSIDE the
         // canonical checkout with EVERY symlink component (and chained links) resolved (an ancestor
@@ -268,13 +268,14 @@ public static class Apply
         if (!resolved.StartsWith(checkoutRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) && resolved != checkoutRoot)
             return (false, $"stale evidence: {e.Path} resolves outside the checkout — refused", null);
         if (!File.Exists(resolved)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
-        var lines = File.ReadAllLines(resolved); // the containment-cleared resolved path
+        var text = File.ReadAllText(resolved); // read ONCE (PR6 Codex r10): generation reuses these bytes — no second resolution a swapped ancestor could divert
+        var lines = text.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         // window: ±2 around the COMPLETE evidence span (PR14 Q1/C2) — a multiline element's value
         // can sit several lines below its opening tag.
         var start = Math.Max(1, e.Line - 2);
         var end = Math.Min(lines.Length, (e.EndLine ?? e.Line) + 2);
         var patterns = AttrPatterns(e.Attribute, e.OldVersion, e.NewVersion);
-        var matches = new List<(int Line, string Old, string New, int Col, string Resolved)>();
+        var matches = new List<(int Line, string Old, string New, int Col, string Resolved, string Text)>();
         for (var i = start; i <= end; i++)
         {
             var line = lines[i - 1];
@@ -286,7 +287,7 @@ public static class Apply
                 var span = line[spanStart..(spanEnd + 1)];
                 foreach (var (oldText, newText) in patterns)
                     for (var idx = span.IndexOf(oldText, StringComparison.Ordinal); idx >= 0; idx = span.IndexOf(oldText, idx + 1, StringComparison.Ordinal))
-                        matches.Add((i, oldText, newText, spanStart + idx, resolved)); // ABSOLUTE column of the verified occurrence (PR6 Baz r1) + the RESOLVED path that passed containment (PR6 Codex r9: patch generation reads THIS target, never a re-resolve that a retargeted symlink could divert)
+                        matches.Add((i, oldText, newText, spanStart + idx, resolved, text)); // ABSOLUTE column (PR6 Baz r1) + the resolved path AND the bytes actually verified (PR6 Codex r9/r10)
             }
         }
         if (matches.Count == 0)

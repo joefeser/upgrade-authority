@@ -2710,35 +2710,38 @@ public static class Program
                     Directory.Delete(sEsc, true); if (Directory.Exists(outE)) Directory.Delete(outE, true);
                     // PR6 Codex r8: an ANCESTOR symlinked directory pointing outside must also refuse —
                     // the final file itself is a regular file, so FileInfo.LinkTarget alone would miss it
-                    string? linkRepo = null, outsideDir = null, sL = null, outL = null;
-                    try
-                    {
-                        outsideDir = Path.Combine(Path.GetTempPath(), "ua-pc21-out-" + Guid.NewGuid().ToString("N")[..8]);
-                        var outsideSrc = Path.Combine(outsideDir, "src"); Directory.CreateDirectory(outsideSrc);
-                        File.Copy(Path.Combine(richC, "sources", "caseA", "src", "App.csproj"), Path.Combine(outsideSrc, "App.csproj"));
-                        linkRepo = Path.Combine(Path.GetTempPath(), "ua-pc21-link-" + Guid.NewGuid().ToString("N")[..8]);
-                        Directory.CreateDirectory(linkRepo);
-                        Directory.CreateSymbolicLink(Path.Combine(linkRepo, "linked-src"), outsideSrc); // may throw where symlinks need privileges
-                        sL = Path.Combine(Path.GetTempPath(), "ua-pc21-lf-" + Guid.NewGuid().ToString("N")[..8]);
-                        CopyDir(scoped, sL);
-                        var pxL = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sL, "input", "package-evidence.v0.json")))!;
-                        foreach (var fl in pxL["facts"]!.AsArray()) fl!["path"] = "linked-src/App.csproj";
-                        File.WriteAllText(Path.Combine(sL, "input", "package-evidence.v0.json"), pxL.ToJsonString());
-                        outL = Path.Combine(Path.GetTempPath(), "ua-pc21-lo-" + Guid.NewGuid().ToString("N")[..8]);
-                    }
+                    // PR6 Codex r10: ONLY the symlink-creation call is skippable — every other step
+                    // (setup, JSON writes, the Apply.Run refusal assertion) failing must fail the suite
+                    var outsideDir = Path.Combine(Path.GetTempPath(), "ua-pc21-out-" + Guid.NewGuid().ToString("N")[..8]);
+                    var outsideSrc = Path.Combine(outsideDir, "src"); Directory.CreateDirectory(outsideSrc);
+                    File.Copy(Path.Combine(richC, "sources", "caseA", "src", "App.csproj"), Path.Combine(outsideSrc, "App.csproj"));
+                    var linkRepo = Path.Combine(Path.GetTempPath(), "ua-pc21-link-" + Guid.NewGuid().ToString("N")[..8]);
+                    Directory.CreateDirectory(linkRepo);
+                    var linkPath = Path.Combine(linkRepo, "linked-src");
+                    try { Directory.CreateSymbolicLink(linkPath, outsideSrc); }
                     catch (Exception exS) when (exS is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-                    { Console.WriteLine($"note: ancestor-symlink pin skipped on this platform ({exS.GetType().Name}) — symlink creation unavailable"); goto skippedSymlinkPin; }
+                    {
+                        Console.WriteLine($"note: ancestor-symlink pin skipped on this platform ({exS.GetType().Name}) — symlink creation unavailable");
+                        Directory.Delete(outsideDir, true); Directory.Delete(linkRepo, true);
+                        goto skippedSymlinkPin;
+                    }
+                    var sL = Path.Combine(Path.GetTempPath(), "ua-pc21-lf-" + Guid.NewGuid().ToString("N")[..8]);
+                    CopyDir(scoped, sL);
+                    var pxL = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sL, "input", "package-evidence.v0.json")))!;
+                    foreach (var fl in pxL["facts"]!.AsArray()) fl!["path"] = "linked-src/App.csproj";
+                    File.WriteAllText(Path.Combine(sL, "input", "package-evidence.v0.json"), pxL.ToJsonString());
+                    var outL = Path.Combine(Path.GetTempPath(), "ua-pc21-lo-" + Guid.NewGuid().ToString("N")[..8]);
                     try
                     {
-                        var rcL = Apply.Run(sL!, linkRepo!, outL!);
-                        if (rcL != 6) throw new Exception($"an ancestor symlink outside the checkout must refuse (6), got {rcL}"); // NEVER skippable: verifier failures must fail the suite (PR6 Baz r9)
+                        var rcL = Apply.Run(sL, linkRepo, outL);
+                        if (rcL != 6) throw new Exception($"an ancestor symlink outside the checkout must refuse (6), got {rcL}"); // NEVER skippable
                     }
                     finally
                     {
-                        if (sL is not null) Directory.Delete(sL, true);
+                        Directory.Delete(sL, true);
                         if (Directory.Exists(outL)) Directory.Delete(outL, true);
-                        if (Directory.Exists(outsideDir)) Directory.Delete(outsideDir, true);
-                        if (Directory.Exists(linkRepo)) Directory.Delete(linkRepo, true);
+                        Directory.Delete(outsideDir, true);
+                        Directory.Delete(linkRepo, true);
                     }
                     skippedSymlinkPin:;
                 }
