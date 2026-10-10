@@ -7,8 +7,7 @@
 param(
     [ValidateSet('pack', 'restore', 'scan', 'plan', 'all')]
     [string]$Stage = 'all',
-    [Parameter(Mandatory = $true)]
-    [string]$TracemapCli,          # absolute path to the tracemap CLI dll (build the sibling checkout; see README)
+    [string]$TracemapCli = '',     # absolute path to the tracemap CLI dll (REQUIRED for scan/all; pack/restore/plan run without it)
     [string]$UaCli = '',           # optional: path to a built ua dll. Default: dotnet-runs this repo's project.
     [switch]$LockedMode            # demonstration only: honor a pre-existing lockfile with --locked-mode
 )
@@ -46,18 +45,25 @@ function Invoke-Ua {
 }
 
 function Invoke-StagePack {
-    foreach ($dir in @($feed, $feedHistory)) {
-        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }   # CLEAN first: a stale nupkg beside a new one is drift's exit-5 trap
+    # STAGE-then-PROMOTE (PR8 Baz r3): both feeds are built beside their targets and swapped in only
+    # after EVERY pack succeeds — a mid-pack failure never destroys the last usable feed
+    $stageFeed = "$feed.staging"; $stageHistory = "$feedHistory.staging"
+    foreach ($dir in @($stageFeed, $stageHistory)) {
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
     foreach ($proj in @('Cassowary.Core/Cassowary.Core.csproj', 'Cassowary.GroundOps/Cassowary.GroundOps.csproj')) {
-        Invoke-Checked 'dotnet' (@('pack', (Join-Path $srcRoot $proj), '-c', 'Release', '-o', $feedHistory,
+        Invoke-Checked 'dotnet' (@('pack', (Join-Path $srcRoot $proj), '-c', 'Release', '-o', $stageHistory,
                                    '-p:ContinuousIntegrationBuild=true') ) "pack $proj -> feed-history"
     }
     # the latest-only view drift reads + the historical 1.1.0 the behind-consumer restores
-    Copy-Item (Join-Path $feedHistory '*.nupkg') $feed
+    Copy-Item (Join-Path $stageHistory '*.nupkg') $stageFeed
     Invoke-Checked 'dotnet' (@('pack', (Join-Path $srcRoot 'Cassowary.Core/Cassowary.Core.csproj'), '-c', 'Release',
-                                   '-o', $feedHistory, '-p:Version=1.1.0', '-p:ContinuousIntegrationBuild=true') ) 'pack historical Cassowary.Core 1.1.0'
+                                   '-o', $stageHistory, '-p:Version=1.1.0', '-p:ContinuousIntegrationBuild=true') ) 'pack historical Cassowary.Core 1.1.0'
+    foreach ($pair in @(@($stageFeed, $feed), @($stageHistory, $feedHistory))) {
+        if (Test-Path $pair[1]) { Remove-Item -Recurse -Force $pair[1] }   # promote: clean swap (a stale nupkg beside a new one is drift's exit-5 trap)
+        Move-Item $pair[0] $pair[1]
+    }
 }
 
 function Invoke-StageRestore {
@@ -69,6 +75,8 @@ function Invoke-StageRestore {
 }
 
 function Invoke-StageScan {
+    if ($TracemapCli -eq '') { throw '-TracemapCli is required for -Stage scan (and -Stage all): absolute path to the tracemap CLI dll — see samplerepos/README.md' }
+    if (-not (Test-Path $TracemapCli)) { throw "TracemapCli not found: $TracemapCli" }
     if (Test-Path $scratch) { Remove-Item -Recurse -Force $scratch }
     New-Item -ItemType Directory -Force -Path $scratch | Out-Null
     $oldAuthor = $env:GIT_AUTHOR_DATE; $oldCommitter = $env:GIT_COMMITTER_DATE
@@ -145,8 +153,14 @@ function Invoke-StagePlan {
     if (-not $coreEntry -or $coreEntry.provenance -ne 'ci-defined') { throw 'registry: Cassowary.Core must be ci-defined (the workflow claim wins)' }
     if (($reg.boundary.anomalies.producedAndDeclaredExternal) -notcontains 'Cassowary.GroundOps.Diesel') { throw 'registry: the Diesel produced-and-declared-external anomaly must be surfaced' }
 
+    # exact feed inventory BEFORE drift reads it (PR8 Baz r3): a partial feed must never drive artifacts
+    $expectedFeed = @('Cassowary.Core.1.2.0.nupkg', 'Cassowary.GroundOps.Diesel.1.0.0.nupkg')
+    $actualFeed = @((Get-ChildItem $feed -Filter '*.nupkg' | Sort-Object Name | ForEach-Object { $_.Name }))
+    if (($actualFeed -join '|') -ne ($expectedFeed -join '|')) { throw "feed/ inventory wrong (expected exactly $($expectedFeed -join ', ')): $($actualFeed -join ', ')" }
+
     $drift = Get-Content (Join-Path $out 'drift-core.v1.json') -Raw | ConvertFrom-Json
     $core = $drift.packages | Where-Object { $_.packageId -eq 'Cassowary.Core' }
+    if (@($core.installations).Count -ne 2) { throw "drift: Cassowary.Core must carry EXACTLY the two consumer installations, got $(@($core.installations).Count)" }
     $behind = @($core.installations | Where-Object { $_.repo -eq 'Cassowary.CrewWeb' -and $_.status -eq 'behind' })      # repo-BOUND (PR8 Codex r1): a swapped regression must fail
     $current = @($core.installations | Where-Object { $_.repo -eq 'Cassowary.Booker' -and $_.status -eq 'current' })
     if ($behind.Count -ne 1) { throw 'drift: Cassowary.CrewWeb must be the one behind row (1.1.0 vs feed 1.2.0)' }
@@ -159,9 +173,13 @@ function Invoke-StagePlan {
     if ($dieselRow.Count -ne 1) { throw 'drift: Diesel must be current via lockfile evidence on Booker' }
 
     $plan1 = Get-Content (Join-Path $out 'plan-core.json') -Raw | ConvertFrom-Json
-    foreach ($must in @('Cassowary.Booker', 'Cassowary.CrewWeb')) {
-        $r = $plan1.repos | Where-Object { $_.repo -eq $must }
-        if (-not $r -or $r.classification -ne 'affected') { throw "plan (Core): $must must be affected" }
+    $expectedRepos = @{
+        'Cassowary.Core' = 'affected'; 'Cassowary.Booker' = 'affected'; 'Cassowary.CrewWeb' = 'affected'; 'Cassowary.GroundOps' = 'unknown'   # no lockfile of its own — never not-affected without positive evidence (the strict set caught my wrong first guess)
+    }
+    if ($plan1.repos.Count -ne $expectedRepos.Count) { throw "plan (Core): expected exactly $($expectedRepos.Count) repos, got $($plan1.repos.Count)" }
+    foreach ($repo in $plan1.repos) {
+        if (-not $expectedRepos.ContainsKey($repo.repo)) { throw "plan (Core): unexpected repo $($repo.repo)" }
+        if ($repo.classification -ne $expectedRepos[$repo.repo]) { throw "plan (Core): $($repo.repo) must be $($expectedRepos[$repo.repo]), got $($repo.classification)" }
     }
 
     $plan2 = Get-Content (Join-Path $out 'plan-diesel.json') -Raw | ConvertFrom-Json
@@ -183,5 +201,5 @@ switch ($Stage) {
     'restore' { Invoke-StageRestore }
     'scan'    { Invoke-StageScan }
     'plan'    { Invoke-StagePlan }
-    'all'     { Invoke-StagePack; Invoke-StageRestore; Invoke-StageScan; Invoke-StagePlan }
+    'all'     { if ($TracemapCli -eq '') { throw '-TracemapCli is required for -Stage all' }; Invoke-StagePack; Invoke-StageRestore; Invoke-StageScan; Invoke-StagePlan }
 }
