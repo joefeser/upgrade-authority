@@ -135,10 +135,15 @@ public static class Apply
 
     static string ConstraintKind(Engine engine, string repo, string target)
     {
-        var all = engine.ApplyFacts(repo).Where(f => Engine.PkgEq(f.PackageId, target)).Select(f => f.DeclaredConstraint).ToList();
-        if (all.All(c => c.Length == 0)) return "not-evidenced";
-        if (all.Any(c => c.StartsWith("redacted:"))) return "redacted";
-        if (all.Any(c => c.Length == 0)) return "not-evidenced"; // mixed: at least one unconstrained site
+        var all = engine.ApplyFacts(repo).Where(f => Engine.PkgEq(f.PackageId, target)).ToList();
+        var constraints = all.Select(f => f.DeclaredConstraint).ToList();
+        if (constraints.All(c => c.Length == 0)) return "not-evidenced";
+        if (constraints.Any(c => c.StartsWith("redacted:"))) return "redacted";
+        // PR6 Codex r5: an EXACT pin without line evidence is an evidence gap, not a constraint problem —
+        // diagnosing it as ranged-or-prerelease would point the operator at rewriting a valid constraint
+        if (all.Any(f => f.DeclaredConstraint.Length > 0 && f.Line is null && IsExactPin(f.DeclaredConstraint)))
+            return "an exact pin with no evidenced location";
+        if (constraints.Any(c => c.Length == 0)) return "not-evidenced"; // mixed: at least one unconstrained site
         return "ranged-or-prerelease";
     }
 

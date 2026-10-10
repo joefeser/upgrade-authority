@@ -2909,7 +2909,39 @@ public static class Program
             if (unitU.Note is null || !unitU.Note.Contains("constraint for") || !unitU.Note.Contains("redacted"))
                 throw new Exception("an unresolved variant site must surface N3 (constraint kind), never a satisfied-only N4: " + unitU.Note);
             Directory.Delete(sU, true);
-            Console.WriteLine("ok   pkgcase-n4-honesty (satisfied pin + redacted variant ⇒ N3, never a hidden site)"); pass++;
+            // PR6 Codex r5: an unlocated EXACT pin is an evidence gap — N3 must say so, never
+            // "ranged-or-prerelease" (the operator would rewrite a valid constraint)
+            {
+                var sV = Path.Combine(Path.GetTempPath(), "ua-pc21-v-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(fcU, sV);
+                var pxV = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sV, "input", "package-evidence.v0.json")))!;
+                var f0 = pxV["facts"]![0]!;
+                pxV["facts"] = new System.Text.Json.Nodes.JsonArray(
+                    f0.DeepClone(),
+                    System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"packageId\":\"newtonsoft.json\",\"declaredConstraint\":\"12.0.3\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"projects\":[],\"commitSha\":\"c4\",\"path\":\"src/App.csproj\"}")!); // exact pin, NO line
+                File.WriteAllText(Path.Combine(sV, "input", "package-evidence.v0.json"), pxV.ToJsonString());
+                var mV = Apply.BuildManifest(LoadEngine(sV), LoadEngine(sV).BuildPlan());
+                var unitV = mV.Waves.SelectMany(w2 => w2.Units).Single(u2 => u2.Repo == "caseA");
+                if (unitV.Edits is not { Count: 1 } || unitV.Edits[0].PackageId != "Newtonsoft.Json")
+                    throw new Exception("the located stale pin still edits");
+                var unlocV = mV.Waves.SelectMany(w2 => w2.Units).FirstOrDefault(u2 => u2.Repo != "caseA");
+                if (unlocV is not null) throw new Exception("unreachable — one repo fixture");
+                if (unitV.Action != "edit") throw new Exception("expected the edit unit; got " + unitV.Action);
+                // now the satisfied+unlocated shape: satisfied located pin + unlocated exact variant ⇒ N3 says location
+                var sW = Path.Combine(Path.GetTempPath(), "ua-pc21-w-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(fcU, sW);
+                var pxW = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sW, "input", "package-evidence.v0.json")))!;
+                pxW["facts"] = new System.Text.Json.Nodes.JsonArray(
+                    System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"packageId\":\"Newtonsoft.Json\",\"declaredConstraint\":\"14.0.0\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":3,\"projects\":[],\"commitSha\":\"c5\",\"path\":\"src/App.csproj\"}")!,
+                    System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"packageId\":\"newtonsoft.json\",\"declaredConstraint\":\"12.0.3\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"projects\":[],\"commitSha\":\"c5\",\"path\":\"src/App.csproj\"}")!);
+                File.WriteAllText(Path.Combine(sW, "input", "package-evidence.v0.json"), pxW.ToJsonString());
+                var mW = Apply.BuildManifest(LoadEngine(sW), LoadEngine(sW).BuildPlan());
+                var unitW = mW.Waves.SelectMany(w2 => w2.Units).Single();
+                if (unitW.Note is null || !unitW.Note.Contains("no evidenced location") || unitW.Note.Contains("ranged-or-prerelease"))
+                    throw new Exception("an unlocated exact pin must be diagnosed as a location gap: " + unitW.Note);
+                Directory.Delete(sV, true); Directory.Delete(sW, true);
+            }
+            Console.WriteLine("ok   pkgcase-n4-honesty (satisfied pin + redacted variant ⇒ N3, never a hidden site; unlocated exact ⇒ location gap)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-n4-honesty: {ex.Message}"); }
 
