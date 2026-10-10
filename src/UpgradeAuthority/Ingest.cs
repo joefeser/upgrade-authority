@@ -496,17 +496,24 @@ public static class Ingest
                            .ThenBy(p => Ord(p.EvidenceNote), StringComparer.Ordinal)
                            .ThenBy(p => p.Repo, StringComparer.Ordinal).ToList();
             var winner = ordered[0];
-            var losers = ordered.Where(p => !ReferenceEquals(p, winner) && p.Provenance != winner.Provenance).ToList();
-            foreach (var loser in losers) // SPEC-020 §2: cross-source precedence notes the loser (both provenances named)
+            // SPEC-020 §2: cross-source precedence notes the loser (both provenances named) — once per
+            // DISTINCT losing (provenance, version) claim; identical duplicate facts never flood stderr (PR7 Codex r1)
+            foreach (var loser in ordered.Where(p => ProvRank(p.Provenance) > ProvRank(winner.Provenance))
+                                         .GroupBy(p => (p.Provenance, p.ProducedVersion)).Select(grp => grp.First()))
                 Console.Error.WriteLine($"warning: producer precedence for {Esc(NormBasic(winner.Repo))}/{Esc(winner.PackageId)} — {Esc(winner.Provenance!)} '{Esc(winner.ProducedVersion ?? "unevidenced")}' kept over {Esc(loser.Provenance!)} '{Esc(loser.ProducedVersion ?? "unevidenced")}'; operator sidecar still wins over both at merge (SPEC-020 §2)");
-            var claims = ordered.Where(p => p.Provenance == winner.Provenance).Select(p => p.ProducedVersion).Distinct().ToList();
-            if (claims.Count > 1)
+            // the self-contradiction check runs PER SOURCE CLASS (PR7 Codex r1): a losing provenance that is
+            // internally inconsistent (two versions inside project-declared, say) still gets its honest
+            // diagnostic — precedence resolving the classes must not silence a class contradicting itself
+            foreach (var byProv in g.GroupBy(p => p.Provenance ?? ""))
             {
+                var claims = byProv.Select(p => p.ProducedVersion).Distinct().ToList();
+                if (claims.Count <= 1) continue;
                 // bounded rendering: a pathological scan cannot flood stderr — first 5 claims + omitted count
                 var shown = claims.OrderBy(v => Ord(v), StringComparer.Ordinal)
                     .Take(5).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v)}'").ToList();
                 if (claims.Count > shown.Count) shown.Add($"(+{claims.Count - shown.Count} more)");
-                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {claims.Count} versions ({string.Join(", ", shown)}) — '{Esc(Ord(winner.ProducedVersion) == "" ? "unevidenced" : winner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+                var classWinner = ordered.First(p => p.Provenance == byProv.Key); // the class's own ordinal-ordered pick
+                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {claims.Count} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
             }
             dedupedScan.Add(winner);
         }

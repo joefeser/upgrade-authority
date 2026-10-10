@@ -3072,7 +3072,49 @@ public static class Program
             if (pureD2.Count != 1 || pureD2[0].GetProperty("provenance").GetString() != "operator-declared" || pureD2[0].GetProperty("producedVersion").GetString() != "0.0.1")
                 throw new Exception("operator wins over ci with ONE entry: " + pureD2[0].GetRawText());
             Directory.Delete(sideD, true); Directory.Delete(outD, true);
-            Console.WriteLine("ok   ci-provenance-precedence (operator > ci > project; conflict names both provenances)"); pass++;
+            // PR7 Codex r1: per-class contradiction + loser dedup — synthetic ci+project facts
+            {
+                string CiFact(string id, string? version, string kind = "ci-workflow") => JsonSerializer.Serialize(new
+                {
+                    factId = "f-" + kind + "-" + id + "-" + (version ?? "none"), scanId = "s", repo = "R-ci", commitSha = "c",
+                    factType = "PackageProduced", ruleId = "project.file.v1", evidenceTier = "Tier2Structural",
+                    evidence = new { filePath = ".github/workflows/pack.yml", startLine = 8, endLine = 8, extractorId = "CiWorkflowProducerExtractor", extractorVersion = "0.1.0" },
+                    properties = new Dictionary<string, object?>
+                    {
+                        ["ecosystem"] = "nuget", ["package"] = id, ["packageName"] = id,
+                        ["sourceKind"] = kind, ["manifestKind"] = kind == "ci-workflow" ? "github-workflow" : "csproj",
+                        ["workflowPath"] = ".github/workflows/pack.yml",
+                        ["version"] = version,
+                    },
+                }, Json);
+                var scanE = Path.Combine(Path.GetTempPath(), "ua-ci21-mix-" + Guid.NewGuid().ToString("N")[..8]);
+                Directory.CreateDirectory(scanE);
+                File.WriteAllText(Path.Combine(scanE, "facts.ndjson"), string.Join("\n", new[]
+                {
+                    CiFact("Contoso.Mix", "3.0.0"),                                  // ci winner
+                    CiFact("Contoso.Mix", "1.0.0", "build-file"), CiFact("Contoso.Mix", "2.0.0", "build-file"), // project class contradicts ITSELF
+                    CiFact("Contoso.Mix", "1.0.0", "build-file"),                    // identical duplicate loser — precedence warning fires ONCE per distinct claim
+                }) + "\n");
+                File.Copy(Path.Combine(richD, "..", "sidecars-estate2", "delta.json"), Path.Combine(scanE, "delta.json"));
+                var outE = Path.Combine(Path.GetTempPath(), "ua-ci21-mixo-" + Guid.NewGuid().ToString("N")[..8]);
+                var errPrevE = Console.Error;
+                var swE = new System.IO.StringWriter();
+                int rcE;
+                try { Console.SetError(swE); rcE = Ingest.Run(new[] { scanE }, outE, null, null, null); }
+                finally { Console.SetError(errPrevE); }
+                if (rcE != 0) throw new Exception($"mixed ingest exited {rcE}");
+                var warnE = swE.ToString();
+                var precCount = System.Text.RegularExpressions.Regex.Matches(warnE, "producer precedence for").Count;
+                if (precCount != 2) throw new Exception($"precedence warnings fire once per DISTINCT losing claim (1.0.0 once, 2.0.0 once): {precCount}\n{warnE}");
+                if (!warnE.Contains("within project-declared claims") || !warnE.Contains("at 2 versions"))
+                    throw new Exception("a losing class contradicting ITSELF must still get the self-contradiction diagnostic: " + warnE);
+                var peE = JsonDocument.Parse(File.ReadAllText(Path.Combine(outE, "input", "producer-evidence.v0.json"))).RootElement;
+                var mixE = peE.GetProperty("producers").EnumerateArray().Single();
+                if (mixE.GetProperty("producedVersion").GetString() != "3.0.0" || mixE.GetProperty("provenance").GetString() != "ci-defined")
+                    throw new Exception("ci wins the package: " + mixE.GetRawText());
+                Directory.Delete(scanE, true); Directory.Delete(outE, true);
+            }
+            Console.WriteLine("ok   ci-provenance-precedence (operator > ci > project; conflict names both provenances; per-class contradictions; deduped losers)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ci-provenance-precedence: {ex.Message}"); }
 
