@@ -3127,12 +3127,15 @@ public static class Program
                 // the evidence inversion (PR7 Baz r6): a VERSIONLESS ci claim must not drop a concrete
                 // project version — the versioned claim persists with its version and its own provenance
                 {
-                    var scanF = Path.Combine(Path.GetTempPath(), "ua-ci21-inv-" + Guid.NewGuid().ToString("N")[..8]);
+                    string? scanF = null, outF = null;
+                    try
+                    {
+                    scanF = Path.Combine(Path.GetTempPath(), "ua-ci21-inv-" + Guid.NewGuid().ToString("N")[..8]);
                     Directory.CreateDirectory(scanF);
                     File.WriteAllText(Path.Combine(scanF, "facts.ndjson"),
                         CiFact("Contoso.Inv", null) + "\n" + CiFact("Contoso.Inv", "1.0.0", "build-file") + "\n");
                     File.Copy(Path.Combine(richD, "..", "sidecars-estate2", "delta.json"), Path.Combine(scanF, "delta.json"));
-                    var outF = Path.Combine(Path.GetTempPath(), "ua-ci21-invo-" + Guid.NewGuid().ToString("N")[..8]);
+                    outF = Path.Combine(Path.GetTempPath(), "ua-ci21-invo-" + Guid.NewGuid().ToString("N")[..8]);
                     var errPrevF = Console.Error;
                     var swF = new System.IO.StringWriter();
                     int rcF;
@@ -3142,10 +3145,15 @@ public static class Program
                     if (!swF.ToString().Contains("evidence beats unevidence"))
                         throw new Exception("the versionless-ci loser must be noted with the inversion rationale: " + swF);
                     var peF = JsonDocument.Parse(File.ReadAllText(Path.Combine(outF, "input", "producer-evidence.v0.json"))).RootElement;
-                    var invF = peF.GetProperty("producers").EnumerateArray().Single();
-                    if (invF.GetProperty("producedVersion").GetString() != "1.0.0" || invF.GetProperty("provenance").GetString() != "project-declared")
-                        throw new Exception("the CONCRETE project version must survive a versionless ci claim: " + invF.GetRawText());
-                    Directory.Delete(scanF, true); Directory.Delete(outF, true);
+                    var invRows = peF.GetProperty("producers").EnumerateArray().ToList();
+                    var invVersioned = invRows.Single(r2 => r2.TryGetProperty("producedVersion", out _));
+                    if (invVersioned.GetProperty("producedVersion").GetString() != "1.0.0" || invVersioned.GetProperty("provenance").GetString() != "project-declared")
+                        throw new Exception("the CONCRETE project version must survive a versionless ci claim: " + invVersioned.GetRawText());
+                    JsonElement? invShadow = invRows.FirstOrDefault(r2 => !r2.TryGetProperty("producedVersion", out _));
+                    if (invShadow is null || invShadow.Value.GetProperty("provenance").GetString() != "ci-defined")
+                        throw new Exception("the versionless ci claim must persist ALONGSIDE (the ci source exists — the registry must not read it as absent): " + peF.GetRawText());
+                    }
+                    finally { if (Directory.Exists(scanF)) Directory.Delete(scanF, true); if (Directory.Exists(outF)) Directory.Delete(outF, true); } // PR7 Codex r7: failure paths clean up too
                 }
                 var peE = JsonDocument.Parse(File.ReadAllText(Path.Combine(outE, "input", "producer-evidence.v0.json"))).RootElement;
                 var mixE = peE.GetProperty("producers").EnumerateArray().Single();

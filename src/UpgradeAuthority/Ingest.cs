@@ -557,6 +557,14 @@ public static class Ingest
                 Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {totalText} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
             }
             dedupedScan.Add(winner);
+            // PR7 Codex r7: a VERSIONLESS claim of another provenance class conflicts with nothing —
+            // it persists ALONGSIDE the versioned winner (both recorded), so the ci source's existence
+            // survives into the registry's ciDefined count instead of reading as absent. Conflicting
+            // (versioned) losers are still dropped with their warning; the one-entry-per-package model
+            // holds exactly where versions actually conflict.
+            foreach (var shadow in g.Where(p => p != winner && p.Provenance != winner.Provenance && Ord(p.ProducedVersion) == "")
+                                    .GroupBy(p => p.Provenance).Select(grp => grp.First()))
+                dedupedScan.Add(shadow);
         }
         producedProducers = dedupedScan;
 
