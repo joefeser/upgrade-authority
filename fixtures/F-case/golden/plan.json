@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "NEWTONSOFT.JSON",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "12.0.3",
+    "newVersion": "13.0.3"
+  },
+  "repos": [
+    {
+      "repo": "caseA",
+      "classification": "affected",
+      "reasons": [
+        "direct references to Newtonsoft.Json and Serilog; the delta targets NEWTONSOFT.JSON",
+        "no producer wave possible: producer of NEWTONSOFT.JSON unknown"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "caseB",
+      "classification": "affected",
+      "reasons": [
+        "direct references to Serilog and newtonsoft.json; the delta targets NEWTONSOFT.JSON",
+        "no producer wave possible: producer of NEWTONSOFT.JSON unknown"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "conditional",
+      "condition": "producer of NEWTONSOFT.JSON is unknown — no producer wave is derivable; caseA's wave proceeds only after the producer is identified and NEWTONSOFT.JSON 13.0.3 is available",
+      "prerequisites": [
+        "NEWTONSOFT.JSON 13.0.3 exists on the configured feed and authenticated restore succeeds (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "caseA",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        },
+        {
+          "repo": "caseB",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "NEWTONSOFT.JSON producer",
+        "detail": "no pinned input declares who produces NEWTONSOFT.JSON; zero producers invented (no heuristic, no name inference)"
+      }
+    ]
+  }
+}

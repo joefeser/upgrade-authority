@@ -798,7 +798,7 @@ public static class Ingest
             }
             var caseVariantEntry = existing.Producers.FirstOrDefault(x2 => string.Equals(NormBasic(x2.Repo), k.Item1, StringComparison.OrdinalIgnoreCase) && string.Equals(x2.PackageId, p.PackageId, StringComparison.OrdinalIgnoreCase));
             if (caseVariantEntry is not null)
-            { Console.Error.WriteLine($"warning: scan producer '{Esc(k.Item1)}/{Esc(p.PackageId)}' differs from existing '{Esc(NormBasic(caseVariantEntry.Repo))}/{Esc(caseVariantEntry.PackageId)}' only by spelling — kept BOTH (planner identity is case-sensitive; merge deliberately via one spelling)"); }
+            { Console.Error.WriteLine($"warning: scan producer '{Esc(k.Item1)}/{Esc(p.PackageId)}' differs from existing '{Esc(NormBasic(caseVariantEntry.Repo))}/{Esc(caseVariantEntry.PackageId)}' only by spelling — kept BOTH (PACKAGE identity is case-insensitive in the planner since SPEC-021, so both join the same target; same-repo variant claims are rejected at load; REPO identity stays exact)"); } // SPEC-021 §3 (N1-qualified)
             existing.Producers.Add(p);
             // no byKey insert: scan keys are distinct by pre-dedup — the map stays sidecar-only,
             // so a duplicate hit can only mean a genuine cross-source override

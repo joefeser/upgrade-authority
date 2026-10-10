@@ -10,12 +10,16 @@ public static class Apply
 {
     public const int RefusalExit = 6;
 
+    // Resolved-identity comparison follows FILESYSTEM semantics (PR6 Codex r13): a case-insensitive
+    // Windows checkout makes src/App.csproj and SRC/APP.CSPROJ one file — the alias fold must agree.
+    static readonly StringComparer FsIdentity = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
     // ---- manifest model (apply.v1) ----
     public sealed class ApplyManifest { public string SchemaVersion = "apply.v1"; public ApplyDelta Delta = new(); public List<ApplyWave> Waves = new(); }
     public sealed class ApplyDelta { public string PackageName = "", Ecosystem = "", ChangeType = "", OldVersion = "", NewVersion = ""; }
     public sealed class ApplyWave { public int Index; public string Status = ""; public List<string> Prerequisites = new(); public string? Condition; public string? BlockedOn; public List<ApplyUnit> Units = new(); }
     public sealed class ApplyUnit { public string Repo = ""; public string Action = ""; public List<ApplyEdit>? Edits; public string? Note; }
-    public sealed class ApplyEdit { public string Kind = "", Path = "", Attribute = "", OldVersion = "", NewVersion = ""; public int Line; public int? EndLine; public string EvidenceKind = ""; public bool Shared; }
+    public sealed class ApplyEdit { public string Kind = "", Path = "", Attribute = "", OldVersion = "", NewVersion = ""; public int Line; public int? EndLine; public string EvidenceKind = ""; public bool Shared; public string PackageId = ""; } // PackageId: the SITE's evidenced spelling (SPEC-021 §2(d)) — emitted only when it differs from delta.packageName
 
     public static int Run(string fixtureDir, string? repoDir, string? outDir)
     {
@@ -54,7 +58,7 @@ public static class Apply
 
             if (repoDir is not null)
             {
-                var rcPatches = WriteVerifiedPatches(manifest, repoDir, outDir, manifest.Delta.PackageName);
+                var rcPatches = WriteVerifiedPatches(manifest, repoDir, outDir);
                 if (rcPatches != 0) return rcPatches;
             }
 
@@ -101,7 +105,8 @@ public static class Apply
 
                 var edits = new List<ApplyEdit>();
                 string? highestSatisfied = null;
-                foreach (var f in engine.ApplyFacts(repo).Where(f => f.PackageId == target))
+                var unresolved = 0; // PR6 Codex r4: pin-bearing sites that could not be evaluated — N4 must not hide them
+                foreach (var f in engine.ApplyFacts(repo).Where(f => Engine.PkgEq(f.PackageId, target))) // SPEC-021 §2(c)
                 {
                     var (kind, attr, shared) = f.ConstraintSource switch
                     {
@@ -110,20 +115,21 @@ public static class Apply
                         _ => f.Format == "packages.config" ? ("E4", "version", false) : ("E1", "Version", false),
                     };
                     var old = f.DeclaredConstraint;
-                    if (old.Length == 0 || old.StartsWith("redacted:")) continue; // no exact evidenced pin at this site
-                    if (f.Line is null) continue; // unlocated: no evidenced line, no edit site — never invent a location (PR14 Q8/C3)
+                    if (old.Length == 0) continue; // no local pin at this site (CPM reference inheriting the central version — expected shape, not unresolved)
+                    if (old.StartsWith("redacted:")) { unresolved++; continue; } // a real pin ua cannot read — N3 territory, never hidden by N4
+                    if (f.Line is null) { unresolved++; continue; } // unlocated: no evidenced line, no edit site — never invent a location (PR14 Q8/C3)
                     var cmp = CompareCore(old, plan.Delta.NewVersion);
-                    if (cmp is null) continue; // prerelease/unparseable — N3 territory below
+                    if (cmp is null) { unresolved++; continue; } // prerelease/floating — a range site could still admit the new version; N3 names it
                     if (cmp >= 0) { if (highestSatisfied is null || CompareCore(old, highestSatisfied) > 0) highestSatisfied = old; continue; } // already-satisfied: never a downgrade
-                    edits.Add(new ApplyEdit { Kind = kind, Path = f.Path, Attribute = attr, OldVersion = old, NewVersion = plan.Delta.NewVersion, Line = f.Line ?? 0, EndLine = f.EndLine, EvidenceKind = f.ConstraintSource == "Directory.Packages.props" ? "central-package-version.v0" : "package-evidence.v0", Shared = shared });
+                    edits.Add(new ApplyEdit { Kind = kind, Path = f.Path, Attribute = attr, OldVersion = old, NewVersion = plan.Delta.NewVersion, Line = f.Line ?? 0, EndLine = f.EndLine, EvidenceKind = f.ConstraintSource == "Directory.Packages.props" ? "central-package-version.v0" : "package-evidence.v0", Shared = shared, PackageId = f.PackageId }); // SPEC-021 §2(d): the file's own spelling
                 }
                 edits = edits.OrderBy(e => e.Path, StringComparer.Ordinal).ThenBy(e => e.Line).ToList();
                 // dedup identical (path, line, attribute, old) sites from overlapping facts
-                edits = edits.GroupBy(e => (e.Path, e.Line, e.Attribute, e.OldVersion)).Select(g => g.First()).ToList();
+                edits = edits.GroupBy(e => (e.Path, e.Line, e.Attribute, e.OldVersion, e.PackageId)).Select(g => g.First()).ToList(); // SPEC-021 R2-3: the evidenced spelling joins the key — a variant element sharing the line is never silently dropped
 
                 if (edits.Count > 0) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "edit", Edits = edits });
-                else if (highestSatisfied is not null) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N4(repo, target, highestSatisfied, plan.Delta.NewVersion) });
-                else if (engine.ApplyFacts(repo).Any(f => f.PackageId == target)) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N3(repo, target, ConstraintKind(engine, repo, target)) });
+                else if (highestSatisfied is not null && unresolved == 0) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N4(repo, target, highestSatisfied, plan.Delta.NewVersion) }); // satisfied AND every pin-bearing site evaluated — otherwise the constraint note is the honest one
+                else if (engine.ApplyFacts(repo).Any(f => Engine.PkgEq(f.PackageId, target))) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N3(repo, target, ConstraintKind(engine, repo, target)) });
                 else aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N1(repo, target) });
             }
             m.Waves.Add(aw);
@@ -133,10 +139,15 @@ public static class Apply
 
     static string ConstraintKind(Engine engine, string repo, string target)
     {
-        var all = engine.ApplyFacts(repo).Where(f => f.PackageId == target).Select(f => f.DeclaredConstraint).ToList();
-        if (all.All(c => c.Length == 0)) return "not-evidenced";
-        if (all.Any(c => c.StartsWith("redacted:"))) return "redacted";
-        if (all.Any(c => c.Length == 0)) return "not-evidenced"; // mixed: at least one unconstrained site
+        var all = engine.ApplyFacts(repo).Where(f => Engine.PkgEq(f.PackageId, target)).ToList();
+        var constraints = all.Select(f => f.DeclaredConstraint).ToList();
+        if (constraints.All(c => c.Length == 0)) return "not-evidenced";
+        if (constraints.Any(c => c.StartsWith("redacted:"))) return "redacted";
+        // PR6 Codex r5: an EXACT pin without line evidence is an evidence gap, not a constraint problem —
+        // diagnosing it as ranged-or-prerelease would point the operator at rewriting a valid constraint
+        if (all.Any(f => f.DeclaredConstraint.Length > 0 && f.Line is null && IsExactPin(f.DeclaredConstraint)))
+            return "an exact pin with no evidenced location";
+        if (constraints.Any(c => c.Length == 0)) return "not-evidenced"; // mixed: at least one unconstrained site
         return "ranged-or-prerelease";
     }
 
@@ -175,26 +186,31 @@ public static class Apply
     // SPEC-010: the verification + per-wave patch core, shared by `ua apply --repo` and `ua push`
     // (push runs it against a temporary WORKTREE of the base, so verification always targets the
     // tree being committed). Writes wave-N.patch files into patchDir; refuses (exit 6) on any site.
-    internal static int WriteVerifiedPatches(ApplyManifest manifest, string repoDir, string patchDir, string packageId)
+    internal static int WriteVerifiedPatches(ApplyManifest manifest, string repoDir, string patchDir)
     {
         foreach (var w in manifest.Waves)
         {
             var anyUnit = w.Units.Count > 0;
-            var edited = new List<(string Path, List<(int Line, string Old, string New)> Changes)>();
+            var edited = new List<(string Path, string Resolved, string Text, List<(int Line, string Old, string New, int Col)> Changes)>();
+        var verifiedTexts = new Dictionary<string, (string Resolved, string Text)>(FsIdentity); // per-RESOLVED-file snapshot (PR6 r11-r13)
             foreach (var u in w.Units)
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
                 {
-                    var (ok, err, change) = VerifySite(repoDir, e, packageId);
+                    var (ok, err, change) = VerifySite(repoDir, e, verifiedTexts);
                     if (!ok)
                     {
                         Console.Error.WriteLine($"error: {err}");
                         return RefusalExit;
                     }
                     if (change is null) continue;
-                    var file = edited.FirstOrDefault(x => x.Path == e.Path);
-                    if (file.Path is null) edited.Add((e.Path, new List<(int, string, string)> { change!.Value }));
-                    else file.Changes.Add(change!.Value);
+                    // PR6 Baz r12: aggregate by the RESOLVED identity — two raw aliases of one file (a
+                    // symlink) are ONE file: one snapshot, one patch section (duplicate sections would
+                    // fail git apply). The header keeps the ordinal-first raw path (edits arrive sorted).
+                    var file = edited.FirstOrDefault(x => FsIdentity.Equals(x.Resolved, change!.Value.Resolved));
+                    if (file.Resolved is null) edited.Add((e.Path, change!.Value.Resolved, change!.Value.Text, new List<(int, string, string, int)> { (change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col) }));
+                    else if (!file.Changes.Contains((change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col)))
+                        file.Changes.Add((change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col)); // PR6 Baz r13: the SAME occurrence evidenced via two aliases replaces ONCE
                 }
             }
             if (edited.Count == 0)
@@ -203,18 +219,22 @@ public static class Apply
                 continue;
             }
             var sb = new StringBuilder();
-            foreach (var (path, changes) in edited.OrderBy(x => x.Path, StringComparer.Ordinal))
+            foreach (var (path, resolvedPath, verifiedText, changes) in edited.OrderBy(x => x.Path, StringComparer.Ordinal))
             {
-                var full = Path.Combine(repoDir, path);
-                var text = File.ReadAllText(full);
+                _ = resolvedPath; // retained for diagnostics; the DIFF reads the VERIFIED bytes below
+                var text = verifiedText; // PR6 Codex r10: the exact bytes VerifySite read — the filesystem is never consulted a second time
                 var crlf = text.Contains("\r\n");
                 var hadFinalNewline = text.EndsWith("\n");
                 var raw = text.Split('\n');
                 var before = raw.Select(l => l.TrimEnd('\r')).ToList();
                 if (before.Count > 0 && before[^1] == "" && hadFinalNewline) before.RemoveAt(before.Count - 1); // trailing split artifact
                 var after = before.ToList();
-                foreach (var (line, old, @new) in changes.OrderByDescending(c => c.Line)) // apply bottom-up so indices hold
-                    after[line - 1] = after[line - 1].Replace(old, @new);
+                // PR6 Baz r1: replace EXACTLY the verified occurrence (line + column), bottom-up and
+                // right-to-left within a line — a same-line neighbor carrying the identical version
+                // attribute is never rewritten by a site that did not verify it.
+                foreach (var g in changes.GroupBy(c => c.Line).OrderByDescending(g => g.Key))
+                    foreach (var (line, old, @new, col) in g.OrderByDescending(c => c.Col))
+                        after[line - 1] = after[line - 1].Remove(col, old.Length).Insert(col, @new);
                 var nl = crlf ? "\r\n" : "\n";
                 sb.Append(UnifiedDiff(path, before.ToArray(), after.ToArray(), nl, hadFinalNewline));
             }
@@ -226,44 +246,74 @@ public static class Apply
 
     // ---- site verification (SPEC-009 §5): exactly one full-selector match in the window ----
 
-    static (bool Ok, string Error, (int Line, string Old, string New)? Change) VerifySite(string repoDir, ApplyEdit e, string packageId)
+    // Resolve EVERY path component through its symlinks (chained links included), top-down: an
+    // ancestor symlinked directory escapes FileInfo.LinkTarget checks on the final file (PR6 Codex r8).
+    static string ResolveSymlinks(string absolute)
     {
-        var full = Path.Combine(repoDir, e.Path);
-        if (!File.Exists(full)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
-        var lines = File.ReadAllLines(full);
+        var root = Path.GetPathRoot(absolute) ?? string.Empty;
+        var cur = root.Length > 0 ? root : absolute[..absolute.IndexOf(Path.DirectorySeparatorChar)];
+        foreach (var seg in absolute[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var next = Path.Combine(cur, seg);
+            string? target = null;
+            if (File.Exists(next)) target = new FileInfo(next).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            else if (Directory.Exists(next)) target = new DirectoryInfo(next).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            cur = target ?? next;
+        }
+        return cur;
+    }
+
+    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved, string Text)? Change) VerifySite(string repoDir, ApplyEdit e, Dictionary<string, (string Resolved, string Text)> verifiedByResolved)
+    {
+        // PR6 Baz r7/Codex r8: the edit's Path is untrusted evidence — it must resolve INSIDE the
+        // canonical checkout with EVERY symlink component (and chained links) resolved (an ancestor
+        // symlinked directory escapes FileInfo.LinkTarget checks), and carry no control characters
+        // (a newline forges patch headers; a tab corrupts unified-diff filename delimiters).
+        if (e.Path.Any(char.IsControl)) // C0, DEL, and the Unicode C1 range alike (PR6 Codex r9)
+            return (false, "stale evidence: edit path contains control characters — refused", null);
+        var checkoutRoot = ResolveSymlinks(Path.GetFullPath(repoDir));
+        var full = Path.GetFullPath(Path.Combine(Path.GetFullPath(repoDir), e.Path));
+        var resolved = ResolveSymlinks(full);
+        if (!resolved.StartsWith(checkoutRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) && resolved != checkoutRoot)
+            return (false, $"stale evidence: {e.Path} resolves outside the checkout — refused", null);
+        if (!File.Exists(resolved)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
+        var text = verifiedByResolved.TryGetValue(resolved, out var snap) ? snap.Text : File.ReadAllText(resolved); // ONE read per RESOLVED file (PR6 Codex r10/r11 + Baz r12): raw-path aliases share the snapshot
+        var lines = text.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         // window: ±2 around the COMPLETE evidence span (PR14 Q1/C2) — a multiline element's value
         // can sit several lines below its opening tag.
         var start = Math.Max(1, e.Line - 2);
         var end = Math.Min(lines.Length, (e.EndLine ?? e.Line) + 2);
         var patterns = AttrPatterns(e.Attribute, e.OldVersion, e.NewVersion);
-        var matches = new List<(int Line, string Old, string New)>();
+        var matches = new List<(int Line, string Old, string New, int Col, string Resolved, string Text)>();
+        if (!verifiedByResolved.ContainsKey(resolved) && File.Exists(resolved)) verifiedByResolved[resolved] = (resolved, text); // cache AFTER the read is known good; refusal paths never pollute it
         for (var i = start; i <= end; i++)
         {
             var line = lines[i - 1];
             // PR14 Q3/C-P1: the line must NAME THE TARGET PACKAGE. R2-1 tightens further: the version
             // match must live in the SAME XML ELEMENT as the package id — minified files put several
             // elements on one line, and a neighbor's attribute must never satisfy this site.
-            foreach (var (spanStart, spanEnd) in ElementSpansNaming(line, e, packageId))
+            foreach (var (spanStart, spanEnd) in ElementSpansNaming(line, e)) // SPEC-021 §2(d): the site's OWN evidenced spelling; the file matcher itself stays Ordinal
             {
                 var span = line[spanStart..(spanEnd + 1)];
                 foreach (var (oldText, newText) in patterns)
                     for (var idx = span.IndexOf(oldText, StringComparison.Ordinal); idx >= 0; idx = span.IndexOf(oldText, idx + 1, StringComparison.Ordinal))
-                        matches.Add((i, oldText, newText));
+                        matches.Add((i, oldText, newText, spanStart + idx, resolved, text)); // ABSOLUTE column (PR6 Baz r1) + the resolved path AND the bytes actually verified (PR6 Codex r9/r10)
             }
         }
         if (matches.Count == 0)
-            return (false, $"stale evidence: {e.Path} line ~{e.Line}: no occurrence of {e.Attribute}=\"{e.OldVersion}\" naming {packageId} within the evidence window (expected {e.OldVersion})", null);
+            return (false, $"stale evidence: {e.Path} line ~{e.Line}: no occurrence of {e.Attribute}=\"{e.OldVersion}\" naming {e.PackageId} within the evidence window (expected {e.OldVersion})", null);
         if (matches.Count > 1)
-            return (false, $"ambiguous site: {e.Path} line ~{e.Line}: {matches.Count} identical occurrences of {packageId} {e.Attribute}=\"{e.OldVersion}\" — refusing to guess", null);
+            return (false, $"ambiguous site: {e.Path} line ~{e.Line}: {matches.Count} identical occurrences of {e.PackageId} {e.Attribute}=\"{e.OldVersion}\" — refusing to guess", null);
         return (true, "", matches[0]);
     }
 
     // Fragments of the line, one per OCCURRENCE of an element naming the target package: from the '<'
     // before the naming attribute to the next '>' after it. Ranges — never deduped by content: two
     // identical duplicate elements are two occurrences (ambiguity), not one.
-    static List<(int Start, int End)> ElementSpansNaming(string line, ApplyEdit e, string packageId)
+    static List<(int Start, int End)> ElementSpansNaming(string line, ApplyEdit e)
     {
         var spans = new List<(int Start, int End)>();
+        var packageId = e.PackageId; // SPEC-021 §2(d): the SITE's evidenced spelling — matched Ordinal (never folded)
         var namers = e.Kind == "E4"
             ? new[] { $"id=\"{packageId}\"", $"id='{packageId}'" }
             : new[] { $"Include=\"{packageId}\"", $"Include='{packageId}'", $"Update=\"{packageId}\"", $"Update='{packageId}'" };
@@ -389,6 +439,9 @@ public static class Apply
                         Str(sb, 7, "newVersion"); sb.Append(": "); Str(sb, ed.NewVersion); sb.Append(",\n");
                         Str(sb, 7, "line"); sb.Append(": ").Append(ed.Line); sb.Append(",\n");
                         Str(sb, 7, "evidenceKind"); sb.Append(": "); Str(sb, ed.EvidenceKind);
+                        // SPEC-021 §2 (R1-2): the site's evidenced spelling rides the manifest ONLY when it
+                        // differs from delta.packageName — zero churn on the variant-free corpus, replayable where it matters
+                        if (!string.Equals(ed.PackageId, m.Delta.PackageName, StringComparison.Ordinal)) { sb.Append(",\n"); Str(sb, 7, "packageId"); sb.Append(": "); Str(sb, ed.PackageId); }
                         if (ed.Shared) { sb.Append(",\n"); Str(sb, 7, "shared"); sb.Append(": true"); }
                         sb.Append("\n            }").Append(e < unit.Edits.Count - 1 ? "," : "").Append("\n");
                     }

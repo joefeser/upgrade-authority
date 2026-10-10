@@ -3,7 +3,8 @@
 **Status:** draft — round 1 review (brief-003)
 **Author:** ZCode (coordinator)
 **Date:** 2026-10-02
-**Depends on:** SPEC-001 (inputs, graph model, evidence rules) · fixture corpus (merged, PR #2 — normative)
+**Depends on:**
+> **Amended by SPEC-021 (2026-10-10):** package identity for producer claims, external declarations, and contradiction detection is OrdinalIgnoreCase (NuGet ids); ONE sidecar claiming the same (repo, packageId) in two spellings is a typed load error. Repo identity unchanged. SPEC-001 (inputs, graph model, evidence rules) · fixture corpus (merged, PR #2 — normative)
 
 ## 1. Purpose
 
