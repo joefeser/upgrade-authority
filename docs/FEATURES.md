@@ -1,6 +1,6 @@
 # Features — the complete tour
 
-Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 132-case selftest — including real tracemap scan data for the tricky cases.
+Organized by the pipeline. Every behavior listed here is specified (see `docs/specs/`), implemented, and pinned by a deterministic golden corpus plus a 139-case selftest — including real tracemap scan data for the tricky cases.
 
 ## 0. Estate wrapper — `ua scan-estate`
 
@@ -49,6 +49,15 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 - **Classification parity** — behind / current / ahead via apply's own comparer (drift can never disagree with the upgrade-only policy); prerelease/floating sides are honest `unclassified` rows with D1–D3 reasons; packages missing from the feed are `unknown-feed` — visible, never guessed.
 - **Delta candidates** — `--emit-deltas <dir>` writes one single-change `package-delta.v1` per distinct behind version, planner-compatible as-is; picking which to run (deepest-layer-first) stays a human/campaign decision. Canonical `drift.v1` output with `--out` (SPEC-017 convention).
 
+## 2c. Registry — `ua registry` (the producer boundary)
+
+**What it does:** answers "is this package ours or the internet's" from evidence, not a hand-maintained list.
+
+- **Provenance-first producers** — every producer entry carries provenance recorded at fusion time: `project-declared` (tracemap `PackageProduced` facts), `operator-declared` (the sidecar — now the override layer, not the bootstrap; wins on conflict with the weaker source named in the warning), `ci-defined` (reserved — the tracemap CI-workflow slice; its consuming contract is pinned, and the report says the source is "not yet available" until it lands). Entries predating the spec classify via their in-band `tracemap PackageProduced (…)` evidence-note marker.
+- **The boundary, visibly** — `internalPackages` (produced, any provenance) / `externalPackages` (declared external and not produced — unconsumed declarations echo verbatim) / `unknownPackages` (consumed, produced nowhere, declared nowhere — the honest residue, never defaulted to external). `anomalies.producedAndDeclaredExternal` surfaces packages that are both — never silently resolved.
+- **Identity & spelling** — case-insensitive NuGet identity with drift's spelling precedence (lockfile > deps.json > declared-pin, ordinal-first within each); null-version lockfile rows still count as consumption (the packageId is the evidence).
+- **A report, not a gate** — exit 0 for any successfully loaded input; unknowns and anomalies are content. Canonical `registry.v1` output with `--out` (SPEC-017 convention).
+
 ## 3. Planning — `ua plan`
 
 **What it does:** builds the impact plan — `plan.v1`, byte-deterministic.
@@ -92,5 +101,5 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 ## 7. Engineering guarantees
 
 - **Zero dependencies** — a .NET 10 console tool with no NuGet packages; runs offline on macOS, Linux, and Windows (verified on an isolated, network-disabled Windows machine).
-- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-017`); the fixture corpus (24 goldens) pins behaviors byte-exactly, including real scan data; the 132-case selftest covers goldens, input-permutation invariance, and every typed refusal.
+- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-020`); the fixture corpus (28 goldens) pins behaviors byte-exactly, including real scan data; the 139-case selftest covers goldens, input-permutation invariance, and every typed refusal.
 - **Fidelity discipline** — golden changes require recorded, reviewed reasons (`docs/reviews/*/GOLDEN-CHANGES.md`); nothing is silently regenerated.

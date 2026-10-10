@@ -44,6 +44,13 @@ public sealed class Engine
     internal IReadOnlyDictionary<string, List<Fact>> FactsView => _facts;
     internal IReadOnlyDictionary<string, List<LockRow>> LockRowsView => _lockRows;
 
+    // SPEC-020: the registry reads the same fused evidence the planner sees (post-fusion producer
+    // sidecar + declared-external list) — read-only views, no planning, repo identity as the planner
+    // resolves it (mirrors included).
+    internal IReadOnlyList<ProducerEntry> ProducersView => _pe.Producers;
+    internal IReadOnlyList<ExternalPackage> ExternalView => _pe.ExternalPackages;
+    internal string RepoIdentity(string repo) => Norm(repo);
+
     // SPEC-017 §5: the plan echoes the config — deduped, ordinal (permutation-stable); the config's
     // own order never reaches the plan. Null when there is no scope input (zero churn for existing fixtures).
     PlanScope? BuildScope() => _scope is null ? null : new PlanScope

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "registry.v1",
+  "producers": [
+    {
+      "repo": "corelib",
+      "packageId": "Contoso.Core",
+      "producedVersion": "1.0.0",
+      "provenance": "project-declared"
+    }
+  ],
+  "boundary": {
+    "internalPackages": [
+      "Contoso.Core"
+    ],
+    "externalPackages": [
+      "Newtonsoft.Json"
+    ],
+    "unknownPackages": [
+      "Contoso.Payments",
+      "Serilog"
+    ],
+    "anomalies": {
+      "producedAndDeclaredExternal": []
+    }
+  },
+  "provenanceSummary": {
+    "projectDeclared": 1,
+    "operatorDeclared": 0,
+    "ciDefined": 0,
+    "note": "ci-defined source not yet available — project-declared + operator only"
+  }
+}

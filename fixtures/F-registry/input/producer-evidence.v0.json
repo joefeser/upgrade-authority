@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "externalPackages": [
+    {
+      "packageId": "Newtonsoft.Json"
+    }
+  ],
+  "producers": [
+    {
+      "repo": "corelib",
+      "packageId": "Contoso.Core",
+      "producedVersion": "1.0.0",
+      "evidenceNote": "tracemap PackageProduced (src/Core.csproj)",
+      "provenance": "project-declared"
+    }
+  ]
+}

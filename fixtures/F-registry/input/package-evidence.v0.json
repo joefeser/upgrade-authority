@@ -1,0 +1,160 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "tracemap-ingest",
+  "facts": [
+    {
+      "repo": "corelib",
+      "packageId": "Newtonsoft.Json",
+      "declaredConstraint": "13.0.1",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 7,
+      "projects": [
+        "src/Core.csproj"
+      ],
+      "commitSha": "6f0ad72f2c27a93081af9ea5b7a1483354d8565c",
+      "path": "src/Core.csproj"
+    },
+    {
+      "repo": "svc",
+      "packageId": "Contoso.Core",
+      "declaredConstraint": "1.0.0",
+      "format": "cpm",
+      "constraintSource": "Directory.Packages.props",
+      "line": 2,
+      "projects": [
+        "src/Api/Api.csproj",
+        "src/Worker/Worker.csproj"
+      ],
+      "commitSha": "34ef184b551d2d532568b435de895a4d6e0b68b1",
+      "path": "Directory.Packages.props"
+    },
+    {
+      "repo": "svc",
+      "packageId": "Contoso.Core",
+      "declaredConstraint": "",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 2,
+      "projects": [
+        "src/Api/Api.csproj"
+      ],
+      "commitSha": "34ef184b551d2d532568b435de895a4d6e0b68b1",
+      "path": "src/Api/Api.csproj"
+    },
+    {
+      "repo": "svc",
+      "packageId": "Contoso.Core",
+      "declaredConstraint": "0.9.0",
+      "format": "packagereference",
+      "constraintSource": "VersionOverride",
+      "line": 2,
+      "projects": [
+        "src/Worker/Worker.csproj"
+      ],
+      "commitSha": "34ef184b551d2d532568b435de895a4d6e0b68b1",
+      "path": "src/Worker/Worker.csproj"
+    },
+    {
+      "repo": "svc",
+      "packageId": "Serilog",
+      "declaredConstraint": "3.1.1",
+      "format": "cpm",
+      "constraintSource": "Directory.Packages.props",
+      "line": 2,
+      "projects": [
+        "src/Api/Api.csproj"
+      ],
+      "commitSha": "34ef184b551d2d532568b435de895a4d6e0b68b1",
+      "path": "Directory.Packages.props"
+    },
+    {
+      "repo": "svc",
+      "packageId": "Serilog",
+      "declaredConstraint": "",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 2,
+      "projects": [
+        "src/Api/Api.csproj"
+      ],
+      "commitSha": "34ef184b551d2d532568b435de895a4d6e0b68b1",
+      "path": "src/Api/Api.csproj"
+    },
+    {
+      "repo": "billing",
+      "packageId": "Contoso.Payments",
+      "declaredConstraint": "1.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 7,
+      "projects": [
+        "src/Api/Api.csproj"
+      ],
+      "commitSha": "5e1358d4dd17770f2d96b6faad675cb02ffc487c",
+      "path": "src/Api/Api.csproj"
+    },
+    {
+      "repo": "shipping",
+      "packageId": "Contoso.Payments",
+      "declaredConstraint": "2.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "line": 7,
+      "projects": [
+        "src/Worker/Worker.csproj"
+      ],
+      "commitSha": "cc05747ca4cdc2f2cdd38699cf6e0585d485c516",
+      "path": "src/Worker/Worker.csproj"
+    }
+  ],
+  "scanCoverage": [
+    {
+      "repo": "billing",
+      "status": "complete",
+      "gaps": [],
+      "notes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    },
+    {
+      "repo": "corelib",
+      "status": "complete",
+      "gaps": [],
+      "notes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    },
+    {
+      "repo": "shipping",
+      "status": "complete",
+      "gaps": [],
+      "notes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    },
+    {
+      "repo": "svc",
+      "status": "gaps",
+      "gaps": [
+        "NuGet lockfile analysis reported \u0060packages-lock-group-unsupported\u0060.",
+        "packages.lock.json target-framework group is unsupported; its resolved-version evidence is unavailable.",
+        "constraint not evidenced: Contoso.Core",
+        "constraint not evidenced: Serilog"
+      ],
+      "notes": [
+        "Compiler diagnostic category: CompilerDiagnostic. Native output was redacted.",
+        "Workspace diagnostic category: SdkResolutionFailed. Native output was redacted.",
+        "Workspace diagnostic category: UncategorizedWorkspaceFailure. Native output was redacted.",
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    }
+  ]
+}
