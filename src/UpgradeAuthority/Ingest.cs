@@ -468,7 +468,21 @@ public static class Ingest
             // SPEC-020 §2b consuming contract (tracemap #851): the fact's provenance property is
             // sourceKind — "ci-workflow" ⇒ ci-defined (workflow pack definitions; version may be
             // absent = unresolvable template, honest), anything else ⇒ project-declared.
-            var ciDefined = Prop(f, "sourceKind") == "ci-workflow";
+            // (PR7 Baz r2) shape validation: a present-but-non-string sourceKind, or a ci-workflow claim
+            // without its contract companions (manifestKind=github-workflow AND a workflowPath — the
+            // extractor always emits both), is a malformed/fabricated CI claim — a typed skip, never a
+            // silent reclassification that could outrank (or hide behind) genuine project evidence.
+            string? sourceKind = null;
+            var malformedCi = false;
+            if (f.Properties is not null && f.Properties.TryGetValue("sourceKind", out var skEl))
+            {
+                if (skEl.ValueKind != JsonValueKind.String) { malformedCi = true; }
+                else sourceKind = skEl.GetString();
+            }
+            var ciDefined = sourceKind == "ci-workflow";
+            if (ciDefined && (Prop(f, "manifestKind") != "github-workflow" || Prop(f, "workflowPath") is null)) malformedCi = true;
+            if (malformedCi)
+            { ingestGaps.Add($"skipped PackageProduced fact {f.FactId}: malformed ci-workflow claim (sourceKind must be a string; ci-workflow requires manifestKind 'github-workflow' and a workflowPath)"); repoIngestGaps.Add((key, "skipped PackageProduced fact: malformed ci-workflow claim")); continue; }
             var srcName = ciDefined
                 ? (Prop(f, "workflowPath") ?? Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "") // the workflow IS the source; projectPath may be absent by the reviewed disposition
                 : (Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "");
@@ -506,14 +520,26 @@ public static class Ingest
             // diagnostic — precedence resolving the classes must not silence a class contradicting itself
             foreach (var byProv in g.GroupBy(p => p.Provenance ?? ""))
             {
-                var claims = byProv.Select(p => p.ProducedVersion).Distinct().ToList();
-                if (claims.Count <= 1) continue;
-                // bounded rendering: a pathological scan cannot flood stderr — first 5 claims + omitted count
-                var shown = claims.OrderBy(v => Ord(v), StringComparer.Ordinal)
-                    .Take(5).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v)}'").ToList();
-                if (claims.Count > shown.Count) shown.Add($"(+{claims.Count - shown.Count} more)");
+                // bounded rendering (PR7 Baz r2): one pass, a ≤5 ordinal-ordered window and a remainder
+                // count — no unbounded distinct-set materialization, no full sort of a hostile claim list
+                var top = new List<string?>(); // ordinal-sorted, capacity 5
+                var total = 0;
+                foreach (var v in byProv.Select(p => p.ProducedVersion).Distinct())
+                {
+                    total++;
+                    if (top.Count < 5 || string.CompareOrdinal(Ord(v), Ord(top[^1])) < 0)
+                    {
+                        var idx = top.FindIndex(x => string.CompareOrdinal(Ord(v), Ord(x)) < 0);
+                        if (idx < 0) idx = top.Count;
+                        top.Insert(idx, v);
+                        if (top.Count > 5) top.RemoveAt(5);
+                    }
+                }
+                if (total <= 1) continue;
+                var shown = top.Take(Math.Min(5, total)).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v!)}'").ToList();
+                if (total > shown.Count) shown.Add($"(+{total - shown.Count} more)");
                 var classWinner = ordered.First(p => p.Provenance == byProv.Key); // the class's own ordinal-ordered pick
-                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {claims.Count} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {total} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
             }
             dedupedScan.Add(winner);
         }

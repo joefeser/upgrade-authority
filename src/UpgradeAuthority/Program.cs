@@ -3021,6 +3021,16 @@ public static class Program
             var warnC = swC.ToString();
             if (!warnC.Contains("producer precedence for both/Contoso.Core") || !warnC.Contains("ci-defined '9.9.9' kept over project-declared '1.0.0'"))
                 throw new Exception("cross-source precedence must note the loser with both provenances: " + warnC);
+            // the GENERATED ingest artifacts must equal the fixture's inputs (PR7 Baz r2: converter
+            // regressions must not pass because the warnings happened to match) — then the goldens
+            foreach (var gen in Directory.GetFiles(Path.Combine(fcC, "input")))
+            {
+                var produced = Path.Combine(outC, "input", Path.GetFileName(gen));
+                if (!File.Exists(produced) || File.ReadAllText(produced) != File.ReadAllText(gen))
+                    throw new Exception($"generated ingest artifact differs from the F-ci fixture input: {Path.GetFileName(gen)}");
+            }
+            if (Directory.GetFiles(Path.Combine(outC, "input")).Length != Directory.GetFiles(Path.Combine(fcC, "input")).Length)
+                throw new Exception("generated input set differs from the fixture's");
             // fixture goldens: plan/report/registry byte-exact + determinism + the pinned assertions
             if (Canonical.Write(LoadEngine(fcC).BuildPlan()) != File.ReadAllText(Path.Combine(fcC, "golden", "plan.json"))) throw new Exception("F-ci plan differs from golden");
             if (Report.Render(LoadEngine(fcC).BuildPlan()) != File.ReadAllText(Path.Combine(fcC, "golden", "report.md"))) throw new Exception("F-ci report differs from golden");
