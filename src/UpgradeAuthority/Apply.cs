@@ -101,6 +101,7 @@ public static class Apply
 
                 var edits = new List<ApplyEdit>();
                 string? highestSatisfied = null;
+                var unresolved = 0; // PR6 Codex r4: pin-bearing sites that could not be evaluated — N4 must not hide them
                 foreach (var f in engine.ApplyFacts(repo).Where(f => Engine.PkgEq(f.PackageId, target))) // SPEC-021 §2(c)
                 {
                     var (kind, attr, shared) = f.ConstraintSource switch
@@ -110,10 +111,11 @@ public static class Apply
                         _ => f.Format == "packages.config" ? ("E4", "version", false) : ("E1", "Version", false),
                     };
                     var old = f.DeclaredConstraint;
-                    if (old.Length == 0 || old.StartsWith("redacted:")) continue; // no exact evidenced pin at this site
-                    if (f.Line is null) continue; // unlocated: no evidenced line, no edit site — never invent a location (PR14 Q8/C3)
+                    if (old.Length == 0) continue; // no local pin at this site (CPM reference inheriting the central version — expected shape, not unresolved)
+                    if (old.StartsWith("redacted:")) { unresolved++; continue; } // a real pin ua cannot read — N3 territory, never hidden by N4
+                    if (f.Line is null) { unresolved++; continue; } // unlocated: no evidenced line, no edit site — never invent a location (PR14 Q8/C3)
                     var cmp = CompareCore(old, plan.Delta.NewVersion);
-                    if (cmp is null) continue; // prerelease/unparseable — N3 territory below
+                    if (cmp is null) { unresolved++; continue; } // prerelease/floating — a range site could still admit the new version; N3 names it
                     if (cmp >= 0) { if (highestSatisfied is null || CompareCore(old, highestSatisfied) > 0) highestSatisfied = old; continue; } // already-satisfied: never a downgrade
                     edits.Add(new ApplyEdit { Kind = kind, Path = f.Path, Attribute = attr, OldVersion = old, NewVersion = plan.Delta.NewVersion, Line = f.Line ?? 0, EndLine = f.EndLine, EvidenceKind = f.ConstraintSource == "Directory.Packages.props" ? "central-package-version.v0" : "package-evidence.v0", Shared = shared, PackageId = f.PackageId }); // SPEC-021 §2(d): the file's own spelling
                 }
@@ -122,7 +124,7 @@ public static class Apply
                 edits = edits.GroupBy(e => (e.Path, e.Line, e.Attribute, e.OldVersion, e.PackageId)).Select(g => g.First()).ToList(); // SPEC-021 R2-3: the evidenced spelling joins the key — a variant element sharing the line is never silently dropped
 
                 if (edits.Count > 0) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "edit", Edits = edits });
-                else if (highestSatisfied is not null) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N4(repo, target, highestSatisfied, plan.Delta.NewVersion) });
+                else if (highestSatisfied is not null && unresolved == 0) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N4(repo, target, highestSatisfied, plan.Delta.NewVersion) }); // satisfied AND every pin-bearing site evaluated — otherwise the constraint note is the honest one
                 else if (engine.ApplyFacts(repo).Any(f => Engine.PkgEq(f.PackageId, target))) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N3(repo, target, ConstraintKind(engine, repo, target)) });
                 else aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N1(repo, target) });
             }

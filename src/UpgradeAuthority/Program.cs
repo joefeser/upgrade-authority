@@ -2888,6 +2888,31 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-static-mirrors: {ex.Message}"); }
 
+        // PR6 Codex round 4: a satisfied pin must not hide an unresolved variant site — N4 only when
+        // EVERY pin-bearing site was evaluated; a redacted/range/unlocated sibling forces the N3 note
+        try
+        {
+            var fcU = Path.Combine(fixturesRoot, "F-case");
+            var sU = Path.Combine(Path.GetTempPath(), "ua-pc21-u-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fcU, sU);
+            var pxU = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sU, "input", "package-evidence.v0.json")))!;
+            pxU["facts"] = new System.Text.Json.Nodes.JsonArray(
+                System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"packageId\":\"Newtonsoft.Json\",\"declaredConstraint\":\"14.0.0\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":3,\"projects\":[\"src/App.csproj\"],\"commitSha\":\"c3\",\"path\":\"src/App.csproj\"}")!,
+                System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"packageId\":\"newtonsoft.json\",\"declaredConstraint\":\"redacted:abc\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":4,\"projects\":[\"src/App.csproj\"],\"commitSha\":\"c3\",\"path\":\"src/App.csproj\"}")!);
+            pxU["scanCoverage"] = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"status\":\"complete\"}")!);
+            File.WriteAllText(Path.Combine(sU, "input", "package-evidence.v0.json"), pxU.ToJsonString());
+            var owU = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sU, "input", "ownership.v0.json")))!;
+            owU["ownerships"] = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"team\":\"team-a\"}")!);
+            File.WriteAllText(Path.Combine(sU, "input", "ownership.v0.json"), owU.ToJsonString());
+            var mU = Apply.BuildManifest(LoadEngine(sU), LoadEngine(sU).BuildPlan());
+            var unitU = mU.Waves.SelectMany(w2 => w2.Units).Single();
+            if (unitU.Note is null || !unitU.Note.Contains("constraint for") || !unitU.Note.Contains("redacted"))
+                throw new Exception("an unresolved variant site must surface N3 (constraint kind), never a satisfied-only N4: " + unitU.Note);
+            Directory.Delete(sU, true);
+            Console.WriteLine("ok   pkgcase-n4-honesty (satisfied pin + redacted variant ⇒ N3, never a hidden site)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-n4-honesty: {ex.Message}"); }
+
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-push-spelling-idempotency: {ex.Message}"); }
 
