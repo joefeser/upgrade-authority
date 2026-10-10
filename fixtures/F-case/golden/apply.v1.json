@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "apply.v1",
+  "delta": {
+    "packageName": "NEWTONSOFT.JSON",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "12.0.3",
+    "newVersion": "13.0.3"
+  },
+  "waves": [
+    {
+      "index": 1,
+      "status": "conditional",
+      "condition": "producer of NEWTONSOFT.JSON is unknown — no producer wave is derivable; caseA's wave proceeds only after the producer is identified and NEWTONSOFT.JSON 13.0.3 is available",
+      "prerequisites": [
+        "NEWTONSOFT.JSON 13.0.3 exists on the configured feed and authenticated restore succeeds (stated, not verified live)"
+      ],
+      "units": [
+        {
+          "repo": "caseA",
+          "action": "edit",
+          "edits": [
+            {
+              "kind": "E1",
+              "path": "src/App.csproj",
+              "attribute": "Version",
+              "oldVersion": "12.0.3",
+              "newVersion": "13.0.3",
+              "line": 3,
+              "evidenceKind": "package-evidence.v0",
+              "packageId": "Newtonsoft.Json"
+            }
+          ]
+        },
+        {
+          "repo": "caseB",
+          "action": "edit",
+          "edits": [
+            {
+              "kind": "E1",
+              "path": "src/App.csproj",
+              "attribute": "Version",
+              "oldVersion": "12.0.3",
+              "newVersion": "13.0.3",
+              "line": 3,
+              "evidenceKind": "package-evidence.v0",
+              "packageId": "newtonsoft.json"
+            }
+          ]
+        }
+    ]
+    }
+  ]
+}

@@ -17,8 +17,8 @@ public sealed class Engine
     string _lockKind = "lockfile-rows.v0"; // evidence kind cites the input's actual schemaVersion (SPEC-007 §5.6)
 
     readonly Dictionary<string, List<string>> _produced = new();
-    readonly Dictionary<string, List<string>> _producerRepos = new();
-    readonly HashSet<string> _external = new();
+    readonly Dictionary<string, List<string>> _producerRepos = new(StringComparer.OrdinalIgnoreCase); // SPEC-021 §2(c): keys are the folded form
+    readonly HashSet<string> _external = new(StringComparer.OrdinalIgnoreCase); // SPEC-021 §2(c)
     readonly Dictionary<string, string> _team = new();
     readonly Dictionary<string, List<Fact>> _facts = new();
     readonly Dictionary<string, List<LockRow>> _lockRows = new();
@@ -27,6 +27,11 @@ public sealed class Engine
     readonly Dictionary<string, (string Producer, string Pkg)> _dEdge = new();
 
     static readonly Dictionary<string, string> _mirrors = new(); // alias -> canonical (declared in ownership.v0)
+
+    // SPEC-021 §2: package identity in plan/apply joins is OrdinalIgnoreCase (NuGet ids; two packages
+    // differing only by case cannot exist — the safety argument). Repo identity stays exact (§6).
+    internal static bool PkgEq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    static string Pk(string pkg) => pkg.ToLowerInvariant(); // dictionary/tuple key form (house style, SPEC-007)
 
     internal static string NormBasic(string repo)
     {
@@ -77,14 +82,22 @@ public sealed class Engine
         _c = delta.Changes[0]; _pe = pe; _ow = ow; _px = px; _scope = scope;
         _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
         foreach (var e in pe.ExternalPackages) _external.Add(e.PackageId);
+        // SPEC-021 §2 typed rejection: ONE sidecar claiming the same (repo, packageId) in two spellings
+        // is the sidecar contradicting itself about one package — the SPEC-007 rule applied to producer
+        // claims (cross-REPO variants stay legal; they meet as contradiction C-n below).
+        var claimedCaseFolded = new Dictionary<(string Repo, string Pkg), string>();
         foreach (var p in pe.Producers)
         {
             var repo = Norm(p.Repo);
+            var foldKey = (repo, Pk(p.PackageId));
+            if (claimedCaseFolded.TryGetValue(foldKey, out var priorSpelling) && priorSpelling != p.PackageId)
+                throw new UaException($"malformed input producer-evidence.v0.json: producer claims '{priorSpelling}' and '{p.PackageId}' for one repo — case variants of one package id in the SAME sidecar are a typed conflict (merge deliberately via one spelling)");
+            claimedCaseFolded[foldKey] = p.PackageId;
             var list = _produced.GetValueOrDefault(repo) ?? (_produced[repo] = new());
             if (!list.Contains(p.PackageId)) list.Add(p.PackageId);
-            var repos = _producerRepos.GetValueOrDefault(p.PackageId) ?? (_producerRepos[p.PackageId] = new());
+            var repos = _producerRepos.GetValueOrDefault(Pk(p.PackageId)) ?? (_producerRepos[Pk(p.PackageId)] = new());
             if (!repos.Contains(repo)) repos.Add(repo);
-            if (p.PublicationStatus is not null) _pubStatus[(repo, p.PackageId)] = p.PublicationStatus;
+            if (p.PublicationStatus is not null) _pubStatus[(repo, Pk(p.PackageId))] = p.PublicationStatus;
         }
         foreach (var kv in _produced) kv.Value.Sort(new NaturalComparer());
         _mirrors.Clear();
@@ -130,11 +143,11 @@ public sealed class Engine
     }
 
     string Target => _c.PackageName;
-    string PubStatusOf(string repo, string pkg) => _pubStatus.GetValueOrDefault((repo, pkg), "unknown");
+    string PubStatusOf(string repo, string pkg) => _pubStatus.GetValueOrDefault((repo, Pk(pkg)), "unknown");
     Dictionary<string, List<char>> letters0 = new(); // set at plan start (BuildPlan)
     string OwnershipOf(string repo) => !_team.TryGetValue(repo, out var t) ? "unknown" : t == _ow.SelfTeamId ? "self" : "external";
     string TeamOf(string repo) => _team.GetValueOrDefault(repo, "?");
-    List<string> ProducersOf(string pkg) { var l = _producerRepos.GetValueOrDefault(pkg, new List<string>()); l.Sort(StringComparer.Ordinal); return l; }
+    List<string> ProducersOf(string pkg) { var l = _producerRepos.GetValueOrDefault(Pk(pkg), new List<string>()); l.Sort(StringComparer.Ordinal); return l; }
     string ProducerRepoOf(string pkg) => ProducersOf(pkg).FirstOrDefault() ?? "";
     List<Fact> FactsOf(string repo) => _facts.GetValueOrDefault(repo, new List<Fact>());
     internal List<Fact> ApplyFacts(string repo) => FactsOf(repo); // SPEC-009: ua apply reads the same evidence
@@ -145,13 +158,13 @@ public sealed class Engine
     // (touches) and findings (input observations) but prove nothing in either direction.
     bool DepsFresh(string repo) => _depsFreshness.GetValueOrDefault(repo) is "fresh" or "fresh-by-build";
     List<LockRow> LockProvable(string repo) => LockOf(repo).Where(r => r.Provenance is null || (DepsFresh(repo) && !string.IsNullOrEmpty(r.Provenance.ManifestSha256))).ToList(); // Baz r13/r14: incomplete provenance ({} shells, null hashes) is never proof and never crashes
-    bool HasStaleDepsRow(string repo, HashSet<string> pkgs) => LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo) && pkgs.Contains(r.PackageId));
+    bool HasStaleDepsRow(string repo, HashSet<string> pkgs) => LockOf(repo).Any(r => r.Provenance is not null && !DepsFresh(repo) && pkgs.Contains(r.PackageId)); // SPEC-021 §2(b): callers pass the folded-key closure set
     List<string> ProducedOf(string repo) => _produced.GetValueOrDefault(repo, new List<string>());
 
     IEnumerable<string> ConsumersOf(string pkg)
     {
-        foreach (var (repo, facts) in _facts) if (facts.Any(f => f.PackageId == pkg)) yield return repo;
-        foreach (var (repo, rows) in _lockRows) if (LockProvable(repo).Any(r => r.PackageId == pkg && r.Type == "direct")) yield return repo; // SPEC-019: provable rows only
+        foreach (var (repo, facts) in _facts) if (facts.Any(f => PkgEq(f.PackageId, pkg))) yield return repo; // SPEC-021 §2(a)
+        foreach (var (repo, rows) in _lockRows) if (LockProvable(repo).Any(r => PkgEq(r.PackageId, pkg) && r.Type == "direct")) yield return repo; // SPEC-019: provable rows only; SPEC-021 §2(a)
     }
 
     IEnumerable<string> AllRepos()
@@ -190,7 +203,7 @@ public sealed class Engine
 
     // the produced package through which some consumer's lockfile evidences target flow
     string? CarrierPkg(string repo) => // C37 r12: corroboration honors the freshness gate — stale build output never corroborates
-        ProducedOf(repo).FirstOrDefault(p2 => _lockRows.Any(kv => kv.Key != repo && LockProvable(kv.Key).Any(r => r.PackageId == Target && r.Via == p2)));
+        ProducedOf(repo).FirstOrDefault(p2 => _lockRows.Any(kv => kv.Key != repo && LockProvable(kv.Key).Any(r => PkgEq(r.PackageId, Target) && PkgEq(r.Via, p2)))); // SPEC-021 §2(a): both predicates fold (Via is the lockfile's spelling of the parent — cross-source)
 
     static string Range(List<string> pkgs)
     {
@@ -236,8 +249,8 @@ public sealed class Engine
         var affected = new HashSet<string>();
         _dEdge.Clear(); // causative ripple edge per consumer (this plan's closure)
         foreach (var r in producers) { affected.Add(r); AddRule(r, 'a'); }
-        foreach (var (repo, facts) in _facts.Where(kv => kv.Value.Any(f => f.PackageId == Target))) { affected.Add(repo); AddRule(repo, 'b'); }
-        foreach (var lf in _lockRepos.Where(l => LockProvable(l.Repo).Any(r => r.PackageId == Target && r.Type == "transitive"))) { affected.Add(lf.Repo); AddRule(lf.Repo, 'c'); } // SPEC-019: freshness-gated — stale build output never schedules work
+        foreach (var (repo, facts) in _facts.Where(kv => kv.Value.Any(f => PkgEq(f.PackageId, Target)))) { affected.Add(repo); AddRule(repo, 'b'); }
+        foreach (var lf in _lockRepos.Where(l => LockProvable(l.Repo).Any(r => PkgEq(r.PackageId, Target) && r.Type == "transitive"))) { affected.Add(lf.Repo); AddRule(lf.Repo, 'c'); } // SPEC-019: freshness-gated — stale build output never schedules work; SPEC-021 §2(a)
         for (bool changed = true; changed;)
         {
             changed = false;
@@ -268,7 +281,9 @@ public sealed class Engine
 
         // ---- affected packages + classification (before cycle handling: rev3 unknown visibility
         // applies to cycle-stop plans too — the stop must not hide unclassified repos) ----
-        var affectedPkgs = new HashSet<string> { Target };
+        // SPEC-021 §2(b): the closure set carries FOLDED keys — a variant-spelled row/fact can never
+        // be invisible to the not-affected proof (the round-1 blocker: a false safety claim).
+        var affectedPkgs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Target };
         foreach (var r in affected) foreach (var p2 in ProducedOf(r)) affectedPkgs.Add(p2);
         _affectedPkgsForReasons = affectedPkgs;
 
@@ -355,10 +370,11 @@ public sealed class Engine
             if (w.Status == "provisional") w.BlockedOn = cid;
             if (w.Status == "conditional")
             {
+                var gOrd = g.OrderBy(r => r, StringComparer.Ordinal).ToList(); // SPEC-003 §4.2: g enumerates an unordered set — the named repo must be ordinal-first, never fact-file order (F-case permutation catch)
                 if (externalProducer is not null) w.Condition = T6(TeamOf(externalProducer), Target, _c.NewVersion);
-                else if (producerUnknown) w.Condition = T8(Target, g.First(), _c.NewVersion);
+                else if (producerUnknown) w.Condition = T8(Target, gOrd.First(), _c.NewVersion);
                 else if (g.Select(NeedsUnpublished).FirstOrDefault(x => x is not null) is { } pub)
-                    w.Condition = T7(pub, g.First(r => NeedsUnpublished(r) == pub));
+                    w.Condition = T7(pub, gOrd.First(r => NeedsUnpublished(r) == pub));
             }
 
             if (externalTarget && w.Index == 1) prereqs.Add((1, T5(Target, _c.NewVersion)));
@@ -392,7 +408,7 @@ public sealed class Engine
                 var ds = _facts.Keys
                     .Where(r2 => r2 != u2.Repo && scheduled.Contains(r2) && waveIndexOf.ContainsKey(r2) && waveIndexOf[r2] > w.Index
                                  && !_lockRows.ContainsKey(r2) && DMaterial(r2)
-                                 && FactsOf(r2).Any(f => u2.Packages.Contains(f.PackageId)))
+                                 && FactsOf(r2).Any(f => u2.Packages.Any(p3 => PkgEq(p3, f.PackageId)))) // SPEC-021 §2(a): unit (sidecar) spellings vs fact spellings — cross-source
                     .OrderBy(r2 => r2, StringComparer.Ordinal).FirstOrDefault();
                 if (ds is not null)
                 {
@@ -504,7 +520,7 @@ public sealed class Engine
                 var facts = FactsOf(repo);
                 if (letters.GetValueOrDefault(repo, new List<char>()).Contains('a') && facts.Count > 0)
                 {
-                    var consumedPkg = facts.Where(f => f.PackageId != Target).Select(f => f.PackageId).OrderBy(x => x, StringComparer.Ordinal).FirstOrDefault() ?? facts[0].PackageId;
+                    var consumedPkg = facts.Where(f => !PkgEq(f.PackageId, Target)).Select(f => f.PackageId).OrderBy(x => x, StringComparer.Ordinal).FirstOrDefault() ?? facts[0].PackageId; // SPEC-021 §2(a): "not the target" folds too
                     e.Reasons.Add($"produces {Target} (delta target); also consumes {consumedPkg} produced by {ProducerRepoOf(consumedPkg)} — participant in release cycle {cycleId}");
                 }
                 else if (facts.Count > 0)
@@ -564,7 +580,7 @@ public sealed class Engine
     {
         var u = new PlanUnit { Repo = repo, Packages = ProducedOf(repo).OrderBy(p2 => p2, new NaturalComparer()).ToList() };
         bool isProducerRepo = producers.Contains(repo);
-        bool hasPubMap = u.Packages.Any(p2 => _pubStatus.ContainsKey((repo, p2)));
+        bool hasPubMap = u.Packages.Any(p2 => _pubStatus.ContainsKey((repo, Pk(p2)))); // SPEC-021 §2(c): folded keys
         if (isProducerRepo && contradiction) u.Notes = new List<string> { $"candidate producer — provisional pending C1 resolution" };
         else if (OwnershipOf(repo) == "external") u.Notes = new List<string> { "external — request/await" };
         else if (hasPubMap) u.Notes = new List<string> { "current publication state cited from producer-evidence.v0 (fixture-declared)" };
@@ -577,18 +593,18 @@ public sealed class Engine
             };
         }
         else if (u.Packages.Count > 1) u.Notes = new List<string> { "shared compilation observed; shared-release NOT evidenced (no publication/versioning evidence per package)" };
-        else if (_coverage.GetValueOrDefault(repo)?.Status == "gaps" && FactsOf(repo).Any(f => f.PackageId == Target))
+        else if (_coverage.GetValueOrDefault(repo)?.Status == "gaps" && FactsOf(repo).Any(f => PkgEq(f.PackageId, Target))) // SPEC-021
         {
             var gap = (_coverage[repo].Gaps.FirstOrDefault() ?? "").Split(" not scanned")[0];
             var lastSeg = gap.Contains('/') ? gap[(gap.LastIndexOf('/') + 1)..] : gap;
-            if (FactsOf(repo).FirstOrDefault(f => f.PackageId == Target)?.Format == "packages.config")
+            if (FactsOf(repo).FirstOrDefault(f => PkgEq(f.PackageId, Target))?.Format == "packages.config")
                 u.Notes = new List<string> { $"packages.config consumer — edit path is packages.config; unscanned {lastSeg} area may surface additional work (tracked as a gap)" };
             else
                 u.Notes = new List<string> { "scheduled on the observed edge; unscanned area may surface additional work — tracked as a gap, not a blocker" };
         }
-        else if (FactsOf(repo).FirstOrDefault(f => f.PackageId == Target)?.Format == "packages.config")
+        else if (FactsOf(repo).FirstOrDefault(f => PkgEq(f.PackageId, Target))?.Format == "packages.config")
             u.Notes = new List<string> { "packages.config consumer — edit path is packages.config, not PackageReference" };
-        else if (FactsOf(repo).FirstOrDefault(f => f.PackageId == Target)?.Format == "cpm")
+        else if (FactsOf(repo).FirstOrDefault(f => PkgEq(f.PackageId, Target))?.Format == "cpm")
         {
             static string Bare(string p2) => p2.Contains('/') ? p2[(p2.LastIndexOf('/') + 1)..] : p2;
             var fs = FactsOf(repo);
@@ -602,7 +618,7 @@ public sealed class Engine
         if (hasPubMap)
         {
             u.PublicationStatus = new SortedDictionary<string, string>(new NaturalComparer());
-            foreach (var p2 in u.Packages.Where(p2 => _pubStatus.ContainsKey((repo, p2)))) u.PublicationStatus[p2] = _pubStatus[(repo, p2)];
+            foreach (var p2 in u.Packages.Where(p2 => _pubStatus.ContainsKey((repo, Pk(p2))))) u.PublicationStatus[p2] = _pubStatus[(repo, Pk(p2))];
         }
         return u;
     }
@@ -618,7 +634,7 @@ public sealed class Engine
         var kinds = new List<string>();
         string rung = "declared"; int corroboration = 1;
         var facts = FactsOf(repo);
-        var bFact = facts.FirstOrDefault(f => f.PackageId == Target);
+        var bFact = facts.FirstOrDefault(f => PkgEq(f.PackageId, Target)); // SPEC-021 §2(a): ordinal-first across spellings (facts pre-sorted by PackageId ordinal — deterministic)
 
         if (e.Classification == "not-affected")
         {
@@ -681,7 +697,7 @@ public sealed class Engine
                 case 'a':
                     var pkgs = ProducedOf(repo);
                     if (VersioningDiffers(repo)) e.Reasons.Add($"produces {Target} (delta target); release unit {repo} = {Range(pkgs)} (one unit, assumption flagged)");
-                    else if (pkgs.Any(p2 => _pubStatus.ContainsKey((repo, p2)))) e.Reasons.Add($"produces {Target} (delta target); unit = {Range(pkgs)}, basis assumed-same-repo");
+                    else if (pkgs.Any(p2 => _pubStatus.ContainsKey((repo, Pk(p2))))) e.Reasons.Add($"produces {Target} (delta target); unit = {Range(pkgs)}, basis assumed-same-repo");
                     else if (pkgs.Count > 1) e.Reasons.Add($"produces {Target} (delta target) via producer-evidence.v0; release unit {repo} = {Range(pkgs)}");
                     else if (e.Ownership == "external") e.Reasons.Add($"produces {Target} (delta target) via producer-evidence.v0");
                     else e.Reasons.Add($"produces {Target} (delta target)");
@@ -705,12 +721,12 @@ public sealed class Engine
                     {
                         // Baz r13: the corroborator and its evidence KIND come from the gated rows —
                         // a stale deps.json row never corroborates, and a deps.json corroborator says so
-                        var corrKv = _lockRows.First(kv => LockProvable(kv.Key).Any(r => r.PackageId == Target && r.Via == carrier));
-                        var corrRow = LockProvable(corrKv.Key).First(r => r.PackageId == Target && r.Via == carrier);
+                        var corrKv = _lockRows.First(kv => LockProvable(kv.Key).Any(r => PkgEq(r.PackageId, Target) && PkgEq(r.Via, carrier))); // SPEC-021: both predicates fold
+                        var corrRow = LockProvable(corrKv.Key).First(r => PkgEq(r.PackageId, Target) && PkgEq(r.Via, carrier));
                         var corrBasis = corrRow.Provenance is null ? "lockfile" : "build output (deps.json)";
                         e.Reasons.Add($"direct reference to {Target} on the producer side ({bFact!.Path}); produces {carrier} — {corrKv.Key}'s {corrBasis} corroborates that {carrier}'s closure carries {Target} (transitive via {carrier})");
                     }
-                    else if (facts.Any(f => f.PackageId != Target))
+                    else if (facts.Any(f => !PkgEq(f.PackageId, Target)))
                         e.Reasons.Add($"direct references to {string.Join(" and ", facts.Select(f => f.PackageId).Distinct().OrderBy(p2 => p2))}; the delta targets {Target}");
                     else
                         e.Reasons.Add($"direct reference to {Target} ({bFact!.Path})");
@@ -718,8 +734,8 @@ public sealed class Engine
                 case 'c':
                     // SPEC-007 §5.3: rule (c) is established by a transitive row; narrate THAT row's
                     // evidence — never a direct row's absent via (mixed-relation case, F11).
-                    var cRow = LockProvable(repo).FirstOrDefault(r => r.PackageId == Target && r.Type == "transitive")
-                               ?? LockProvable(repo).First(r => r.PackageId == Target);
+                    var cRow = LockProvable(repo).FirstOrDefault(r => PkgEq(r.PackageId, Target) && r.Type == "transitive")
+                               ?? LockProvable(repo).First(r => PkgEq(r.PackageId, Target));
                     var via = cRow.Via;
                     // C39 r12: a deps.json row is build output, never checked-in resolution truth — say so
                     var cBasis = cRow.Provenance is null ? "lockfile"
@@ -841,15 +857,15 @@ public sealed class Engine
         // scan of a repo affected purely via its lockfile must not be invisible in the plan (G2).
         foreach (var (repo, cov) in _coverage.Where(kv => kv.Value.Status == "gaps"
                      && letters.GetValueOrDefault(kv.Key, new List<char>()).Contains('c')
-                     && !FactsOf(kv.Key).Any(f => f.PackageId == Target)) // rule-b repos keep their existing path
+                     && !FactsOf(kv.Key).Any(f => PkgEq(f.PackageId, Target))) // rule-b repos keep their existing path; SPEC-021
                      .OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             gaps.Add(new PlanGap { Subject = $"{repo} coverage (lockfile-evidenced)", Detail = $"scan gaps on {cov.Gaps.FirstOrDefault() ?? "unscanned area"} — {repo} is affected via lockfile-evidenced transitive exposure; the gaps qualify how much additional work is unknown, they do not erase the evidenced exposure" });
         }
-        foreach (var (repo, cov) in _coverage.Where(kv => kv.Value.Status == "gaps" && FactsOf(kv.Key).Any(f => f.PackageId == Target)).OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        foreach (var (repo, cov) in _coverage.Where(kv => kv.Value.Status == "gaps" && FactsOf(kv.Key).Any(f => PkgEq(f.PackageId, Target))).OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             var gap = cov.Gaps.FirstOrDefault() ?? "unscanned area";
-            var fact = FactsOf(repo).First(f => f.PackageId == Target);
+            var fact = FactsOf(repo).First(f => PkgEq(f.PackageId, Target));
             if (fact.Format == "packages.config")
             {
                 var shortGap = gap.Contains(" not scanned") ? gap[..gap.IndexOf(" not scanned")] + " not scanned" : gap;
@@ -893,23 +909,24 @@ public sealed class Engine
             bool unsupportedGroups = _coverage.GetValueOrDefault(repo)?.Status == "gaps" &&
                 _coverage[repo].Gaps.Any(g => g.Contains("packages-lock-group-unsupported") || g.Contains("target-framework group is unsupported"));
             static string Ord(string? s) => s ?? "";
-            foreach (var grp in lf.Rows.GroupBy(r => r.PackageId))
+            foreach (var grp in lf.Rows.GroupBy(r => r.PackageId, StringComparer.OrdinalIgnoreCase)) // SPEC-021 §2(e): one resolution disagreement however spelled
             {
                 var versions = grp.Where(r => !string.IsNullOrEmpty(r.Version)).Select(r => r.Version!).Distinct().ToList();
                 if (versions.Count < 2) continue;
                 // SPEC-012 §2.1: from-version markers appear ONLY on the delta package's finding — an
                 // unrelated package coincidentally on oldVersion is not about the delta.
-                var markFromVersion = string.Equals(grp.Key, Target, StringComparison.OrdinalIgnoreCase); // NuGet ids are case-insensitive throughout the pipeline
+                var spelling = grp.OrderBy(r => r.PackageId, StringComparer.Ordinal).First().PackageId; // SPEC-021 §2(e): reported spelling = ordinal-first of the group (deterministic)
+                var markFromVersion = PkgEq(grp.Key, Target); // SPEC-012 marker — the norm since SPEC-021, not the exception
                 var resolutions = grp.Where(r => !string.IsNullOrEmpty(r.Version))
                     .OrderBy(r => Ord(r.Lockfile), StringComparer.Ordinal).ThenBy(r => Ord(r.Tfm), StringComparer.Ordinal)
                     .Select(r => markFromVersion && Apply.CompareCore(r.Version!, _c.OldVersion) == 0
                         ? $"{r.Version} in {Ord(r.Lockfile)} ({Ord(r.Tfm)}) [delta from-version]"
                         : $"{r.Version} in {Ord(r.Lockfile)} ({Ord(r.Tfm)})")
                     .ToList();
-                var detail = $"{repo} resolves {grp.Key} to {versions.Count} versions across its lockfile/TFM resolution groups: {string.Join("; ", resolutions)} — evidenced disagreement, not an error; V0 schedules {repo} once at unit level and picks no winner (convergence is deliberately out of scope, §10)";
+                var detail = $"{repo} resolves {spelling} to {versions.Count} versions across its lockfile/TFM resolution groups: {string.Join("; ", resolutions)} — evidenced disagreement, not an error; V0 schedules {repo} once at unit level and picks no winner (convergence is deliberately out of scope, §10)";
                 if (unsupportedGroups && trailerShown.Add(repo)) // once per repo, and this loop is subject-sorted per repo
                     detail += $"; {repo} also has lockfile groups the scanner could not parse and contributed no rows — those resolutions stay unevidenced (coverage gap)";
-                result.Add(new PlanFinding { Subject = $"{repo} version disagreement: {grp.Key}", Detail = detail });
+                result.Add(new PlanFinding { Subject = $"{repo} version disagreement: {spelling}", Detail = detail });
             }
         }
         result.Sort((a, b) => string.CompareOrdinal(a.Subject + "\0" + a.Detail, b.Subject + "\0" + b.Detail));

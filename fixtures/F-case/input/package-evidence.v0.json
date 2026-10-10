@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    {
+      "repo": "caseA",
+      "packageId": "Newtonsoft.Json",
+      "declaredConstraint": "12.0.3",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "line": 3,
+      "projects": [
+        "src/App.csproj"
+      ],
+      "commitSha": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c01",
+      "path": "src/App.csproj"
+    },
+    {
+      "repo": "caseA",
+      "packageId": "Serilog",
+      "declaredConstraint": "3.1.1",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "line": 4,
+      "projects": [
+        "src/App.csproj"
+      ],
+      "commitSha": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c01",
+      "path": "src/App.csproj"
+    },
+    {
+      "repo": "caseB",
+      "packageId": "newtonsoft.json",
+      "declaredConstraint": "12.0.3",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "line": 3,
+      "projects": [
+        "src/App.csproj"
+      ],
+      "commitSha": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c02",
+      "path": "src/App.csproj"
+    },
+    {
+      "repo": "caseB",
+      "packageId": "Serilog",
+      "declaredConstraint": "3.1.1",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "line": 4,
+      "projects": [
+        "src/App.csproj"
+      ],
+      "commitSha": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c02",
+      "path": "src/App.csproj"
+    }
+  ],
+  "scanCoverage": [
+    {
+      "repo": "caseA",
+      "status": "complete"
+    },
+    {
+      "repo": "caseB",
+      "status": "complete"
+    }
+  ]
+}

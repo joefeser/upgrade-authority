@@ -24,7 +24,7 @@ dotnet build src/UpgradeAuthority    # ~5s, zero packages, no network needed aft
 function ua { dotnet run --project src/UpgradeAuthority -- @args }   # optional convenience (PowerShell; bash is ua() { ... "$@"; })
 ```
 
-**No-build option:** a self-contained single-file binary also works (verified; the suite is now 139 cases) —
+**No-build option:** a self-contained single-file binary also works (verified; the suite is now 148 cases) —
 `dotnet publish src/UpgradeAuthority -c Release -r win-x64 --self-contained -p:PublishSingleFile=true`,
 then run `ua.exe` directly. Note `selftest` needs the repo checkout beside it (it reads
 `fixtures/` and `testdata-ingest/`); plan/report/apply/push/ingest only need their own arguments.
@@ -83,8 +83,8 @@ ua push .. (again)                                     # -> error: branch exists
 
 ```
 dotnet test isn't used — the tool self-checks:
-ua selftest        # expect: SELFTEST PASS (139 cases)
-node tools/validate-fixtures.mjs   # expect: ALL GOLDENS PASS (28)  [needs node; skip if absent]
+ua selftest        # expect: SELFTEST PASS (148 cases)
+node tools/validate-fixtures.mjs   # expect: ALL GOLDENS PASS (29)  [needs node; skip if absent]
 ```
 
 ## 4. Real estate (optional, the exciting one)

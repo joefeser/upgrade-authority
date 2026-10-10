@@ -3,7 +3,8 @@
 **Status:** draft — round 1 review (brief-013)
 **Author:** ZCode (coordinator)
 **Date:** 2026-10-03
-**Depends on:** SPEC-003 (waves/prerequisites) · SPEC-007/008 (lockfile rows, findings) · tracemap 0.2.0 (`CentralPackageVersionDeclared`, `versionOverride` — merged tracemap#804, scans refreshed in PR #12)
+**Depends on:**
+> **Amended by SPEC-021 (2026-10-10):** edit-site fact selection matches the delta target OrdinalIgnoreCase; file verification keys on the edit site's OWN evidenced package id (the file matcher stays Ordinal); the edit dedup key includes the evidenced spelling; edits emit `packageId` when (and only when) it differs from `delta.packageName`. SPEC-003 (waves/prerequisites) · SPEC-007/008 (lockfile rows, findings) · tracemap 0.2.0 (`CentralPackageVersionDeclared`, `versionOverride` — merged tracemap#804, scans refreshed in PR #12)
 
 ## 1. Purpose
 

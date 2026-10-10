@@ -3,7 +3,8 @@
 **Status:** draft — round 1 review (brief-015)
 **Author:** ZCode (coordinator)
 **Date:** 2026-10-03
-**Depends on:** SPEC-009 (`ua apply` v1 — verified patches) · SPEC-003 (waves/gates) · SPEC-004 (report prose conventions)
+**Depends on:**
+> **Amended by SPEC-021 (2026-10-10):** precondition refs compare case-insensitively (a differently-spelled delta for the same logical upgrade refuses — never a second branch/PR); branch/commit/PR text keeps the delta spelling (echo). SPEC-009 (`ua apply` v1 — verified patches) · SPEC-003 (waves/gates) · SPEC-004 (report prose conventions)
 
 ## 1. Purpose
 

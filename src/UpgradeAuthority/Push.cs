@@ -134,7 +134,7 @@ public static class Push
 
                 // verification + patch against the WORKTREE (the tree being committed) — SPEC-010 §3.3
                 Directory.CreateDirectory(patchDir);
-                var rc = Apply.WriteVerifiedPatches(manifest, worktree, patchDir, manifest.Delta.PackageName);
+                var rc = Apply.WriteVerifiedPatches(manifest, worktree, patchDir); // SPEC-021 §2(d): per-edit evidenced spelling
                 if (rc != 0) { Rollback(repoDir!, rw.Branch, worktree); return rc; } // apply-semantics exit (6) — a verification refusal is an apply refusal wherever it happens
                 var patchFile = Path.Combine(patchDir, $"wave-{w.Index}.patch");
                 if (File.Exists(patchFile) && new FileInfo(patchFile).Length > 0)
@@ -220,11 +220,17 @@ public static class Push
         if (status.Trim().Length > 0) { failure = "working tree is dirty — commit or stash first (ua push never mixes with uncommitted changes)"; return false; }
         if (Git(repoDir, $"rev-parse --verify {baseBranch}", out _, out _) != 0)
         { failure = $"base branch '{baseBranch}' does not exist in the checkout"; return false; }
+        // SPEC-021 §3: idempotency-by-refusal extends to SPELLING variants — git refs are case-sensitive,
+        // so a differently-spelled delta for the same logical upgrade would otherwise mint a second
+        // branch/PR. Compare the constructed ref against every existing ua/wave-* ref ignoring case.
+        Git(repoDir, "for-each-ref --format=%(refname:short) refs/heads/ua/wave-", out var existingWaveRefs, out _);
+        var existingFolded = existingWaveRefs.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(r => r.Trim()).Where(r => r.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var w in manifest.Waves.Where(w => w.Units.Any(u => u.Edits is { Count: > 0 })))
         {
             var br = $"ua/wave-{w.Index}/{manifest.Delta.PackageName}-{manifest.Delta.OldVersion}-to-{manifest.Delta.NewVersion}";
-            if (Git(repoDir, $"rev-parse --verify {br}", out _, out _) == 0)
-            { failure = $"branch '{br}' already exists — never force-updated; delete it deliberately or push it manually"; return false; }
+            if (existingFolded.Contains(br))
+            { failure = $"branch '{br}' already exists (case-insensitive match on an existing ua/wave-* ref — a differently-spelled delta is the same logical upgrade) — never force-updated; delete it deliberately or push it manually"; return false; }
         }
         return true;
     }

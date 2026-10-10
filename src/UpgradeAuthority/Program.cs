@@ -2638,6 +2638,201 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL registry-cli-contract: {ex.Message}"); }
 
+        // SPEC-021: F-case goldens — case-variant estate, third-spelling delta, no silent under-scoping
+        try
+        {
+            var fc = Path.Combine(fixturesRoot, "F-case");
+            var planC = Canonical.Write(LoadEngine(fc).BuildPlan());
+            if (planC != File.ReadAllText(Path.Combine(fc, "golden", "plan.json"))) throw new Exception("F-case plan differs from golden");
+            if (Report.Render(LoadEngine(fc).BuildPlan()) != File.ReadAllText(Path.Combine(fc, "golden", "report.md"))) throw new Exception("F-case report differs from golden");
+            if (Canonical.Write(LoadEngine(fc).BuildPlan()) != planC) throw new Exception("F-case not deterministic");
+            var docC = JsonDocument.Parse(planC).RootElement;
+            var reposC = docC.GetProperty("repos").EnumerateArray().Select(r => (r.GetProperty("repo").GetString(), r.GetProperty("classification").GetString())).ToList();
+            if (!reposC.Contains(("caseA", "affected")) || !reposC.Contains(("caseB", "affected")))
+                throw new Exception("BOTH case-variant repos must classify affected: " + string.Join(",", reposC.Select(x => x.Item1 + ":" + x.Item2)));
+            if (docC.GetProperty("repos").EnumerateArray().Any(r => r.GetProperty("reasons").EnumerateArray().Any(x => x.GetString()!.Contains("Serilog") && r.GetProperty("repo").GetString() == "caseB" && false))) throw new Exception("unreachable");
+            // the negative: Serilog is never the target — no repo's action targets it
+            if (planC.Contains("targets Serilog")) throw new Exception("Serilog (genuinely different package) must stay untouched");
+            // apply.v1: both edit sites derived, each carrying its OWN evidenced spelling (conditional emission)
+            var applyText = File.ReadAllText(Path.Combine(fc, "golden", "apply.v1.json"));
+            var applyDoc = JsonDocument.Parse(applyText).RootElement;
+            if (applyDoc.GetProperty("delta").GetProperty("packageName").GetString() != "NEWTONSOFT.JSON") throw new Exception("delta echo wrong");
+            var editIds = applyDoc.GetProperty("waves").EnumerateArray()
+                .SelectMany(w => w.GetProperty("units").EnumerateArray())
+                .Where(u => u.TryGetProperty("edits", out _))
+                .SelectMany(u => u.GetProperty("edits").EnumerateArray())
+                .Select(e => (e.GetProperty("path").GetString(), e.TryGetProperty("packageId", out var pid) ? pid.GetString() : null)).ToList();
+            if (!editIds.Contains(("src/App.csproj", "Newtonsoft.Json")) || !editIds.Contains(("src/App.csproj", "newtonsoft.json")))
+                throw new Exception("each edit must carry its own evidenced spelling: " + string.Join("|", editIds));
+            Console.WriteLine("ok   pkgcase-golden (F-case: both affected, own spellings emitted, Serilog untouched)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-golden: {ex.Message}"); }
+
+        // SPEC-021 acceptance 2: per-repo real-CLI apply against the committed sources (patch goldens, case preserved)
+        try
+        {
+            var fc2 = Path.Combine(fixturesRoot, "F-case");
+            var richC = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
+            foreach (var (repo, other, spell) in new[] { ("caseA", "caseB", "Newtonsoft.Json"), ("caseB", "caseA", "newtonsoft.json") })
+            {
+                var scoped = Path.Combine(Path.GetTempPath(), "ua-pc21-" + repo + "-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(fc2, scoped);
+                var px = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scoped, "input", "package-evidence.v0.json")))!;
+                var factsArr = px["facts"]!.AsArray();
+                for (int i = factsArr.Count - 1; i >= 0; i--) if (factsArr[i]!["repo"]!.GetValue<string>() == other) factsArr.RemoveAt(i);
+                var covArr = px["scanCoverage"]!.AsArray();
+                for (int i = covArr.Count - 1; i >= 0; i--) if (covArr[i]!["repo"]!.GetValue<string>() == other) covArr.RemoveAt(i);
+                File.WriteAllText(Path.Combine(scoped, "input", "package-evidence.v0.json"), px.ToJsonString());
+                var outR = Path.Combine(Path.GetTempPath(), "ua-pc21o-" + repo + "-" + Guid.NewGuid().ToString("N")[..8]);
+                var rc = Apply.Run(scoped, Path.Combine(richC, "sources", repo), outR);
+                if (rc != 0) throw new Exception($"{repo}: apply exited {rc}");
+                var patch = File.ReadAllText(Path.Combine(outR, "wave-1.patch"));
+                var golden = File.ReadAllText(Path.Combine(fc2, "golden", "patches", repo, "wave-1.patch"));
+                if (patch != golden) throw new Exception($"{repo}: patch differs from golden");
+                if (!patch.Contains($"Include=\"{spell}\" Version=\"13.0.3\"")) throw new Exception($"{repo}: patched line must keep its original case");
+                if (patch.Contains("Serilog") && patch.Contains("-    <PackageReference Include=\"Serilog")) throw new Exception("Serilog must not be edited");
+                Directory.Delete(scoped, true); Directory.Delete(outR, true);
+            }
+            Console.WriteLine("ok   pkgcase-apply-per-repo (real CLI, committed sources, patch goldens, case preserved)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-apply-per-repo: {ex.Message}"); }
+
+        // SPEC-021 acceptance 3 (R1-1): a variant-spelled lockfile row can never earn not-affected
+        try
+        {
+            var fc3 = Path.Combine(fixturesRoot, "F-case");
+            var s3 = Path.Combine(Path.GetTempPath(), "ua-pc21c-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fc3, s3);
+            File.WriteAllText(Path.Combine(s3, "input", "lockfile-rows.v2.json"),
+                "{\"schemaVersion\":\"lockfile-rows.v2\",\"repos\":[{\"repo\":\"caseC\",\"rows\":[{\"packageId\":\"newtonsoft.json\",\"type\":\"direct\",\"version\":\"12.0.3\",\"lockfile\":\"src/App/packages.lock.json\",\"tfm\":\"net8.0\"}]}]}");
+            var px3 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(s3, "input", "package-evidence.v0.json")))!;
+            px3["scanCoverage"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseC\",\"status\":\"complete\"}")!);
+            File.WriteAllText(Path.Combine(s3, "input", "package-evidence.v0.json"), px3.ToJsonString());
+            var ow3 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(s3, "input", "ownership.v0.json")))!;
+            ow3["ownerships"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseC\",\"team\":\"team-a\"}")!);
+            File.WriteAllText(Path.Combine(s3, "input", "ownership.v0.json"), ow3.ToJsonString());
+            var plan3 = LoadEngine(s3).BuildPlan();
+            var caseC = plan3.Repos.First(r => r.Repo == "caseC");
+            if (caseC.Classification != "unknown")
+                throw new Exception($"caseC must be unknown (variant row visible to the closure), got {caseC.Classification} — a false not-affected is the R1-1 hazard");
+            Directory.Delete(s3, true);
+            Console.WriteLine("ok   pkgcase-closure-honesty (variant lockfile row ⇒ unknown, never not-affected)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-closure-honesty: {ex.Message}"); }
+
+        // SPEC-021 acceptance 4: cross-repo variant claims ⇒ contradiction; produced+variant-external ⇒ the F5 observables
+        try
+        {
+            var fc4 = Path.Combine(fixturesRoot, "F-case");
+            // (a) contradiction: two repos claim one id in different spellings
+            var s4 = Path.Combine(Path.GetTempPath(), "ua-pc21d-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fc4, s4);
+            File.WriteAllText(Path.Combine(s4, "input", "producer-evidence.v0.json"),
+                "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[{\"repo\":\"caseA\",\"packageId\":\"Newtonsoft.Json\",\"producedVersion\":\"12.0.3\"},{\"repo\":\"caseB\",\"packageId\":\"newtonsoft.json\",\"producedVersion\":\"12.0.3\"}]}");
+            var plan4 = LoadEngine(s4).BuildPlan();
+            if (plan4.Uncertainty.Contradictions.Count != 1 || plan4.Uncertainty.Contradictions[0].Claims.Count != 2)
+                throw new Exception("cross-repo variant claims must meet as ONE contradiction with both claims");
+            Directory.Delete(s4, true);
+            // (b) F5 observables on a variant-spelled external declaration (built on the F5 corpus shape)
+            var f5 = Path.Combine(fixturesRoot, "F5-third-party-via-internal");
+            var s5 = Path.Combine(Path.GetTempPath(), "ua-pc21e-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(f5, s5);
+            var d5 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(s5, "input", "delta.json")))!;
+            var pkg5 = d5["changes"]![0]!["packageName"]!.GetValue<string>();
+            d5["changes"]![0]!["packageName"] = pkg5.ToUpperInvariant(); // a spelling externalPackages does NOT carry
+            File.WriteAllText(Path.Combine(s5, "input", "delta.json"), d5.ToJsonString());
+            var plan5 = LoadEngine(s5).BuildPlan();
+            var prereqs5 = plan5.Waves.SelectMany(w => w.Prerequisites).ToList();
+            if (!prereqs5.Any(p => p.Contains("available from the public feed"))) throw new Exception("T5 must appear once externalTarget joins case-insensitively");
+            if (!plan5.Repos.Any(r => r.Reasons.Any(x => x.Contains("DECLARED external")))) throw new Exception("attribution reason must appear");
+            var corroborated5 = plan5.Repos.FirstOrDefault(r => r.Confidence.Corroboration == 2);
+            if (corroborated5 is not null) throw new Exception($"corroboration must degrade (carrier no longer corroborates an external target): {corroborated5.Repo} still 2");
+            Directory.Delete(s5, true);
+            Console.WriteLine("ok   pkgcase-contradiction-f5 (variant claims meet; T5 + attribution + corroboration degraded)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-contradiction-f5: {ex.Message}"); }
+
+        // SPEC-021 typed rejection + mixed-repo bFact + T10 fold
+        try
+        {
+            var fc6 = Path.Combine(fixturesRoot, "F-case");
+            // (a) same-sidecar variant claims ⇒ typed load error
+            var s6 = Path.Combine(Path.GetTempPath(), "ua-pc21f-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fc6, s6);
+            File.WriteAllText(Path.Combine(s6, "input", "producer-evidence.v0.json"),
+                "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[{\"repo\":\"caseA\",\"packageId\":\"Newtonsoft.Json\"},{\"repo\":\"caseA\",\"packageId\":\"newtonsoft.json\"}]}");
+            try { LoadEngine(s6).BuildPlan(); fail++; Console.WriteLine("FAIL pkgcase-load-rules (no exception on same-sidecar variants)"); }
+            catch (UaException ex) when (ex.Message.Contains("case variants of one package id")) { /* expected */ }
+            Directory.Delete(s6, true);
+            // (b) mixed repo: BOTH spellings, the variant in a DISTINGUISHING format ⇒ bFact is
+            // ordinal-first across spellings (the packages.config branch fires only if bFact were the variant)
+            var s7 = Path.Combine(Path.GetTempPath(), "ua-pc21g-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fc6, s7);
+            var px7 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(s7, "input", "package-evidence.v0.json")))!;
+            px7["facts"]!.AsArray().Add(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"packageId\":\"newtonsoft.json\",\"declaredConstraint\":\"12.0.3\",\"format\":\"packages.config\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":3,\"projects\":[\"src/B.csproj\"],\"commitSha\":\"c1\",\"path\":\"src/B.csproj\"}")!);
+            File.WriteAllText(Path.Combine(s7, "input", "package-evidence.v0.json"), px7.ToJsonString());
+            var plan7 = LoadEngine(s7).BuildPlan();
+            var caseA7 = plan7.Repos.First(r => r.Repo == "caseA");
+            if (caseA7.Reasons.Any(x => x.Contains("packages.config reference")))
+                throw new Exception("bFact must be the ordinal-first spelling across variants (the variant is packages.config; the b-reason must not take that branch): " + string.Join(" | ", caseA7.Reasons));
+            if (!caseA7.Reasons.Any(x => x.Contains("direct references to"))) throw new Exception("the multi-fact b-reason branch was expected: " + string.Join(" | ", caseA7.Reasons));
+            Directory.Delete(s7, true);
+            Console.WriteLine("ok   pkgcase-load-rules (same-sidecar variants rejected; mixed bFact ordinal-first)"); pass++;
+            // (c) T10 folds case-insensitively: F10's two lockfiles spelling the id differently = ONE disagreement
+            var f10 = Path.Combine(fixturesRoot, "F10-multi-lockfile-agreement");
+            var s8 = Path.Combine(Path.GetTempPath(), "ua-pc21h-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(f10, s8);
+            var l8 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(s8, "input", "lockfile-rows.v1.json")))!;
+            var rows8 = l8["rows"]!.AsArray();
+            foreach (var r8 in rows8)
+                if (r8!["packageId"]!.GetValue<string>() == rows8[0]!["packageId"]!.GetValue<string>() && !ReferenceEquals(r8, rows8[0]))
+                { r8["packageId"] = r8["packageId"]!.GetValue<string>().ToLowerInvariant(); r8["version"] = "9.9.9"; break; }
+            File.WriteAllText(Path.Combine(s8, "input", "lockfile-rows.v1.json"), l8.ToJsonString());
+            var plan8 = LoadEngine(s8).BuildPlan();
+            var subj8 = (plan8.Uncertainty.Findings ?? new()).Select(f => f.Subject).ToList();
+            if (subj8.Count != 1 || !subj8[0].Contains(rows8[0]!["packageId"]!.GetValue<string>()))
+                throw new Exception("case-variant lockfile rows must form ONE T10 finding under the ordinal-first spelling: " + string.Join(",", subj8));
+            Directory.Delete(s8, true);
+            Console.WriteLine("ok   pkgcase-t10-fold (variant lockfiles ⇒ one disagreement, ordinal-first spelling)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-t10-fold: {ex.Message}"); }
+
+        // SPEC-021 (N2): push idempotency extends across delta spellings — same logical upgrade, one branch
+        try
+        {
+            var fc9 = Path.Combine(fixturesRoot, "F-case");
+            var rich9 = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
+            var repo9 = Path.Combine(Path.GetTempPath(), "ua-pc21i-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(Path.Combine(rich9, "sources", "caseA"), repo9);
+            Push.Git(repo9, "init -q .", out _, out _);
+            Push.Git(repo9, "config user.email ua@test", out _, out _);
+            Push.Git(repo9, "config user.name ua-selftest", out _, out _);
+            Push.Git(repo9, "add -A", out _, out _);
+            Push.Git(repo9, "-c user.email=ua@test -c user.name=ua commit -qm base", out _, out _);
+            Push.Git(repo9, "branch -m main", out _, out _);
+            var scoped9 = Path.Combine(Path.GetTempPath(), "ua-pc21j-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(fc9, scoped9);
+            var px9 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scoped9, "input", "package-evidence.v0.json")))!;
+            var factsArr9 = px9["facts"]!.AsArray();
+            for (int i = factsArr9.Count - 1; i >= 0; i--) if (factsArr9[i]!["repo"]!.GetValue<string>() == "caseB") factsArr9.RemoveAt(i);
+            var covArr9 = px9["scanCoverage"]!.AsArray();
+            for (int i = covArr9.Count - 1; i >= 0; i--) if (covArr9[i]!["repo"]!.GetValue<string>() == "caseB") covArr9.RemoveAt(i);
+            File.WriteAllText(Path.Combine(scoped9, "input", "package-evidence.v0.json"), px9.ToJsonString());
+            var out9 = Path.Combine(Path.GetTempPath(), "ua-pc21k-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Push.Run(scoped9, repo9, "main", out9, false, false) != 0) throw new Exception("first push must succeed");
+            var d9 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(scoped9, "input", "delta.json")))!;
+            d9["changes"]![0]!["packageName"] = "Newtonsoft.Json"; // same logical upgrade, different spelling
+            File.WriteAllText(Path.Combine(scoped9, "input", "delta.json"), d9.ToJsonString());
+            if (Push.Run(scoped9, repo9, "main", out9, false, false) != 7)
+                throw new Exception("a differently-spelled delta for the same upgrade must refuse (7) — never a second branch");
+            Push.Git(repo9, "for-each-ref", out var refs9, out _);
+            if (refs9.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).Count(r => r.Contains("ua/wave-")) != 1)
+                throw new Exception("exactly one ua/wave-* branch may exist: " + refs9);
+            ForceDelete(repo9); Directory.Delete(scoped9, true); Directory.Delete(out9, true);
+            Console.WriteLine("ok   pkgcase-push-spelling-idempotency (variant-spelling delta refuses; one branch)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-push-spelling-idempotency: {ex.Message}"); }
+
         // SPEC-019: deps.json evidence + estate refresh + parallel scans
         try
         {

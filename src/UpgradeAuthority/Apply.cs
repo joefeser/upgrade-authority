@@ -15,7 +15,7 @@ public static class Apply
     public sealed class ApplyDelta { public string PackageName = "", Ecosystem = "", ChangeType = "", OldVersion = "", NewVersion = ""; }
     public sealed class ApplyWave { public int Index; public string Status = ""; public List<string> Prerequisites = new(); public string? Condition; public string? BlockedOn; public List<ApplyUnit> Units = new(); }
     public sealed class ApplyUnit { public string Repo = ""; public string Action = ""; public List<ApplyEdit>? Edits; public string? Note; }
-    public sealed class ApplyEdit { public string Kind = "", Path = "", Attribute = "", OldVersion = "", NewVersion = ""; public int Line; public int? EndLine; public string EvidenceKind = ""; public bool Shared; }
+    public sealed class ApplyEdit { public string Kind = "", Path = "", Attribute = "", OldVersion = "", NewVersion = ""; public int Line; public int? EndLine; public string EvidenceKind = ""; public bool Shared; public string PackageId = ""; } // PackageId: the SITE's evidenced spelling (SPEC-021 §2(d)) — emitted only when it differs from delta.packageName
 
     public static int Run(string fixtureDir, string? repoDir, string? outDir)
     {
@@ -54,7 +54,7 @@ public static class Apply
 
             if (repoDir is not null)
             {
-                var rcPatches = WriteVerifiedPatches(manifest, repoDir, outDir, manifest.Delta.PackageName);
+                var rcPatches = WriteVerifiedPatches(manifest, repoDir, outDir);
                 if (rcPatches != 0) return rcPatches;
             }
 
@@ -101,7 +101,7 @@ public static class Apply
 
                 var edits = new List<ApplyEdit>();
                 string? highestSatisfied = null;
-                foreach (var f in engine.ApplyFacts(repo).Where(f => f.PackageId == target))
+                foreach (var f in engine.ApplyFacts(repo).Where(f => Engine.PkgEq(f.PackageId, target))) // SPEC-021 §2(c)
                 {
                     var (kind, attr, shared) = f.ConstraintSource switch
                     {
@@ -115,15 +115,15 @@ public static class Apply
                     var cmp = CompareCore(old, plan.Delta.NewVersion);
                     if (cmp is null) continue; // prerelease/unparseable — N3 territory below
                     if (cmp >= 0) { if (highestSatisfied is null || CompareCore(old, highestSatisfied) > 0) highestSatisfied = old; continue; } // already-satisfied: never a downgrade
-                    edits.Add(new ApplyEdit { Kind = kind, Path = f.Path, Attribute = attr, OldVersion = old, NewVersion = plan.Delta.NewVersion, Line = f.Line ?? 0, EndLine = f.EndLine, EvidenceKind = f.ConstraintSource == "Directory.Packages.props" ? "central-package-version.v0" : "package-evidence.v0", Shared = shared });
+                    edits.Add(new ApplyEdit { Kind = kind, Path = f.Path, Attribute = attr, OldVersion = old, NewVersion = plan.Delta.NewVersion, Line = f.Line ?? 0, EndLine = f.EndLine, EvidenceKind = f.ConstraintSource == "Directory.Packages.props" ? "central-package-version.v0" : "package-evidence.v0", Shared = shared, PackageId = f.PackageId }); // SPEC-021 §2(d): the file's own spelling
                 }
                 edits = edits.OrderBy(e => e.Path, StringComparer.Ordinal).ThenBy(e => e.Line).ToList();
                 // dedup identical (path, line, attribute, old) sites from overlapping facts
-                edits = edits.GroupBy(e => (e.Path, e.Line, e.Attribute, e.OldVersion)).Select(g => g.First()).ToList();
+                edits = edits.GroupBy(e => (e.Path, e.Line, e.Attribute, e.OldVersion, e.PackageId)).Select(g => g.First()).ToList(); // SPEC-021 R2-3: the evidenced spelling joins the key — a variant element sharing the line is never silently dropped
 
                 if (edits.Count > 0) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "edit", Edits = edits });
                 else if (highestSatisfied is not null) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N4(repo, target, highestSatisfied, plan.Delta.NewVersion) });
-                else if (engine.ApplyFacts(repo).Any(f => f.PackageId == target)) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N3(repo, target, ConstraintKind(engine, repo, target)) });
+                else if (engine.ApplyFacts(repo).Any(f => Engine.PkgEq(f.PackageId, target))) aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N3(repo, target, ConstraintKind(engine, repo, target)) });
                 else aw.Units.Add(new ApplyUnit { Repo = repo, Action = "no-edit-site", Note = N1(repo, target) });
             }
             m.Waves.Add(aw);
@@ -133,7 +133,7 @@ public static class Apply
 
     static string ConstraintKind(Engine engine, string repo, string target)
     {
-        var all = engine.ApplyFacts(repo).Where(f => f.PackageId == target).Select(f => f.DeclaredConstraint).ToList();
+        var all = engine.ApplyFacts(repo).Where(f => Engine.PkgEq(f.PackageId, target)).Select(f => f.DeclaredConstraint).ToList();
         if (all.All(c => c.Length == 0)) return "not-evidenced";
         if (all.Any(c => c.StartsWith("redacted:"))) return "redacted";
         if (all.Any(c => c.Length == 0)) return "not-evidenced"; // mixed: at least one unconstrained site
@@ -175,7 +175,7 @@ public static class Apply
     // SPEC-010: the verification + per-wave patch core, shared by `ua apply --repo` and `ua push`
     // (push runs it against a temporary WORKTREE of the base, so verification always targets the
     // tree being committed). Writes wave-N.patch files into patchDir; refuses (exit 6) on any site.
-    internal static int WriteVerifiedPatches(ApplyManifest manifest, string repoDir, string patchDir, string packageId)
+    internal static int WriteVerifiedPatches(ApplyManifest manifest, string repoDir, string patchDir)
     {
         foreach (var w in manifest.Waves)
         {
@@ -185,7 +185,7 @@ public static class Apply
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
                 {
-                    var (ok, err, change) = VerifySite(repoDir, e, packageId);
+                    var (ok, err, change) = VerifySite(repoDir, e);
                     if (!ok)
                     {
                         Console.Error.WriteLine($"error: {err}");
@@ -226,7 +226,7 @@ public static class Apply
 
     // ---- site verification (SPEC-009 §5): exactly one full-selector match in the window ----
 
-    static (bool Ok, string Error, (int Line, string Old, string New)? Change) VerifySite(string repoDir, ApplyEdit e, string packageId)
+    static (bool Ok, string Error, (int Line, string Old, string New)? Change) VerifySite(string repoDir, ApplyEdit e)
     {
         var full = Path.Combine(repoDir, e.Path);
         if (!File.Exists(full)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
@@ -243,7 +243,7 @@ public static class Apply
             // PR14 Q3/C-P1: the line must NAME THE TARGET PACKAGE. R2-1 tightens further: the version
             // match must live in the SAME XML ELEMENT as the package id — minified files put several
             // elements on one line, and a neighbor's attribute must never satisfy this site.
-            foreach (var (spanStart, spanEnd) in ElementSpansNaming(line, e, packageId))
+            foreach (var (spanStart, spanEnd) in ElementSpansNaming(line, e)) // SPEC-021 §2(d): the site's OWN evidenced spelling; the file matcher itself stays Ordinal
             {
                 var span = line[spanStart..(spanEnd + 1)];
                 foreach (var (oldText, newText) in patterns)
@@ -252,18 +252,19 @@ public static class Apply
             }
         }
         if (matches.Count == 0)
-            return (false, $"stale evidence: {e.Path} line ~{e.Line}: no occurrence of {e.Attribute}=\"{e.OldVersion}\" naming {packageId} within the evidence window (expected {e.OldVersion})", null);
+            return (false, $"stale evidence: {e.Path} line ~{e.Line}: no occurrence of {e.Attribute}=\"{e.OldVersion}\" naming {e.PackageId} within the evidence window (expected {e.OldVersion})", null);
         if (matches.Count > 1)
-            return (false, $"ambiguous site: {e.Path} line ~{e.Line}: {matches.Count} identical occurrences of {packageId} {e.Attribute}=\"{e.OldVersion}\" — refusing to guess", null);
+            return (false, $"ambiguous site: {e.Path} line ~{e.Line}: {matches.Count} identical occurrences of {e.PackageId} {e.Attribute}=\"{e.OldVersion}\" — refusing to guess", null);
         return (true, "", matches[0]);
     }
 
     // Fragments of the line, one per OCCURRENCE of an element naming the target package: from the '<'
     // before the naming attribute to the next '>' after it. Ranges — never deduped by content: two
     // identical duplicate elements are two occurrences (ambiguity), not one.
-    static List<(int Start, int End)> ElementSpansNaming(string line, ApplyEdit e, string packageId)
+    static List<(int Start, int End)> ElementSpansNaming(string line, ApplyEdit e)
     {
         var spans = new List<(int Start, int End)>();
+        var packageId = e.PackageId; // SPEC-021 §2(d): the SITE's evidenced spelling — matched Ordinal (never folded)
         var namers = e.Kind == "E4"
             ? new[] { $"id=\"{packageId}\"", $"id='{packageId}'" }
             : new[] { $"Include=\"{packageId}\"", $"Include='{packageId}'", $"Update=\"{packageId}\"", $"Update='{packageId}'" };
@@ -389,6 +390,9 @@ public static class Apply
                         Str(sb, 7, "newVersion"); sb.Append(": "); Str(sb, ed.NewVersion); sb.Append(",\n");
                         Str(sb, 7, "line"); sb.Append(": ").Append(ed.Line); sb.Append(",\n");
                         Str(sb, 7, "evidenceKind"); sb.Append(": "); Str(sb, ed.EvidenceKind);
+                        // SPEC-021 §2 (R1-2): the site's evidenced spelling rides the manifest ONLY when it
+                        // differs from delta.packageName — zero churn on the variant-free corpus, replayable where it matters
+                        if (!string.Equals(ed.PackageId, m.Delta.PackageName, StringComparison.Ordinal)) { sb.Append(",\n"); Str(sb, 7, "packageId"); sb.Append(": "); Str(sb, ed.PackageId); }
                         if (ed.Shared) { sb.Append(",\n"); Str(sb, 7, "shared"); sb.Append(": true"); }
                         sb.Append("\n            }").Append(e < unit.Edits.Count - 1 ? "," : "").Append("\n");
                     }

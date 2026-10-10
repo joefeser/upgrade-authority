@@ -3,7 +3,8 @@
 **Status:** revision 3 — amendment: classification-`unknown` repos are visible in `repos[]` (2026-10-08 real-estate finding; previously silently dropped, producing a false `0 unknown` summary). Revision 2: round-1 consolidated fixes (quorum batch: Qodo 7 High + Codex 11 P1/2 P2; golden changes GC1–GC7 in `docs/reviews/pr3-round1/GOLDEN-CHANGES.md`)
 **Author:** ZCode (coordinator)
 **Date:** 2026-10-02
-**Depends on:** SPEC-002 (fused graph) · SPEC-000 §2.4 (plan semantics) · fixture corpus (merged — normative, byte-exact)
+**Depends on:**
+> **Amended by SPEC-021 (2026-10-10):** affected-rule matching AND the not-affected closure (`affectedPkgs`) compare package ids OrdinalIgnoreCase — a variant-spelled row/fact is never invisible to either side. T10 groups case-insensitively (reported spelling ordinal-first). SPEC-002 (fused graph) · SPEC-000 §2.4 (plan semantics) · fixture corpus (merged — normative, byte-exact)
 
 ## 1. Purpose
 

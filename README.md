@@ -88,7 +88,7 @@ See [docs/FEATURES.md](docs/FEATURES.md) for the full tour and [docs/COMPARISONS
 
 ## Status
 
-V0 feature-complete: the full chain above is implemented, specified, and pinned by a 139-case deterministic selftest that runs byte-exact on Windows, macOS, and Linux (checkout line endings are pinned by `.gitattributes`; a selftest guard fails loudly on a CRLF checkout). The fixture corpus includes real tracemap scan output for multi-project estates — central package management, version overrides, multi-TFM lockfiles, legacy `packages.config`, and producer/consumer graphs.
+V0 feature-complete: the full chain above is implemented, specified, and pinned by a 148-case deterministic selftest that runs byte-exact on Windows, macOS, and Linux (checkout line endings are pinned by `.gitattributes`; a selftest guard fails loudly on a CRLF checkout). The fixture corpus includes real tracemap scan output for multi-project estates — central package management, version overrides, multi-TFM lockfiles, legacy `packages.config`, and producer/consumer graphs.
 
 Roadmap sketches (not built): persistent storage behind the planner, an action queue for long-running campaigns, vulnerability-intelligence ingestion, multi-user operation with roles.
 
