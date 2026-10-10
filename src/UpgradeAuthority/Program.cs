@@ -2710,27 +2710,37 @@ public static class Program
                     Directory.Delete(sEsc, true); if (Directory.Exists(outE)) Directory.Delete(outE, true);
                     // PR6 Codex r8: an ANCESTOR symlinked directory pointing outside must also refuse —
                     // the final file itself is a regular file, so FileInfo.LinkTarget alone would miss it
+                    string? linkRepo = null, outsideDir = null, sL = null, outL = null;
                     try
                     {
-                        var outsideDir = Path.Combine(Path.GetTempPath(), "ua-pc21-out-" + Guid.NewGuid().ToString("N")[..8]);
+                        outsideDir = Path.Combine(Path.GetTempPath(), "ua-pc21-out-" + Guid.NewGuid().ToString("N")[..8]);
                         var outsideSrc = Path.Combine(outsideDir, "src"); Directory.CreateDirectory(outsideSrc);
                         File.Copy(Path.Combine(richC, "sources", "caseA", "src", "App.csproj"), Path.Combine(outsideSrc, "App.csproj"));
-                        var linkRepo = Path.Combine(Path.GetTempPath(), "ua-pc21-link-" + Guid.NewGuid().ToString("N")[..8]);
+                        linkRepo = Path.Combine(Path.GetTempPath(), "ua-pc21-link-" + Guid.NewGuid().ToString("N")[..8]);
                         Directory.CreateDirectory(linkRepo);
-                        Directory.CreateSymbolicLink(Path.Combine(linkRepo, "linked-src"), outsideSrc);
-                        var sL = Path.Combine(Path.GetTempPath(), "ua-pc21-lf-" + Guid.NewGuid().ToString("N")[..8]);
+                        Directory.CreateSymbolicLink(Path.Combine(linkRepo, "linked-src"), outsideSrc); // may throw where symlinks need privileges
+                        sL = Path.Combine(Path.GetTempPath(), "ua-pc21-lf-" + Guid.NewGuid().ToString("N")[..8]);
                         CopyDir(scoped, sL);
                         var pxL = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sL, "input", "package-evidence.v0.json")))!;
                         foreach (var fl in pxL["facts"]!.AsArray()) fl!["path"] = "linked-src/App.csproj";
                         File.WriteAllText(Path.Combine(sL, "input", "package-evidence.v0.json"), pxL.ToJsonString());
-                        var outL = Path.Combine(Path.GetTempPath(), "ua-pc21-lo-" + Guid.NewGuid().ToString("N")[..8]);
-                        var rcL = Apply.Run(sL, linkRepo, outL);
-                        if (rcL != 6) throw new Exception($"an ancestor symlink outside the checkout must refuse (6), got {rcL}");
-                        Directory.Delete(sL, true); if (Directory.Exists(outL)) Directory.Delete(outL, true);
-                        Directory.Delete(outsideDir, true); Directory.Delete(linkRepo, true);
+                        outL = Path.Combine(Path.GetTempPath(), "ua-pc21-lo-" + Guid.NewGuid().ToString("N")[..8]);
                     }
                     catch (Exception exS) when (exS is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-                    { Console.WriteLine($"note: ancestor-symlink pin skipped on this platform ({exS.GetType().Name})"); }
+                    { Console.WriteLine($"note: ancestor-symlink pin skipped on this platform ({exS.GetType().Name}) — symlink creation unavailable"); goto skippedSymlinkPin; }
+                    try
+                    {
+                        var rcL = Apply.Run(sL!, linkRepo!, outL!);
+                        if (rcL != 6) throw new Exception($"an ancestor symlink outside the checkout must refuse (6), got {rcL}"); // NEVER skippable: verifier failures must fail the suite (PR6 Baz r9)
+                    }
+                    finally
+                    {
+                        if (sL is not null) Directory.Delete(sL, true);
+                        if (Directory.Exists(outL)) Directory.Delete(outL, true);
+                        if (Directory.Exists(outsideDir)) Directory.Delete(outsideDir, true);
+                        if (Directory.Exists(linkRepo)) Directory.Delete(linkRepo, true);
+                    }
+                    skippedSymlinkPin:;
                 }
                 if (patch.Contains("Serilog") && patch.Contains("-    <PackageReference Include=\"Serilog")) throw new Exception("Serilog must not be edited");
                 Directory.Delete(scoped, true); Directory.Delete(outR, true);

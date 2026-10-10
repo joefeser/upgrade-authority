@@ -187,7 +187,7 @@ public static class Apply
         foreach (var w in manifest.Waves)
         {
             var anyUnit = w.Units.Count > 0;
-            var edited = new List<(string Path, List<(int Line, string Old, string New, int Col)> Changes)>();
+            var edited = new List<(string Path, string Resolved, List<(int Line, string Old, string New, int Col, string Path2)> Changes)>();
             foreach (var u in w.Units)
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
@@ -200,7 +200,7 @@ public static class Apply
                     }
                     if (change is null) continue;
                     var file = edited.FirstOrDefault(x => x.Path == e.Path);
-                    if (file.Path is null) edited.Add((e.Path, new List<(int, string, string, int)> { change!.Value }));
+                    if (file.Path is null) edited.Add((e.Path, change!.Value.Resolved, new List<(int, string, string, int, string)> { change!.Value }));
                     else file.Changes.Add(change!.Value);
                 }
             }
@@ -210,9 +210,9 @@ public static class Apply
                 continue;
             }
             var sb = new StringBuilder();
-            foreach (var (path, changes) in edited.OrderBy(x => x.Path, StringComparer.Ordinal))
+            foreach (var (path, resolvedPath, changes) in edited.OrderBy(x => x.Path, StringComparer.Ordinal))
             {
-                var full = Path.Combine(repoDir, path);
+                var full = resolvedPath; // the containment-cleared target the sites were verified against — never a fresh resolve (PR6 Codex r9)
                 var text = File.ReadAllText(full);
                 var crlf = text.Contains("\r\n");
                 var hadFinalNewline = text.EndsWith("\n");
@@ -224,7 +224,7 @@ public static class Apply
                 // right-to-left within a line — a same-line neighbor carrying the identical version
                 // attribute is never rewritten by a site that did not verify it.
                 foreach (var g in changes.GroupBy(c => c.Line).OrderByDescending(g => g.Key))
-                    foreach (var (line, old, @new, col) in g.OrderByDescending(c => c.Col))
+                    foreach (var (line, old, @new, col, _) in g.OrderByDescending(c => c.Col))
                         after[line - 1] = after[line - 1].Remove(col, old.Length).Insert(col, @new);
                 var nl = crlf ? "\r\n" : "\n";
                 sb.Append(UnifiedDiff(path, before.ToArray(), after.ToArray(), nl, hadFinalNewline));
@@ -254,13 +254,13 @@ public static class Apply
         return cur;
     }
 
-    static (bool Ok, string Error, (int Line, string Old, string New, int Col)? Change) VerifySite(string repoDir, ApplyEdit e)
+    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved)? Change) VerifySite(string repoDir, ApplyEdit e)
     {
         // PR6 Baz r7/Codex r8: the edit's Path is untrusted evidence — it must resolve INSIDE the
         // canonical checkout with EVERY symlink component (and chained links) resolved (an ancestor
         // symlinked directory escapes FileInfo.LinkTarget checks), and carry no control characters
         // (a newline forges patch headers; a tab corrupts unified-diff filename delimiters).
-        if (e.Path.Any(c => c < 0x20 || c == 0x7f))
+        if (e.Path.Any(char.IsControl)) // C0, DEL, and the Unicode C1 range alike (PR6 Codex r9)
             return (false, "stale evidence: edit path contains control characters — refused", null);
         var checkoutRoot = ResolveSymlinks(Path.GetFullPath(repoDir));
         var full = Path.GetFullPath(Path.Combine(Path.GetFullPath(repoDir), e.Path));
@@ -274,7 +274,7 @@ public static class Apply
         var start = Math.Max(1, e.Line - 2);
         var end = Math.Min(lines.Length, (e.EndLine ?? e.Line) + 2);
         var patterns = AttrPatterns(e.Attribute, e.OldVersion, e.NewVersion);
-        var matches = new List<(int Line, string Old, string New, int Col)>();
+        var matches = new List<(int Line, string Old, string New, int Col, string Resolved)>();
         for (var i = start; i <= end; i++)
         {
             var line = lines[i - 1];
@@ -286,7 +286,7 @@ public static class Apply
                 var span = line[spanStart..(spanEnd + 1)];
                 foreach (var (oldText, newText) in patterns)
                     for (var idx = span.IndexOf(oldText, StringComparison.Ordinal); idx >= 0; idx = span.IndexOf(oldText, idx + 1, StringComparison.Ordinal))
-                        matches.Add((i, oldText, newText, spanStart + idx)); // ABSOLUTE column of the verified occurrence (PR6 Baz r1: patch generation replaces exactly this occurrence, never a same-line neighbor)
+                        matches.Add((i, oldText, newText, spanStart + idx, resolved)); // ABSOLUTE column of the verified occurrence (PR6 Baz r1) + the RESOLVED path that passed containment (PR6 Codex r9: patch generation reads THIS target, never a re-resolve that a retargeted symlink could divert)
             }
         }
         if (matches.Count == 0)
