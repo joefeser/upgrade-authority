@@ -101,5 +101,5 @@ Organized by the pipeline. Every behavior listed here is specified (see `docs/sp
 ## 7. Engineering guarantees
 
 - **Zero dependencies** — a .NET 10 console tool with no NuGet packages; runs offline on macOS, Linux, and Windows (verified on an isolated, network-disabled Windows machine).
-- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-021`); the fixture corpus (28 goldens) pins behaviors byte-exactly, including real scan data; the 149-case selftest covers goldens, input-permutation invariance, and every typed refusal.
+- **Specified then built** — every feature has a reviewed spec (`SPEC-000`…`SPEC-021`); the fixture corpus (29 goldens) pins behaviors byte-exactly, including real scan data; the 149-case selftest covers goldens, input-permutation invariance, and every typed refusal.
 - **Fidelity discipline** — golden changes require recorded, reviewed reasons (`docs/reviews/*/GOLDEN-CHANGES.md`); nothing is silently regenerated.
