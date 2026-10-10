@@ -279,7 +279,9 @@ public sealed class Engine
             var ds = new List<(string Repo, string Pkg)>();
             foreach (var f in FactsOf(repo)) { if (ProducerInPlan(f.PackageId) is { } pp && pp != repo) ds.Add((pp, f.PackageId)); }
             foreach (var row in LockProvable(repo).Where(r => r.Type == "direct")) { if (ProducerInPlan(row.PackageId) is { } pp && pp != repo) ds.Add((pp, row.PackageId)); }
-            ds = ds.Distinct().ToList(); // SPEC-007 §5.2: same package in two lockfiles = one edge
+            ds = ds.GroupBy(d => (d.Repo, Pk(d.Pkg))) // SPEC-007 §5.2 one edge per package, FOLDED (PR6 Baz r7): a fact and a case-variant lock row of one package are ONE edge
+                   .Select(g => g.OrderBy(d => d.Pkg, StringComparer.Ordinal).First()) // deterministic spelling: ordinal-first of the group
+                   .ToList();
             ds.Sort((x, y) => string.CompareOrdinal(x.Repo + "\0" + x.Pkg, y.Repo + "\0" + y.Pkg));
             if (ds.Count > 0) deps[repo] = ds;
         }

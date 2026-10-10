@@ -2653,8 +2653,14 @@ public static class Program
             if (docC.GetProperty("repos").EnumerateArray().Any(r => r.GetProperty("reasons").EnumerateArray().Any(x => x.GetString()!.Contains("Serilog") && r.GetProperty("repo").GetString() == "caseB" && false))) throw new Exception("unreachable");
             // the negative: Serilog is never the target — no repo's action targets it
             if (planC.Contains("targets Serilog")) throw new Exception("Serilog (genuinely different package) must stay untouched");
-            // apply.v1: both edit sites derived, each carrying its OWN evidenced spelling (conditional emission)
-            var applyText = File.ReadAllText(Path.Combine(fc, "golden", "apply.v1.json"));
+            // apply.v1: the GENERATED manifest must equal the golden byte-for-byte (PR6 Baz r7: parsing
+            // the committed golden would miss a generation regression that drops the conditional packageId)
+            var genOut = Path.Combine(Path.GetTempPath(), "ua-pc21-gen-" + Guid.NewGuid().ToString("N")[..8]);
+            if (Apply.Run(fc, null, genOut) != 0) throw new Exception("manifest-only apply run failed");
+            var applyText = File.ReadAllText(Path.Combine(genOut, "apply.v1.json"));
+            var applyGolden = File.ReadAllText(Path.Combine(fc, "golden", "apply.v1.json"));
+            if (applyText != applyGolden) throw new Exception("generated apply.v1 differs from golden");
+            Directory.Delete(genOut, true);
             var applyDoc = JsonDocument.Parse(applyText).RootElement;
             if (applyDoc.GetProperty("delta").GetProperty("packageName").GetString() != "NEWTONSOFT.JSON") throw new Exception("delta echo wrong");
             var editIds = applyDoc.GetProperty("waves").EnumerateArray()
@@ -2690,6 +2696,19 @@ public static class Program
                 var golden = File.ReadAllText(Path.Combine(fc2, "golden", "patches", repo, "wave-1.patch"));
                 if (patch != golden) throw new Exception($"{repo}: patch differs from golden");
                 if (!patch.Contains($"Include=\"{spell}\" Version=\"13.0.3\"")) throw new Exception($"{repo}: patched line must keep its original case");
+                if (repo == "caseA")
+                {
+                    // PR6 Baz r7: an edit path escaping the checkout (or forging headers) is a typed refusal
+                    var sEsc = Path.Combine(Path.GetTempPath(), "ua-pc21-esc-" + Guid.NewGuid().ToString("N")[..8]);
+                    CopyDir(scoped, sEsc);
+                    var pxE = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sEsc, "input", "package-evidence.v0.json")))!;
+                    pxE["facts"]![0]!["path"] = "../outside.csproj";
+                    File.WriteAllText(Path.Combine(sEsc, "input", "package-evidence.v0.json"), pxE.ToJsonString());
+                    var outE = Path.Combine(Path.GetTempPath(), "ua-pc21-esco-" + Guid.NewGuid().ToString("N")[..8]);
+                    var rcE = Apply.Run(sEsc, Path.Combine(richC, "sources", "caseA"), outE);
+                    if (rcE != 6) throw new Exception($"an escaping edit path must refuse (6), got {rcE}");
+                    Directory.Delete(sEsc, true); if (Directory.Exists(outE)) Directory.Delete(outE, true);
+                }
                 if (patch.Contains("Serilog") && patch.Contains("-    <PackageReference Include=\"Serilog")) throw new Exception("Serilog must not be edited");
                 Directory.Delete(scoped, true); Directory.Delete(outR, true);
             }
