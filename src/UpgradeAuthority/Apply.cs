@@ -193,17 +193,18 @@ public static class Apply
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
                 {
-                    var (ok, err, change) = VerifySite(repoDir, e, verifiedTexts.TryGetValue(e.Path, out var snap) ? snap.Text : null);
-                    if (ok && change is not null && !verifiedTexts.ContainsKey(e.Path))
-                        verifiedTexts[e.Path] = (change.Value.Resolved, change.Value.Text);
+                    var (ok, err, change) = VerifySite(repoDir, e, verifiedTexts);
                     if (!ok)
                     {
                         Console.Error.WriteLine($"error: {err}");
                         return RefusalExit;
                     }
                     if (change is null) continue;
-                    var file = edited.FirstOrDefault(x => x.Path == e.Path);
-                    if (file.Path is null) edited.Add((e.Path, change!.Value.Resolved, change!.Value.Text, new List<(int, string, string, int)> { (change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col) }));
+                    // PR6 Baz r12: aggregate by the RESOLVED identity — two raw aliases of one file (a
+                    // symlink) are ONE file: one snapshot, one patch section (duplicate sections would
+                    // fail git apply). The header keeps the ordinal-first raw path (edits arrive sorted).
+                    var file = edited.FirstOrDefault(x => x.Resolved == change!.Value.Resolved);
+                    if (file.Resolved is null) edited.Add((e.Path, change!.Value.Resolved, change!.Value.Text, new List<(int, string, string, int)> { (change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col) }));
                     else file.Changes.Add((change!.Value.Line, change!.Value.Old, change!.Value.New, change!.Value.Col));
                 }
             }
@@ -257,7 +258,7 @@ public static class Apply
         return cur;
     }
 
-    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved, string Text)? Change) VerifySite(string repoDir, ApplyEdit e, string? knownText = null)
+    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved, string Text)? Change) VerifySite(string repoDir, ApplyEdit e, Dictionary<string, (string Resolved, string Text)> verifiedByResolved)
     {
         // PR6 Baz r7/Codex r8: the edit's Path is untrusted evidence — it must resolve INSIDE the
         // canonical checkout with EVERY symlink component (and chained links) resolved (an ancestor
@@ -271,7 +272,7 @@ public static class Apply
         if (!resolved.StartsWith(checkoutRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) && resolved != checkoutRoot)
             return (false, $"stale evidence: {e.Path} resolves outside the checkout — refused", null);
         if (!File.Exists(resolved)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
-        var text = knownText ?? File.ReadAllText(resolved); // read ONCE per PATH (PR6 Codex r10/r11): every edit of this path verifies against the SAME snapshot; generation reuses those bytes
+        var text = verifiedByResolved.TryGetValue(resolved, out var snap) ? snap.Text : File.ReadAllText(resolved); // ONE read per RESOLVED file (PR6 Codex r10/r11 + Baz r12): raw-path aliases share the snapshot
         var lines = text.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         // window: ±2 around the COMPLETE evidence span (PR14 Q1/C2) — a multiline element's value
         // can sit several lines below its opening tag.
@@ -279,6 +280,7 @@ public static class Apply
         var end = Math.Min(lines.Length, (e.EndLine ?? e.Line) + 2);
         var patterns = AttrPatterns(e.Attribute, e.OldVersion, e.NewVersion);
         var matches = new List<(int Line, string Old, string New, int Col, string Resolved, string Text)>();
+        if (!verifiedByResolved.ContainsKey(resolved) && File.Exists(resolved)) verifiedByResolved[resolved] = (resolved, text); // cache AFTER the read is known good; refusal paths never pollute it
         for (var i = start; i <= end; i++)
         {
             var line = lines[i - 1];
