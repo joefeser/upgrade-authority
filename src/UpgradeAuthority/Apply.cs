@@ -272,6 +272,7 @@ public static class Apply
             return (false, $"stale evidence: {e.Path} resolves outside the checkout — refused", null);
         if (!File.Exists(resolved)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
         var text = knownText ?? File.ReadAllText(resolved); // read ONCE per PATH (PR6 Codex r10/r11): every edit of this path verifies against the SAME snapshot; generation reuses those bytes
+        var lines = text.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         // window: ±2 around the COMPLETE evidence span (PR14 Q1/C2) — a multiline element's value
         // can sit several lines below its opening tag.
         var start = Math.Max(1, e.Line - 2);
