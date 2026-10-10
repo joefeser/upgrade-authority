@@ -465,34 +465,109 @@ public static class Ingest
             var pv = Prop(f, "version");
             if (f.Properties is not null && f.Properties.TryGetValue("version", out var pvEl) && pvEl.ValueKind != JsonValueKind.String)
             { pv = null; ingestGaps.Add($"PackageProduced fact {f.FactId}: version unevidenced (hashed/unsafe) — {pkg}"); repoIngestGaps.Add((key, $"producer version unevidenced: {pkg}")); }
-            var srcName = Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "";
-            producedProducers.Add(new ProducerEntry { Repo = key, PackageId = pkg!, ProducedVersion = string.IsNullOrEmpty(pv) ? null : pv, EvidenceNote = $"tracemap PackageProduced ({srcName})", Provenance = "project-declared" }); // SPEC-020 §2: recorded at fusion, never reconstructed
+            // SPEC-020 §2b consuming contract (tracemap #851): the fact's provenance property is
+            // sourceKind — "ci-workflow" ⇒ ci-defined (workflow pack definitions; version may be
+            // absent = unresolvable template, honest), anything else ⇒ project-declared.
+            // (PR7 Baz r2) shape validation: a present-but-non-string sourceKind, or a ci-workflow claim
+            // without its contract companions (manifestKind=github-workflow AND a workflowPath — the
+            // extractor always emits both), is a malformed/fabricated CI claim — a typed skip, never a
+            // silent reclassification that could outrank (or hide behind) genuine project evidence.
+            string? sourceKind = null;
+            var malformedCi = false;
+            if (f.Properties is not null && f.Properties.TryGetValue("sourceKind", out var skEl))
+            {
+                if (skEl.ValueKind != JsonValueKind.String) { malformedCi = true; }
+                else sourceKind = skEl.GetString();
+            }
+            var ciDefined = sourceKind == "ci-workflow";
+            if (ciDefined && (Prop(f, "manifestKind") != "github-workflow" || Prop(f, "workflowPath") is null)) malformedCi = true;
+            if (malformedCi)
+            { ingestGaps.Add($"skipped PackageProduced fact {f.FactId}: malformed ci-workflow claim (sourceKind must be a string; ci-workflow requires manifestKind 'github-workflow' and a workflowPath)"); repoIngestGaps.Add((key, "skipped PackageProduced fact: malformed ci-workflow claim")); continue; }
+            var srcName = ciDefined
+                ? (Prop(f, "workflowPath") ?? Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "") // the workflow IS the source; projectPath may be absent by the reviewed disposition
+                : (Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "");
+            producedProducers.Add(new ProducerEntry { Repo = key, PackageId = pkg!, ProducedVersion = string.IsNullOrEmpty(pv) ? null : pv, EvidenceNote = $"tracemap PackageProduced ({srcName})", Provenance = ciDefined ? "ci-defined" : "project-declared" }); // SPEC-020 §2: recorded at fusion, never reconstructed
         }
 
         // PR5 Baz round 2: scan-vs-scan duplicates are NOT sidecar overrides — dedup BEFORE the merge so
         // every duplicate the merge loop sees is genuinely cross-source. Identical declarations collapse
         // silently (idempotent, case-insensitive — NuGet ids); one package at TWO versions inside the
         // scan is an honest warning (evidenced beats unevidenced, then ordinal — fact order never decides).
+        // SPEC-020 §2b (tracemap #851): provenance PRECEDES version in the ordering — precedence is
+        // operator > ci > project, so a ci-workflow claim of a package beats a project-declared claim of
+        // the SAME package even at the same version (the loser is noted, never silently dropped); two
+        // versions inside ONE source remain the scan contradicting itself.
         var dedupedScan = new List<ProducerEntry>();
         foreach (var g in producedProducers.GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant())))
         {
-            // the raw repo spelling is the FINAL tie-breaker: spellings NormBasic collapses ("R" vs "R/")
-            // must never make the persisted entry fact-order dependent (PR5 Baz round 3)
+            int ProvRank(string? prov) => prov switch { "ci-defined" => 0, _ => 1 }; // ci-defined first AMONG CONFLICTS (equal evidence)
+            // PR7 Baz r6: EVIDENCE outranks class — a versionless claim conflicts with nothing, so a
+            // concrete lower-class version must not be dropped from planning (VersionGroups) by an
+            // unevidenced higher-class claim; class breaks ties among equally-evidenced claims.
             var ordered = g.OrderBy(p => Ord(p.ProducedVersion) == "" ? 1 : 0)
+                           .ThenBy(p => ProvRank(p.Provenance))
                            .ThenBy(p => Ord(p.ProducedVersion), StringComparer.Ordinal)
                            .ThenBy(p => p.PackageId, StringComparer.Ordinal)
                            .ThenBy(p => Ord(p.EvidenceNote), StringComparer.Ordinal)
                            .ThenBy(p => p.Repo, StringComparer.Ordinal).ToList();
-            var claims = ordered.Select(p => p.ProducedVersion).Distinct().ToList();
-            if (claims.Count > 1)
+            var winner = ordered[0];
+            // SPEC-020 §2: cross-source precedence notes the loser (both provenances named) — once per
+            // DISTINCT losing (provenance, version) claim; identical duplicate facts never flood stderr (PR7 Codex r1)
+            foreach (var loser in ordered.Where(p => p != winner && p.Provenance != winner.Provenance)
+                                         .GroupBy(p => (p.Provenance, p.ProducedVersion)).Select(grp => grp.First()))
             {
-                // bounded rendering: a pathological scan cannot flood stderr — first 5 claims + omitted count
-                var shown = claims.OrderBy(v => Ord(v), StringComparer.Ordinal)
-                    .Take(5).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v)}'").ToList();
-                if (claims.Count > shown.Count) shown.Add($"(+{claims.Count - shown.Count} more)");
-                Console.Error.WriteLine($"warning: scan declares '{Esc(ordered[0].Repo)}/{Esc(ordered[0].PackageId)}' at {claims.Count} versions ({string.Join(", ", shown)}) — '{Esc(Ord(ordered[0].ProducedVersion) == "" ? "unevidenced" : ordered[0].ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+                // three shapes: the class conflict (ci over project at equal evidence — the SPEC-020 §2
+                // rule); the evidence inversion (a versionless ci claim cannot drop a concrete project
+                // version — precedence resolves CONFLICTS, and a versionless claim conflicts with
+                // nothing); and the mirrored versionless-project loser under a versioned ci winner
+                var why = loser.ProducedVersion is null && ProvRank(loser.Provenance) < ProvRank(winner.Provenance)
+                    ? "evidence beats unevidence — the losing ci-workflow claim carries no version (not a conflict); operator sidecar still wins at merge"
+                    : loser.ProducedVersion is null && ProvRank(loser.Provenance) > ProvRank(winner.Provenance)
+                        ? "the losing project claim carries no version (not a conflict)"
+                        : "operator sidecar still wins over both at merge (SPEC-020 §2)";
+                Console.Error.WriteLine($"warning: producer precedence for {Esc(NormBasic(winner.Repo))}/{Esc(winner.PackageId)} — {Esc(winner.Provenance!)} '{Esc(winner.ProducedVersion ?? "unevidenced")}' kept over {Esc(loser.Provenance!)} '{Esc(loser.ProducedVersion ?? "unevidenced")}'; {why}");
             }
-            dedupedScan.Add(ordered[0]);
+            // the self-contradiction check runs PER SOURCE CLASS (PR7 Codex r1): a losing provenance that is
+            // internally inconsistent (two versions inside project-declared, say) still gets its honest
+            // diagnostic — precedence resolving the classes must not silence a class contradicting itself
+            foreach (var byProv in g.GroupBy(p => p.Provenance ?? ""))
+            {
+                // bounded rendering (PR7 Baz r2 + Codex r4, ACTUALLY LANDED THIS TIME — the round-3
+                // commit claimed this cap but shipped only the Program.cs half): distinct tracking is
+                // CAPPED at 64 — no unbounded internal set, no fabricated exact count past the cap
+                // deterministic + bounded (PR7 Baz r6): sort the class's version strings ONCE (references
+                // to already-materialized input — no new memory), walk the distinct run, cap at 64; the
+                // shown five are the TRUE ordinal-first regardless of fact order, and the cap point is fixed
+                const int claimCap = 64;
+                var seen = new HashSet<string?>();
+                var overflowed = false;
+                var top = new List<string?>();
+                foreach (var v in byProv.Select(p => p.ProducedVersion).OrderBy(v2 => Ord(v2), StringComparer.Ordinal))
+                {
+                    if (!seen.Add(v)) continue; // duplicates prove nothing new; only the honest 65th DISTINCT value overflows (PR7 Codex r5)
+                    if (seen.Count > claimCap) { overflowed = true; break; }
+                    if (top.Count < 5) top.Add(v); // the stream is ordinal-sorted — the first 5 distinct ARE the smallest
+                }
+                var total = seen.Count;
+                if (total <= 1 && !overflowed) continue;
+                var totalText = overflowed ? $"{claimCap}+" : $"{total}";
+                var shown = top.Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v!)}'").ToList();
+                if (overflowed) shown.Add("(+more)"); else if (total > shown.Count) shown.Add($"(+{total - shown.Count} more)");
+                var classWinner = ordered.First(p => p.Provenance == byProv.Key); // the class's own ordinal-ordered pick
+                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {totalText} versions ({string.Join(", ", shown)}) within {Esc(byProv.Key)} claims — '{Esc(Ord(classWinner.ProducedVersion) == "" ? "unevidenced" : classWinner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+            }
+            dedupedScan.Add(winner);
+            // PR7 Codex r7: a VERSIONLESS claim of another provenance class conflicts with nothing —
+            // it persists ALONGSIDE the versioned winner (both recorded), so the ci source's existence
+            // survives into the registry's ciDefined count instead of reading as absent. Conflicting
+            // (versioned) losers are still dropped with their warning; the one-entry-per-package model
+            // holds exactly where versions actually conflict.
+            foreach (var shadow in g.Where(p => p != winner && p.Provenance != winner.Provenance && Ord(p.ProducedVersion) == "")
+                                    .GroupBy(p => p.Provenance).Select(grp => grp.First()))
+                // PR7 Codex r8: the shadow adopts the WINNER's identity spelling — the group is one
+                // package (case-folded), and a variant-spelled shadow would trip the loader's own
+                // SPEC-021 same-sidecar rejection; the shadow's provenance + versionless-ness is the claim
+                dedupedScan.Add(new ProducerEntry { Repo = winner.Repo, PackageId = winner.PackageId, ProducedVersion = null, EvidenceNote = shadow.EvidenceNote, Provenance = shadow.Provenance });
         }
         producedProducers = dedupedScan;
 

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "tracemap-ingest",
+  "facts": [],
+  "scanCoverage": [
+    {
+      "repo": "both",
+      "status": "complete",
+      "gaps": []
+    },
+    {
+      "repo": "pure-ci",
+      "status": "complete",
+      "gaps": []
+    },
+    {
+      "repo": "vers",
+      "status": "gaps",
+      "gaps": [
+        "CI workflow producer analysis reported \u0060ci-producer-version-template\u0060.",
+        "CI workflow producer evidence is partial or unavailable. unresolved version template ${{ matrix.pkg }}."
+      ],
+      "notes": [
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    }
+  ]
+}

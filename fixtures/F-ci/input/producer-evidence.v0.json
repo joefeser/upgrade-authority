@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "externalPackages": [],
+  "producers": [
+    {
+      "repo": "both",
+      "packageId": "Contoso.Core",
+      "producedVersion": "9.9.9",
+      "evidenceNote": "tracemap PackageProduced (.github/workflows/pack.yml)",
+      "provenance": "ci-defined"
+    },
+    {
+      "repo": "pure-ci",
+      "packageId": "Contoso.Sample",
+      "producedVersion": "0.1.0",
+      "evidenceNote": "tracemap PackageProduced (.github/workflows/pack.yml)",
+      "provenance": "ci-defined"
+    },
+    {
+      "repo": "vers",
+      "packageId": "Contoso.Templated",
+      "evidenceNote": "tracemap PackageProduced (.github/workflows/pack.yml)",
+      "provenance": "ci-defined"
+    }
+  ]
+}

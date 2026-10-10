@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "Contoso.Sample",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "0.1.0",
+    "newVersion": "0.2.0"
+  },
+  "repos": [
+    {
+      "repo": "pure-ci",
+      "classification": "affected",
+      "reasons": [
+        "produces Contoso.Sample (delta target)"
+      ],
+      "ownership": "self",
+      "actionType": "executable",
+      "evidenceKinds": [
+        "producer-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "fixture-declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "both",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "vers",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      },
+      "scanNotes": [
+        "analysisLevel: Level1SemanticAnalysisReduced",
+        "scan buildStatus: FailedOrPartial"
+      ]
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "ready",
+      "prerequisites": [],
+      "releaseUnits": [
+        {
+          "repo": "pure-ci",
+          "packages": [
+            "Contoso.Sample"
+          ],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": []
+  }
+}
