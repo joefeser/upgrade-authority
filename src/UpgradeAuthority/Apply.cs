@@ -188,11 +188,14 @@ public static class Apply
         {
             var anyUnit = w.Units.Count > 0;
             var edited = new List<(string Path, string Resolved, string Text, List<(int Line, string Old, string New, int Col)> Changes)>();
+        var verifiedTexts = new Dictionary<string, (string Resolved, string Text)>(); // per-path snapshot: one read, every edit of the path verifies against it (PR6 Codex r11)
             foreach (var u in w.Units)
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
                 {
-                    var (ok, err, change) = VerifySite(repoDir, e);
+                    var (ok, err, change) = VerifySite(repoDir, e, verifiedTexts.TryGetValue(e.Path, out var snap) ? snap.Text : null);
+                    if (ok && change is not null && !verifiedTexts.ContainsKey(e.Path))
+                        verifiedTexts[e.Path] = (change.Value.Resolved, change.Value.Text);
                     if (!ok)
                     {
                         Console.Error.WriteLine($"error: {err}");
@@ -254,7 +257,7 @@ public static class Apply
         return cur;
     }
 
-    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved, string Text)? Change) VerifySite(string repoDir, ApplyEdit e)
+    static (bool Ok, string Error, (int Line, string Old, string New, int Col, string Resolved, string Text)? Change) VerifySite(string repoDir, ApplyEdit e, string? knownText = null)
     {
         // PR6 Baz r7/Codex r8: the edit's Path is untrusted evidence — it must resolve INSIDE the
         // canonical checkout with EVERY symlink component (and chained links) resolved (an ancestor
@@ -268,8 +271,7 @@ public static class Apply
         if (!resolved.StartsWith(checkoutRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) && resolved != checkoutRoot)
             return (false, $"stale evidence: {e.Path} resolves outside the checkout — refused", null);
         if (!File.Exists(resolved)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
-        var text = File.ReadAllText(resolved); // read ONCE (PR6 Codex r10): generation reuses these bytes — no second resolution a swapped ancestor could divert
-        var lines = text.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var text = knownText ?? File.ReadAllText(resolved); // read ONCE per PATH (PR6 Codex r10/r11): every edit of this path verifies against the SAME snapshot; generation reuses those bytes
         // window: ±2 around the COMPLETE evidence span (PR14 Q1/C2) — a multiline element's value
         // can sit several lines below its opening tag.
         var start = Math.Max(1, e.Line - 2);
