@@ -3000,6 +3000,82 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-n4-honesty: {ex.Message}"); }
 
+        // SPEC-020 §2b consuming half (tracemap #851): ci-workflow producer facts — real-byte e2e
+        try
+        {
+            var fcC = Path.Combine(fixturesRoot, "F-ci");
+            var richC = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich", "ci-scans"));
+            // REAL ingest over the committed --index-ci-producers scans (pure-CI, both-sources, versionless)
+            var sideC = Path.Combine(Path.GetTempPath(), "ua-ci21-side-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(sideC);
+            File.WriteAllText(Path.Combine(sideC, "producer.json"), "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[]}");
+            File.WriteAllText(Path.Combine(sideC, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"pure-ci\",\"team\":\"team-a\"},{\"repo\":\"both\",\"team\":\"team-a\"},{\"repo\":\"vers\",\"team\":\"team-a\"}]}");
+            File.WriteAllText(Path.Combine(sideC, "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"https://example.invalid/x.git\",\"sourceCommitSha\":\"0000000000000000000000000000000000000000\",\"changes\":[{\"id\":\"ci\",\"packageName\":\"Contoso.Sample\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"0.1.0\",\"newVersion\":\"0.2.0\"}]}");
+            var outC = Path.Combine(Path.GetTempPath(), "ua-ci21-out-" + Guid.NewGuid().ToString("N")[..8]);
+            var errPrevC = Console.Error;
+            var swC = new System.IO.StringWriter();
+            int rcC;
+            try { Console.SetError(swC); rcC = Ingest.Run(new[] { Path.Combine(richC, "pureci"), Path.Combine(richC, "bothsources"), Path.Combine(richC, "versionless") }, outC, Path.Combine(sideC, "producer.json"), Path.Combine(sideC, "ownership.json"), Path.Combine(sideC, "delta.json")); }
+            finally { Console.SetError(errPrevC); }
+            if (rcC != 0) throw new Exception($"ci ingest exited {rcC}");
+            var warnC = swC.ToString();
+            if (!warnC.Contains("producer precedence for both/Contoso.Core") || !warnC.Contains("ci-defined '9.9.9' kept over project-declared '1.0.0'"))
+                throw new Exception("cross-source precedence must note the loser with both provenances: " + warnC);
+            // fixture goldens: plan/report/registry byte-exact + determinism + the pinned assertions
+            if (Canonical.Write(LoadEngine(fcC).BuildPlan()) != File.ReadAllText(Path.Combine(fcC, "golden", "plan.json"))) throw new Exception("F-ci plan differs from golden");
+            if (Report.Render(LoadEngine(fcC).BuildPlan()) != File.ReadAllText(Path.Combine(fcC, "golden", "report.md"))) throw new Exception("F-ci report differs from golden");
+            var (regC, regRcC) = Registry.Run(fcC);
+            if (regRcC != 0 || regC != File.ReadAllText(Path.Combine(fcC, "golden", "registry.v1.json"))) throw new Exception("F-ci registry differs from golden");
+            if (Registry.Run(fcC).Item1 != regC) throw new Exception("F-ci registry not deterministic");
+            var docC = JsonDocument.Parse(regC!).RootElement;
+            var sumC = docC.GetProperty("provenanceSummary");
+            if (sumC.GetProperty("ciDefined").GetInt32() != 3 || sumC.GetProperty("projectDeclared").GetInt32() != 0)
+                throw new Exception("ciDefined must count 3 real ci-workflow entries: " + sumC.GetRawText());
+            if (sumC.GetProperty("note").GetString()!.Contains("not yet available"))
+                throw new Exception("the availability note must flip to the present variant over nonzero ciDefined");
+            var prodsC = docC.GetProperty("producers").EnumerateArray()
+                .Where(p2 => p2.GetProperty("repo").GetString() == "both").ToList();
+            if (prodsC.Count != 1 || prodsC[0].GetProperty("provenance").GetString() != "ci-defined" || prodsC[0].GetProperty("producedVersion").GetString() != "9.9.9")
+                throw new Exception("precedence yields ONE ci-defined entry for both/Contoso.Core");
+            var versC2 = docC.GetProperty("producers").EnumerateArray()
+                .First(p2 => p2.GetProperty("repo").GetString() == "vers");
+            if (versC2.TryGetProperty("producedVersion", out _))
+                throw new Exception("an unresolvable template version omits producedVersion entirely (never guessed)");
+            Directory.Delete(outC, true); Directory.Delete(sideC, true);
+            Console.WriteLine("ok   ci-provenance-real-e2e (real #851 scans: ci-defined at fusion, precedence notes loser, note flips, versionless honest)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL ci-provenance-real-e2e: {ex.Message}"); }
+
+        // SPEC-020 §2b: operator > ci at the merge; same-source two versions stay a self-contradiction;
+        // the pre-spec marker fallback classifies a provenance-less ci entry as project-declared (honest pre-spec)
+        try
+        {
+            var fcD = Path.Combine(fixturesRoot, "F-ci");
+            // the operator > ci merge: a sidecar claiming the ci-discovered package wins, warning names both provenances
+            var richD = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich", "ci-scans"));
+            var sideD = Path.Combine(Path.GetTempPath(), "ua-ci21-side2-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(sideD);
+            File.WriteAllText(Path.Combine(sideD, "producer.json"), "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[{\"repo\":\"pure-ci\",\"packageId\":\"Contoso.Sample\",\"producedVersion\":\"0.0.1\"}]}");
+            File.WriteAllText(Path.Combine(sideD, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"pure-ci\",\"team\":\"team-a\"}]}");
+            File.WriteAllText(Path.Combine(sideD, "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"https://example.invalid/x.git\",\"sourceCommitSha\":\"0000000000000000000000000000000000000000\",\"changes\":[{\"id\":\"ci\",\"packageName\":\"Contoso.Sample\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"0.0.1\",\"newVersion\":\"0.2.0\"}]}");
+            var outD = Path.Combine(Path.GetTempPath(), "ua-ci21-out2-" + Guid.NewGuid().ToString("N")[..8]);
+            var errPrevD = Console.Error;
+            var swD = new System.IO.StringWriter();
+            int rcD2;
+            try { Console.SetError(swD); rcD2 = Ingest.Run(new[] { Path.Combine(richD, "pureci") }, outD, Path.Combine(sideD, "producer.json"), Path.Combine(sideD, "ownership.json"), Path.Combine(sideD, "delta.json")); }
+            finally { Console.SetError(errPrevD); }
+            if (rcD2 != 0) throw new Exception($"operator-override ingest exited {rcD2}");
+            if (!swD.ToString().Contains("operator-declared") || !swD.ToString().Contains("ci-defined"))
+                throw new Exception("operator>ci conflict must name both provenances: " + swD);
+            var peD = JsonDocument.Parse(File.ReadAllText(Path.Combine(outD, "input", "producer-evidence.v0.json"))).RootElement;
+            var pureD2 = peD.GetProperty("producers").EnumerateArray().Where(p2 => p2.GetProperty("repo").GetString() == "pure-ci").ToList();
+            if (pureD2.Count != 1 || pureD2[0].GetProperty("provenance").GetString() != "operator-declared" || pureD2[0].GetProperty("producedVersion").GetString() != "0.0.1")
+                throw new Exception("operator wins over ci with ONE entry: " + pureD2[0].GetRawText());
+            Directory.Delete(sideD, true); Directory.Delete(outD, true);
+            Console.WriteLine("ok   ci-provenance-precedence (operator > ci > project; conflict names both provenances)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL ci-provenance-precedence: {ex.Message}"); }
+
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-push-spelling-idempotency: {ex.Message}"); }
 

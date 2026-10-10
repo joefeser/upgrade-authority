@@ -1,0 +1,31 @@
+{
+  "scanId": "scan-cabefc6fac9ee31fa516",
+  "repoName": "pure-ci",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "e43879990d70f896bacf5ed16bb87d5c13230332",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-10T17:40:56.747575+00:00",
+  "analysisLevel": "Level1SemanticAnalysis",
+  "buildStatus": "Succeeded",
+  "solutions": [],
+  "projects": [
+    "src/Sample.csproj"
+  ],
+  "targetFrameworks": [
+    "net10.0"
+  ],
+  "knownGaps": [],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "33918cba2a82202fffbb3fbd6e804686",
+  "gitRootHash": "b2cbfc1d3a8211726cfce0637d2aff33",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "f3734eff2fda87a8cca817fb74258d5996d555fd9fff4ef9df661378544e79c4"
+}

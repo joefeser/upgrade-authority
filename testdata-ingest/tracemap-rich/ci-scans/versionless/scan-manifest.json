@@ -1,0 +1,33 @@
+{
+  "scanId": "scan-69094f5ae04229840cc1",
+  "repoName": "vers",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "1b12a787e9f186053dbfeca6bb3d409f538e2d6f",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-10T17:41:13.230886+00:00",
+  "analysisLevel": "Level1SemanticAnalysisReduced",
+  "buildStatus": "FailedOrPartial",
+  "solutions": [],
+  "projects": [
+    "src/Sample.csproj"
+  ],
+  "targetFrameworks": [
+    "net10.0"
+  ],
+  "knownGaps": [
+    "CI workflow producer analysis reported \u0060ci-producer-version-template\u0060."
+  ],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "e1f5167b733c83eefb6487cab3bd3adf",
+  "gitRootHash": "2aa8df45b9bcbea854af6ba61b05b9e9",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "a3f3c1806fe59e47eea0c926f78a169b628305ab79a0b2da49751bf8bb6e80dc"
+}

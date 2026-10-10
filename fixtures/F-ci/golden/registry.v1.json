@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "registry.v1",
+  "producers": [
+    {
+      "repo": "both",
+      "packageId": "Contoso.Core",
+      "producedVersion": "9.9.9",
+      "provenance": "ci-defined"
+    },
+    {
+      "repo": "pure-ci",
+      "packageId": "Contoso.Sample",
+      "producedVersion": "0.1.0",
+      "provenance": "ci-defined"
+    },
+    {
+      "repo": "vers",
+      "packageId": "Contoso.Templated",
+      "provenance": "ci-defined"
+    }
+  ],
+  "boundary": {
+    "internalPackages": [
+      "Contoso.Core",
+      "Contoso.Sample",
+      "Contoso.Templated"
+    ],
+    "externalPackages": [],
+    "unknownPackages": [],
+    "anomalies": {
+      "producedAndDeclaredExternal": []
+    }
+  },
+  "provenanceSummary": {
+    "projectDeclared": 0,
+    "operatorDeclared": 0,
+    "ciDefined": 3,
+    "note": "ci-defined entries present — recorded at fusion (the tracemap CI-workflow slice's consuming contract: SPEC-020 §2b)"
+  }
+}

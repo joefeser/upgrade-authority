@@ -465,34 +465,50 @@ public static class Ingest
             var pv = Prop(f, "version");
             if (f.Properties is not null && f.Properties.TryGetValue("version", out var pvEl) && pvEl.ValueKind != JsonValueKind.String)
             { pv = null; ingestGaps.Add($"PackageProduced fact {f.FactId}: version unevidenced (hashed/unsafe) — {pkg}"); repoIngestGaps.Add((key, $"producer version unevidenced: {pkg}")); }
-            var srcName = Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "";
-            producedProducers.Add(new ProducerEntry { Repo = key, PackageId = pkg!, ProducedVersion = string.IsNullOrEmpty(pv) ? null : pv, EvidenceNote = $"tracemap PackageProduced ({srcName})", Provenance = "project-declared" }); // SPEC-020 §2: recorded at fusion, never reconstructed
+            // SPEC-020 §2b consuming contract (tracemap #851): the fact's provenance property is
+            // sourceKind — "ci-workflow" ⇒ ci-defined (workflow pack definitions; version may be
+            // absent = unresolvable template, honest), anything else ⇒ project-declared.
+            var ciDefined = Prop(f, "sourceKind") == "ci-workflow";
+            var srcName = ciDefined
+                ? (Prop(f, "workflowPath") ?? Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "") // the workflow IS the source; projectPath may be absent by the reviewed disposition
+                : (Prop(f, "projectPath") ?? f.Evidence?.FilePath ?? "");
+            producedProducers.Add(new ProducerEntry { Repo = key, PackageId = pkg!, ProducedVersion = string.IsNullOrEmpty(pv) ? null : pv, EvidenceNote = $"tracemap PackageProduced ({srcName})", Provenance = ciDefined ? "ci-defined" : "project-declared" }); // SPEC-020 §2: recorded at fusion, never reconstructed
         }
 
         // PR5 Baz round 2: scan-vs-scan duplicates are NOT sidecar overrides — dedup BEFORE the merge so
         // every duplicate the merge loop sees is genuinely cross-source. Identical declarations collapse
         // silently (idempotent, case-insensitive — NuGet ids); one package at TWO versions inside the
         // scan is an honest warning (evidenced beats unevidenced, then ordinal — fact order never decides).
+        // SPEC-020 §2b (tracemap #851): provenance PRECEDES version in the ordering — precedence is
+        // operator > ci > project, so a ci-workflow claim of a package beats a project-declared claim of
+        // the SAME package even at the same version (the loser is noted, never silently dropped); two
+        // versions inside ONE source remain the scan contradicting itself.
         var dedupedScan = new List<ProducerEntry>();
         foreach (var g in producedProducers.GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant())))
         {
+            int ProvRank(string? prov) => prov switch { "ci-defined" => 0, _ => 1 }; // ci-defined first; project-declared (the only other scan provenance) after
             // the raw repo spelling is the FINAL tie-breaker: spellings NormBasic collapses ("R" vs "R/")
             // must never make the persisted entry fact-order dependent (PR5 Baz round 3)
-            var ordered = g.OrderBy(p => Ord(p.ProducedVersion) == "" ? 1 : 0)
+            var ordered = g.OrderBy(p => ProvRank(p.Provenance))
+                           .ThenBy(p => Ord(p.ProducedVersion) == "" ? 1 : 0)
                            .ThenBy(p => Ord(p.ProducedVersion), StringComparer.Ordinal)
                            .ThenBy(p => p.PackageId, StringComparer.Ordinal)
                            .ThenBy(p => Ord(p.EvidenceNote), StringComparer.Ordinal)
                            .ThenBy(p => p.Repo, StringComparer.Ordinal).ToList();
-            var claims = ordered.Select(p => p.ProducedVersion).Distinct().ToList();
+            var winner = ordered[0];
+            var losers = ordered.Where(p => !ReferenceEquals(p, winner) && p.Provenance != winner.Provenance).ToList();
+            foreach (var loser in losers) // SPEC-020 §2: cross-source precedence notes the loser (both provenances named)
+                Console.Error.WriteLine($"warning: producer precedence for {Esc(NormBasic(winner.Repo))}/{Esc(winner.PackageId)} — {Esc(winner.Provenance!)} '{Esc(winner.ProducedVersion ?? "unevidenced")}' kept over {Esc(loser.Provenance!)} '{Esc(loser.ProducedVersion ?? "unevidenced")}'; operator sidecar still wins over both at merge (SPEC-020 §2)");
+            var claims = ordered.Where(p => p.Provenance == winner.Provenance).Select(p => p.ProducedVersion).Distinct().ToList();
             if (claims.Count > 1)
             {
                 // bounded rendering: a pathological scan cannot flood stderr — first 5 claims + omitted count
                 var shown = claims.OrderBy(v => Ord(v), StringComparer.Ordinal)
                     .Take(5).Select(v => $"'{Esc(Ord(v) == "" ? "unevidenced" : v)}'").ToList();
                 if (claims.Count > shown.Count) shown.Add($"(+{claims.Count - shown.Count} more)");
-                Console.Error.WriteLine($"warning: scan declares '{Esc(ordered[0].Repo)}/{Esc(ordered[0].PackageId)}' at {claims.Count} versions ({string.Join(", ", shown)}) — '{Esc(Ord(ordered[0].ProducedVersion) == "" ? "unevidenced" : ordered[0].ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
+                Console.Error.WriteLine($"warning: scan declares '{Esc(winner.Repo)}/{Esc(winner.PackageId)}' at {claims.Count} versions ({string.Join(", ", shown)}) — '{Esc(Ord(winner.ProducedVersion) == "" ? "unevidenced" : winner.ProducedVersion!)}' kept; the scan contradicts itself (a human resolves)");
             }
-            dedupedScan.Add(ordered[0]);
+            dedupedScan.Add(winner);
         }
         producedProducers = dedupedScan;
 
