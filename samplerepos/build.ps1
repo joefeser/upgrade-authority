@@ -169,6 +169,7 @@ function Invoke-StagePlan {
     if (($prereqs | Where-Object { $_ -like '*available from the public feed*' }).Count -lt 1) { throw 'plan (Diesel): T5 must fire' }
     $conditions = @($plan2.waves | ForEach-Object { $_.condition } | Where-Object { $_ })
     if (($conditions | Where-Object { $_ -like '*external ground-crew releases*' }).Count -lt 1) { throw 'plan (Diesel): T6 (external team coordination) must fire' }
+    if (($prereqs | Where-Object { $_ -like '*available and restorable from the consumer environment*' }).Count -lt 1) { throw 'plan (Diesel): T6a (consumer-environment restorability) must fire' }   # PR8 Codex r2
     $ground = $plan2.repos | Where-Object { $_.repo -eq 'Cassowary.GroundOps' }
     if (-not $ground -or $ground.actionType -ne 'external-request-await') { throw 'plan (Diesel): the GroundOps producer must be external-request-await (coordination, not executable work)' }
     $booker = $plan2.repos | Where-Object { $_.repo -eq 'Cassowary.Booker' }
