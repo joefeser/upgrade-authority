@@ -223,9 +223,13 @@ public static class Push
         // SPEC-021 §3: idempotency-by-refusal extends to SPELLING variants — git refs are case-sensitive,
         // so a differently-spelled delta for the same logical upgrade would otherwise mint a second
         // branch/PR. Compare the constructed ref against every existing ua/wave-* ref ignoring case.
-        Git(repoDir, "for-each-ref --format=%(refname:short) refs/heads/ua/wave-", out var existingWaveRefs, out _);
+        // The ref-glob must be refs/heads/ua/** — a "ua/wave-" prefix pattern matches NOTHING in git's
+        // glob semantics (the wave- prefix is filtered here). Caught by Linux CI: macOS passed only via
+        // its case-insensitive filesystem colliding at branch creation.
+        Git(repoDir, "for-each-ref --format=%(refname:short) refs/heads/ua/**", out var existingWaveRefs, out _);
         var existingFolded = existingWaveRefs.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(r => r.Trim()).Where(r => r.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Select(r => r.Trim()).Where(r => r.StartsWith("ua/wave-", StringComparison.Ordinal))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var w in manifest.Waves.Where(w => w.Units.Any(u => u.Edits is { Count: > 0 })))
         {
             var br = $"ua/wave-{w.Index}/{manifest.Delta.PackageName}-{manifest.Delta.OldVersion}-to-{manifest.Delta.NewVersion}";

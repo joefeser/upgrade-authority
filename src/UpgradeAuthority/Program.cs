@@ -2693,7 +2693,34 @@ public static class Program
                 if (patch.Contains("Serilog") && patch.Contains("-    <PackageReference Include=\"Serilog")) throw new Exception("Serilog must not be edited");
                 Directory.Delete(scoped, true); Directory.Delete(outR, true);
             }
-            Console.WriteLine("ok   pkgcase-apply-per-repo (real CLI, committed sources, patch goldens, case preserved)"); pass++;
+            // PR6 Baz round 1: a same-line neighbor carrying the IDENTICAL version attribute is never
+            // rewritten — patch generation replaces exactly the verified (line, column) occurrence
+            {
+                var sN = Path.Combine(Path.GetTempPath(), "ua-pc21n-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(Path.Combine(fixturesRoot, "F-case"), sN);
+                var pxN = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sN, "input", "package-evidence.v0.json")))!;
+                pxN["facts"] = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"packageId\":\"newtonsoft.json\",\"declaredConstraint\":\"12.0.3\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":1,\"endLine\":1,\"projects\":[\"src/App.csproj\"],\"commitSha\":\"c2\",\"path\":\"src/App.csproj\"}")!);
+                pxN["scanCoverage"] = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"status\":\"complete\"}")!);
+                File.WriteAllText(Path.Combine(sN, "input", "package-evidence.v0.json"), pxN.ToJsonString());
+                var owN = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(sN, "input", "ownership.v0.json")))!;
+                owN["ownerships"] = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse("{\"repo\":\"caseA\",\"team\":\"team-a\"}")!);
+                File.WriteAllText(Path.Combine(sN, "input", "ownership.v0.json"), owN.ToJsonString());
+                var repoN = Path.Combine(Path.GetTempPath(), "ua-pc21r-" + Guid.NewGuid().ToString("N")[..8]);
+                Directory.CreateDirectory(Path.Combine(repoN, "src"));
+                File.WriteAllText(Path.Combine(repoN, "src", "App.csproj"),
+                    "<Project><ItemGroup><PackageReference Include=\"Serilog\" Version=\"12.0.3\" /><PackageReference Include=\"newtonsoft.json\" Version=\"12.0.3\" /></ItemGroup></Project>\n");
+                var outN = Path.Combine(Path.GetTempPath(), "ua-pc21s-" + Guid.NewGuid().ToString("N")[..8]);
+                var rcN = Apply.Run(sN, repoN, outN);
+                if (rcN != 0) throw new Exception($"same-line apply exited {rcN}");
+                var patchN = File.ReadAllText(Path.Combine(outN, "wave-1.patch"));
+                if (patchN.Contains("+") && patchN.Substring(patchN.IndexOf('+')).Contains("Serilog\" Version=\"13.0.3\""))
+                    throw new Exception("the unverified same-line Serilog element must keep 12.0.3:\n" + patchN);
+                if (!patchN.Contains("newtonsoft.json\" Version=\"13.0.3\"")) throw new Exception("the verified element must be rewritten:\n" + patchN);
+                if (patchN.Contains("-") && patchN.Substring(patchN.IndexOf('-')).Contains("Serilog\" Version=\"12.0.3\"") && !patchN.Contains("net8.0"))
+                { /* the minus side legitimately shows the original line; only the PLUS side is asserted */ }
+                Directory.Delete(sN, true); Directory.Delete(repoN, true); Directory.Delete(outN, true);
+            }
+            Console.WriteLine("ok   pkgcase-apply-per-repo (real CLI, committed sources, patch goldens, case preserved; same-line neighbor untouched)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-apply-per-repo: {ex.Message}"); }
 

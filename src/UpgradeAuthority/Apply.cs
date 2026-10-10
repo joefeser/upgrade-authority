@@ -180,7 +180,7 @@ public static class Apply
         foreach (var w in manifest.Waves)
         {
             var anyUnit = w.Units.Count > 0;
-            var edited = new List<(string Path, List<(int Line, string Old, string New)> Changes)>();
+            var edited = new List<(string Path, List<(int Line, string Old, string New, int Col)> Changes)>();
             foreach (var u in w.Units)
             {
                 foreach (var e in u.Edits ?? new List<ApplyEdit>())
@@ -193,7 +193,7 @@ public static class Apply
                     }
                     if (change is null) continue;
                     var file = edited.FirstOrDefault(x => x.Path == e.Path);
-                    if (file.Path is null) edited.Add((e.Path, new List<(int, string, string)> { change!.Value }));
+                    if (file.Path is null) edited.Add((e.Path, new List<(int, string, string, int)> { change!.Value }));
                     else file.Changes.Add(change!.Value);
                 }
             }
@@ -213,8 +213,12 @@ public static class Apply
                 var before = raw.Select(l => l.TrimEnd('\r')).ToList();
                 if (before.Count > 0 && before[^1] == "" && hadFinalNewline) before.RemoveAt(before.Count - 1); // trailing split artifact
                 var after = before.ToList();
-                foreach (var (line, old, @new) in changes.OrderByDescending(c => c.Line)) // apply bottom-up so indices hold
-                    after[line - 1] = after[line - 1].Replace(old, @new);
+                // PR6 Baz r1: replace EXACTLY the verified occurrence (line + column), bottom-up and
+                // right-to-left within a line — a same-line neighbor carrying the identical version
+                // attribute is never rewritten by a site that did not verify it.
+                foreach (var g in changes.GroupBy(c => c.Line).OrderByDescending(g => g.Key))
+                    foreach (var (line, old, @new, col) in g.OrderByDescending(c => c.Col))
+                        after[line - 1] = after[line - 1].Remove(col, old.Length).Insert(col, @new);
                 var nl = crlf ? "\r\n" : "\n";
                 sb.Append(UnifiedDiff(path, before.ToArray(), after.ToArray(), nl, hadFinalNewline));
             }
@@ -226,7 +230,7 @@ public static class Apply
 
     // ---- site verification (SPEC-009 §5): exactly one full-selector match in the window ----
 
-    static (bool Ok, string Error, (int Line, string Old, string New)? Change) VerifySite(string repoDir, ApplyEdit e)
+    static (bool Ok, string Error, (int Line, string Old, string New, int Col)? Change) VerifySite(string repoDir, ApplyEdit e)
     {
         var full = Path.Combine(repoDir, e.Path);
         if (!File.Exists(full)) return (false, $"stale evidence: {e.Path} does not exist in the checkout", null);
@@ -236,7 +240,7 @@ public static class Apply
         var start = Math.Max(1, e.Line - 2);
         var end = Math.Min(lines.Length, (e.EndLine ?? e.Line) + 2);
         var patterns = AttrPatterns(e.Attribute, e.OldVersion, e.NewVersion);
-        var matches = new List<(int Line, string Old, string New)>();
+        var matches = new List<(int Line, string Old, string New, int Col)>();
         for (var i = start; i <= end; i++)
         {
             var line = lines[i - 1];
@@ -248,7 +252,7 @@ public static class Apply
                 var span = line[spanStart..(spanEnd + 1)];
                 foreach (var (oldText, newText) in patterns)
                     for (var idx = span.IndexOf(oldText, StringComparison.Ordinal); idx >= 0; idx = span.IndexOf(oldText, idx + 1, StringComparison.Ordinal))
-                        matches.Add((i, oldText, newText));
+                        matches.Add((i, oldText, newText, spanStart + idx)); // ABSOLUTE column of the verified occurrence (PR6 Baz r1: patch generation replaces exactly this occurrence, never a same-line neighbor)
             }
         }
         if (matches.Count == 0)

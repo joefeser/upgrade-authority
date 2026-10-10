@@ -81,6 +81,16 @@ public sealed class Engine
             throw new UaException($"rejected: package-delta.v1 must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)");
         _c = delta.Changes[0]; _pe = pe; _ow = ow; _px = px; _scope = scope;
         _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
+        // Mirrors load FIRST (PR6 Codex r1): the producer fold below resolves repos through Norm, so an
+        // alias+canonical pair claiming one id must already map to one identity — and the STATIC map must
+        // be reset before this fixture's producers read it (multi-engine processes never inherit stale mirrors).
+        _mirrors.Clear();
+        foreach (var m in ow.Mirrors)
+        {
+            var canonical = NormBasic(m.Canonical);
+            foreach (var a in m.Aliases) _mirrors[NormBasic(a)] = canonical;
+            if (NormBasic(m.Canonical) != canonical) _mirrors[NormBasic(m.Canonical)] = canonical;
+        }
         foreach (var e in pe.ExternalPackages) _external.Add(e.PackageId);
         // SPEC-021 §2 typed rejection: ONE sidecar claiming the same (repo, packageId) in two spellings
         // is the sidecar contradicting itself about one package — the SPEC-007 rule applied to producer
@@ -100,13 +110,6 @@ public sealed class Engine
             if (p.PublicationStatus is not null) _pubStatus[(repo, Pk(p.PackageId))] = p.PublicationStatus;
         }
         foreach (var kv in _produced) kv.Value.Sort(new NaturalComparer());
-        _mirrors.Clear();
-        foreach (var m in ow.Mirrors)
-        {
-            var canonical = NormBasic(m.Canonical);
-            foreach (var a in m.Aliases) _mirrors[NormBasic(a)] = canonical;
-            if (NormBasic(m.Canonical) != canonical) _mirrors[NormBasic(m.Canonical)] = canonical;
-        }
         if (_pendingFreshness is not null) // SPEC-019: applied AFTER mirrors load (Codex P2 r2); under BOTH the raw
         {                                // key (lockfile rows key RepoKey verbatim) and Norm (aliases + URL hosts resolve)
             foreach (var e in _pendingFreshness.Repos)
@@ -741,7 +744,7 @@ public sealed class Engine
                     var cBasis = cRow.Provenance is null ? "lockfile"
                         : $"build output (deps.json), freshness: {(_depsFreshness.GetValueOrDefault(repo) == "fresh-by-build" ? "fresh-by-build (built at the scanned commit)" : "fresh")}";
                     var direct = via is not null
-                        ? (LockOf(repo).FirstOrDefault(r => r.PackageId == via && r.Type == "direct") is { } vp ? vp.PackageId : null)
+                        ? (LockOf(repo).FirstOrDefault(r => PkgEq(r.PackageId, via) && r.Type == "direct") is { } vp ? vp.PackageId : null) // SPEC-021 (PR6 Baz r1): the direct parent may spell the id differently than the transitive row's Via
                         : null;
                     if (via is null)
                         e.Reasons.Add($"transitive exposure to {Target} evidenced by {repo}'s {cBasis} rows (parent not evidenced — dependencyNames absent or exceeded 256 chars)");
