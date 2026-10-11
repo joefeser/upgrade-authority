@@ -321,7 +321,11 @@ public static class Program
     {
         var parent = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-        File.WriteAllText(path, text, new System.Text.UTF8Encoding(false));
+        // PR9 r1: atomic replace — a truncated write can never masquerade as a complete artifact
+        var tmp = path + ".tmp-" + Guid.NewGuid().ToString("N")[..8];
+        File.WriteAllText(tmp, text, new System.Text.UTF8Encoding(false));
+        try { File.Move(tmp, path, overwrite: true); }
+        catch { File.Delete(tmp); throw; }
         Console.Error.WriteLine($"wrote {path}");
     }
 
@@ -3212,13 +3216,18 @@ public static class Program
                 throw new Exception("consts wrong");
             if (!d3b.GetProperty("profileRefs")[0].GetString()!.Contains("ua-hacp-profile-v0.1")) throw new Exception("profile ref missing");
             var stops3b = d3b.GetProperty("stopConditions").EnumerateArray().Select(s => s.GetString()!).ToList();
-            if (stops3b.Count != 1 || !stops3b[0].Contains("C1 unresolved") || !stops3b[0].Contains("claims"))
-                throw new Exception("blockedOn must resolve to the contradiction's subject+claims, never a bare id: " + string.Join("|", stops3b));
+            if (stops3b.Count != 1 || !stops3b[0].Contains("P5 producer") || !stops3b[0].Contains("R1 claims P5") || !stops3b[0].Contains("R6 claims P5"))
+                throw new Exception("blockedOn must resolve to the contradiction's subject AND both claims: " + string.Join("|", stops3b));
+            var pid3b = d3b.GetProperty("packetId").GetString()!;
+            if (!pid3b.Contains("-to-") || !pid3b.Contains("-wave-1"))
+                throw new Exception("packetId must carry the full delta identity (old-to-new) and the wave: " + pid3b);
+            var ev3b = d3b.GetProperty("expectedEvidence").EnumerateArray().Select(s => s.GetString()!).ToList();
+            if (!ev3b.Any(s => s.StartsWith("delta: ") && s.Contains("->")))
+                throw new Exception("the delta target line must ride expectedEvidence");
             // the digest self-recomputes (structure-level cross-check; the byte-level cross-check
             // against the reference canonicalize lib ran at implementation and is recorded in the PR)
             var bodyRows = new List<(string, object)> { ("recordKind", "hacp.v0_3_candidate.task_packet"), ("n", 1) };
-            var dgt = Packet.Digest(("digest-placeholder", 0) is var _ ? bodyRows : bodyRows);
-            if (dgt.Length != 64 || dgt.Any(c => !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f'))) throw new Exception("digest must be 64 lowercase hex");
+            if (!Packet.VerifyDigest(pk1!)) throw new Exception("the EMITTED packet's digest must verify through the independent round-trip path");
             // ready-wave fallback + gated shapes via the samplerepos harness outputs (integration truth)
             var sr = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "samplerepos", "out"));
             if (Directory.Exists(sr))

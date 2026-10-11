@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text;
 
 namespace UpgradeAuthority;
@@ -51,7 +52,9 @@ public static class Packet
     // form) and Digest (JCS form). Dictionary insertion order IS the field order.
     static List<(string Key, object Value)> Build(Engine engine, Plan plan, PlanWave wave)
     {
-        var packetId = $"ua-{plan.Delta.PackageName}-{wave.Index}"; // stable, claimable — aligns with branch-as-claim
+        // PR9 r1 (Codex P1/Sourcery High): the FULL delta identity rides the id — distinct upgrades
+        // of one package never share a claim; exact parity with the ua/wave-N/ branch name
+        var packetId = $"ua-{plan.Delta.PackageName}-{plan.Delta.OldVersion}-to-{plan.Delta.NewVersion}-wave-{wave.Index}";
         var body = new List<(string, object)>
         {
             ("recordKind", "hacp.v0_3_candidate.task_packet"),
@@ -62,7 +65,7 @@ public static class Packet
             {
                 ("humanRequest", HumanRequestConst),
                 ("sourceRefs", SortedSet(wave.ReleaseUnits.Select(u => u.Repo)
-                    .Concat(plan.Repos.Select(r => $"scan:{r.Repo}")).ToArray())),
+                    .Concat(engine.FactsView.Keys.Concat(engine.LockRowsView.Keys).Select(r => $"scan:{r}")).ToArray())), // PR9 r1: only repos with ingested scan evidence — never ownership-only names
             }),
             ("requestedScope", SortedSet(wave.ReleaseUnits.SelectMany(u => new[] { u.Repo }.Concat(u.Packages)).ToArray())),
             ("loopPolicy", new List<(string, object)>
@@ -87,7 +90,10 @@ public static class Packet
     static List<string> ExpectedEvidence(Engine engine, Plan plan, PlanWave wave)
     {
         var manifest = Apply.BuildManifest(engine, plan); // the same derivation apply uses — never a second truth
-        var items = new List<string>();
+        var items = new List<string>
+        {
+            $"delta: {plan.Delta.PackageName} {plan.Delta.OldVersion}->{plan.Delta.NewVersion}", // PR9 r1: the target version is always evidenced, even for republish-only waves
+        };
         foreach (var unit in wave.ReleaseUnits)
         {
             var mu = manifest.Waves.SelectMany(w => w.Units).FirstOrDefault(u => u.Repo == unit.Repo);
@@ -136,6 +142,35 @@ public static class Packet
         };
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Jcs(envelope)))).ToLowerInvariant(); // the contract's value pattern is lowercase hex
     }
+
+    // Independent round-trip verification (PR9 r1): parses the EMITTED text through System.Text.Json
+    // (a second parse+JCS path, not the builder's structure) and recomputes the envelope digest.
+    public static bool VerifyDigest(string emitted)
+    {
+        using var doc = JsonDocument.Parse(emitted);
+        var root = doc.RootElement;
+        var record = new List<(string, object)>();
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Name == "digest") continue;
+            record.Add((prop.Name, JsonToNode(prop.Value)));
+        }
+        var envelope = new List<(string, object)> { ("domain", DigestDomain), ("record", record) };
+        var expected = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Jcs(envelope)))).ToLowerInvariant();
+        var actual = root.GetProperty("digest").GetProperty("value").GetString();
+        return expected == actual;
+    }
+
+    static object JsonToNode(JsonElement e) => e.ValueKind switch
+    {
+        JsonValueKind.String => e.GetString()!,
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.Number => e.TryGetInt32(out var i) ? i : e.TryGetInt64(out var l) ? l : throw new UaException("internal error: non-integral number in a packet (out of JCS scope)"),
+        JsonValueKind.Array => (object)e.EnumerateArray().Select(x => x.GetString()!).ToList(),
+        JsonValueKind.Object => (object)e.EnumerateObject().Select(p => (p.Name, JsonToNode(p.Value))).ToList(),
+        _ => throw new UaException("internal error: unexpected JSON kind in a packet"),
+    };
 
     static List<(string, object)> BodyWithoutDigest(List<(string Key, object Value)> body)
     {
@@ -219,20 +254,32 @@ public static class Packet
     // ---- house display form (2-space, LF, fixed key order — the emitted bytes; only the DIGEST uses JCS) ----
     public static string Write(List<(string Key, object Value)> body)
     {
-        // fail-loud emission-time validation (round-2 advisory): the contract's shape caps
-        const int StringSetItemCap = 1024, TextCap = 4096;
-        foreach (var kv in body)
+        // fail-loud emission-time validation (round-2 advisory + PR9 r1): caps enforced over the WHOLE
+        // record — nested fields included — and counted in Unicode CODE POINTS (JSON Schema maxLength
+        // semantics; string.Length would double-count surrogate pairs)
+        const int StringSetItemCap = 1024, TextCap = 4096, IdCap = 256;
+        int CodePoints(string s) { var n = 0; foreach (var ch in s) if (!char.IsLowSurrogate(ch)) n++; return n; }
+        void Check(string path, string s, int cap, string kind) { if (CodePoints(s) > cap) throw new UaException($"export-packet: {path} exceeds the schema's {cap}-code-point {kind} cap ({CodePoints(s)}) — shorten the source or bump the profile version"); }
+        void Walk(string path, object v)
         {
-            switch (kv.Value)
+            switch (v)
             {
                 case List<string> set:
-                    if (set.Count == 0) throw new UaException($"export-packet: {kv.Key} must carry at least one entry (stringSet minItems is 1)");
-                    foreach (var item in set)
-                        if (item.Length > StringSetItemCap)
-                            throw new UaException($"export-packet: {kv.Key} entry exceeds the schema's {StringSetItemCap}-char stringSet cap ({item.Length} chars) — shorten the source or bump the profile version");
+                    if (set.Count == 0) throw new UaException($"export-packet: {path} must carry at least one entry (stringSet minItems is 1)");
+                    for (int i = 0; i < set.Count; i++) Check($"{path}[{i}]", set[i], StringSetItemCap, "stringSet");
                     break;
-                case string s when s.Length > TextCap && (kv.Key == "boundaryStatement"):
-                    throw new UaException($"export-packet: boundaryStatement exceeds the schema's {TextCap}-char text cap ({s.Length} chars)");
+                case List<(string Key, object Value)> obj:
+                    foreach (var kv2 in obj) Walk($"{path}.{kv2.Key}", kv2.Value);
+                    break;
+            }
+        }
+        foreach (var kv in body)
+        {
+            switch (kv.Key)
+            {
+                case "packetId": case "schemaVersion": case "recordKind": Check(kv.Key, (string)kv.Value, IdCap, "identifier"); break;
+                case "boundaryStatement": Check(kv.Key, (string)kv.Value, TextCap, "text"); break;
+                default: Walk(kv.Key, kv.Value); break;
             }
         }
 

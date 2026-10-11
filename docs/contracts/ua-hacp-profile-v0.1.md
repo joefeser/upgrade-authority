@@ -11,7 +11,7 @@ semantics live in this document, in the record's VALUES, and in `profileRefs:
 | Field | Source |
 |---|---|
 | `recordKind` / `schemaVersion` | schema consts (`hacp.v0_3_candidate.task_packet` / `hacp-0.3-candidate`) |
-| `packetId` | `ua-<delta package>-wave-<N>` — stable and claimable; aligns with ua's branch-name-as-claim (`ua/wave-N/...`) |
+| `packetId` | `ua-<package>-<old>-to-<new>-wave-<N>` — the FULL delta identity: distinct upgrades of one package never share a claim; exact parity with the `ua/wave-N/...` branch name |
 | `digest` | sha256 of the JCS (RFC 8785) serialization of `{"domain":"io.hacp.task-packet.v0.3-candidate","record":<record-minus-digest>}` — implemented in ua, **cross-verified byte-identical against the reference `canonicalize` v4 library**; the emitted display bytes stay in ua's house form (2-space, LF) — only the digest computation uses JCS |
 | `sourceContext.humanRequest` | **constant**: "operator-invoked export; the committed delta sidecar is the request record; ua V0 has no separate human-request artifact" |
 | `sourceContext.sourceRefs` | the wave's release-unit repos + `scan:<repo>` for every planned repo (the scan provenance surface) |
@@ -26,9 +26,13 @@ semantics live in this document, in the record's VALUES, and in `profileRefs:
 
 - **`unit.basis`** (`assumed-same-repo`): the V0 unit MODEL — semantics documented here, carried by
   the profile, not a record field. A future basis value is a profile-semantics change.
-- **`wave.status`**: reconstructible from `stopConditions` content — the inverse mapping: the
-  fallback constant ⇒ `ready`; a `condition`/prerequisite set ⇒ `conditional`; an `unresolved`
-  contradiction entry ⇒ `provisional`. Documented here as the consumer's read-back.
+- **`wave.status`**: PARTIALLY reconstructible from `stopConditions` — the fallback constant ⇒
+  `ready`; a `condition` ⇒ `conditional`; an `unresolved` contradiction ⇒ `provisional`. A wave
+  carrying ONLY prerequisites is ambiguous between `ready` and `conditional` (ua emits ready waves
+  with non-blocking prerequisites) — a coordinator treating prerequisite-only packets as blocking
+  is conservative and execution-correct; treating them as ready matches ua's scheduling. The
+  ambiguity is deliberate honesty: the closed record cannot carry the enum, and guessing wrong in
+  either direction is safe (the executor re-derives truth from evidence anyway).
 - **`unit.notes` / `publicationStatus`**: ride `expectedEvidence` verbatim, prefixed by repo.
 
 ## Implementation notes (caps — fail loud at emission)
