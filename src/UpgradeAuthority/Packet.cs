@@ -177,7 +177,9 @@ public static class Packet
         JsonValueKind.True => true,
         JsonValueKind.False => false,
         JsonValueKind.Number => e.TryGetInt32(out var i) ? i : e.TryGetInt64(out var l) ? l : throw new UaException("internal error: non-integral number in a packet (out of JCS scope)"),
-        JsonValueKind.Array => (object)e.EnumerateArray().Select(x => x.GetString()!).ToList(),
+        JsonValueKind.Array => (object)e.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.String
+            ? x.GetString()!
+            : throw new UaException($"internal error: non-string array entry in a packet (kind {x.ValueKind}) — caught by VerifyDigest's wrapper, never a crash")).ToList(),
         JsonValueKind.Object => (object)e.EnumerateObject().Select(p => (p.Name, JsonToNode(p.Value))).ToList(),
         _ => throw new UaException("internal error: unexpected JSON kind in a packet"),
     };
