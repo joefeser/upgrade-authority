@@ -1,0 +1,121 @@
+{
+  "schemaVersion": "plan.v1",
+  "delta": {
+    "packageName": "Serilog",
+    "ecosystem": "nuget",
+    "changeType": "updated",
+    "oldVersion": "3.1.1",
+    "newVersion": "4.0.0"
+  },
+  "repos": [
+    {
+      "repo": "appC",
+      "classification": "affected",
+      "reasons": [
+        "direct reference to Serilog (src/App.csproj) — affected-ness is consumer-side and fully evidenced",
+        "no producer wave possible: producer of Serilog unknown"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "appA",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "corelib",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "self",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "shared",
+      "classification": "unknown",
+      "reasons": [
+        "classification unknown: coverage gaps or unresolved exposure — never not-affected without positive evidence"
+      ],
+      "ownership": "unknown",
+      "actionType": "unknown",
+      "evidenceKinds": [
+        "package-evidence.v0"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 1
+      }
+    },
+    {
+      "repo": "appB",
+      "classification": "not-affected",
+      "reasons": [
+        "positive evidence: complete scan coverage AND appB's own lockfile closure (Newtonsoft.Json direct, no Serilog row) — transitive exposure ruled out by lockfile evidence, not by absence-of-match"
+      ],
+      "ownership": "self",
+      "actionType": "none",
+      "evidenceKinds": [
+        "package-evidence.v0",
+        "lockfile-rows.v2",
+        "scan-coverage"
+      ],
+      "confidence": {
+        "rung": "declared",
+        "corroboration": 2
+      }
+    }
+  ],
+  "waves": [
+    {
+      "index": 1,
+      "status": "conditional",
+      "condition": "producer of Serilog is unknown — no producer wave is derivable; appC's wave proceeds only after the producer is identified and Serilog 4.0.0 is available",
+      "prerequisites": [
+        "Serilog 4.0.0 exists on the configured feed and authenticated restore succeeds (stated, not verified live)"
+      ],
+      "releaseUnits": [
+        {
+          "repo": "appC",
+          "packages": [],
+          "basis": "assumed-same-repo"
+        }
+      ]
+    }
+  ],
+  "uncertainty": {
+    "contradictions": [],
+    "gaps": [
+      {
+        "subject": "Serilog producer",
+        "detail": "no pinned input declares who produces Serilog; zero producers invented (no heuristic, no name inference)"
+      }
+    ]
+  }
+}

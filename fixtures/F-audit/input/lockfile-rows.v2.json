@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "lockfile-rows.v2",
+  "repos": [
+    {
+      "repo": "appB",
+      "rows": [
+        {
+          "packageId": "Newtonsoft.Json",
+          "type": "direct",
+          "version": "13.0.3-beta",
+          "lockfile": "src/App/packages.lock.json",
+          "tfm": "net8.0"
+        }
+      ]
+    },
+    {
+      "repo": "appA",
+      "rows": [
+        {
+          "packageId": "Serilog",
+          "type": "direct",
+          "version": "3.1.1-beta",
+          "lockfile": "src/App/packages.lock.json",
+          "tfm": "net8.0"
+        },
+        {
+          "packageId": "Newtonsoft.Json",
+          "type": "direct",
+          "version": "12.0.3",
+          "lockfile": "src/App/packages.lock.json",
+          "tfm": "net8.0"
+        }
+      ]
+    }
+  ]
+}

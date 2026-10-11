@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "advisory-versions.v1",
+  "source": "osv-export",
+  "asOf": "2026-10-11",
+  "advisories": [
+    {
+      "advisoryId": "GHSA-nj-0001",
+      "packageId": "Newtonsoft.Json",
+      "ecosystem": "NuGet",
+      "fixedIn": "13.0.2",
+      "severity": "high"
+    },
+    {
+      "advisoryId": "GHSA-sl-0002",
+      "packageId": "Serilog",
+      "ecosystem": "NuGet",
+      "vulnerableVersions": [
+        "12.0.3.0",
+        "3.1.1-beta"
+      ],
+      "severity": "moderate"
+    },
+    {
+      "advisoryId": "GHSA-cc-0003",
+      "packageId": "Contoso.Core",
+      "ecosystem": "NuGet",
+      "fixedIn": "1.5.0",
+      "severity": "high"
+    },
+    {
+      "advisoryId": "GHSA-cs-0004",
+      "packageId": "Contoso.Shared",
+      "ecosystem": "NuGet",
+      "fixedIn": "2.1.0",
+      "severity": "high"
+    },
+    {
+      "advisoryId": "GHSA-cs-0005",
+      "packageId": "Contoso.Shared",
+      "ecosystem": "NuGet",
+      "fixedIn": "2.2.0-rc",
+      "severity": "moderate",
+      "vulnerableVersions": [
+        "2.0.5-hotfix"
+      ]
+    },
+    {
+      "advisoryId": "GHSA-multi-0006",
+      "packageId": "Contoso.Core",
+      "ecosystem": "NuGet",
+      "vulnerableVersions": [
+        "9.9.9"
+      ],
+      "severity": "low"
+    },
+    {
+      "advisoryId": "GHSA-multi-0006",
+      "packageId": "Serilog",
+      "ecosystem": "NuGet",
+      "vulnerableVersions": [
+        "9.9.9"
+      ],
+      "severity": "low"
+    },
+    {
+      "advisoryId": "GHSA-clean-0007",
+      "packageId": "Serilog",
+      "ecosystem": "NuGet",
+      "fixedIn": "2.0.0",
+      "severity": "low"
+    },
+    {
+      "advisoryId": "GHSA-gap-0008",
+      "packageId": "Contoso.Shared",
+      "ecosystem": "NuGet",
+      "severity": "export-gap"
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "package-evidence.v0",
+  "source": "fixture-declared",
+  "facts": [
+    {
+      "repo": "appA",
+      "packageId": "Contoso.Core",
+      "declaredConstraint": "1.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "src/App.csproj"
+    },
+    {
+      "repo": "appA",
+      "packageId": "Newtonsoft.Json",
+      "declaredConstraint": "12.0.3",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "src/App.csproj"
+    },
+    {
+      "repo": "appB",
+      "packageId": "Newtonsoft.Json",
+      "declaredConstraint": "13.0.2",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "src/App.csproj"
+    },
+    {
+      "repo": "appC",
+      "packageId": "Serilog",
+      "declaredConstraint": "12.0.3",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "src/App.csproj"
+    },
+    {
+      "repo": "appC",
+      "packageId": "Serilog",
+      "declaredConstraint": "4.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "src/New.csproj"
+    },
+    {
+      "repo": "appA",
+      "packageId": "Contoso.Shared",
+      "declaredConstraint": "2.0.0",
+      "format": "packagereference",
+      "constraintSource": "Project",
+      "tfm": "net8.0",
+      "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "src/App.csproj"
+    }
+  ],
+  "scanCoverage": [
+    {
+      "repo": "corelib",
+      "status": "complete"
+    },
+    {
+      "repo": "shared",
+      "status": "complete"
+    },
+    {
+      "repo": "appA",
+      "status": "complete"
+    },
+    {
+      "repo": "appB",
+      "status": "complete"
+    },
+    {
+      "repo": "appC",
+      "status": "complete"
+    }
+  ]
+}

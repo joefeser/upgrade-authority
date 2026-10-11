@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "ownership.v0",
+  "selfTeamId": "team-a",
+  "ownerships": [
+    {
+      "repo": "corelib",
+      "team": "team-a"
+    },
+    {
+      "repo": "appA",
+      "team": "team-a"
+    },
+    {
+      "repo": "appB",
+      "team": "team-a"
+    },
+    {
+      "repo": "appC",
+      "team": "team-a"
+    }
+  ]
+}

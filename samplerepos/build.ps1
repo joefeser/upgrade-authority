@@ -208,6 +208,13 @@ function Invoke-StagePlan {
     $booker = $plan2.repos | Where-Object { $_.repo -eq 'Cassowary.Booker' }
     if (-not $booker -or $booker.classification -ne 'affected') { throw 'plan (Diesel): Booker must be affected through the external target' }
 
+    # SPEC-024: the audit demo — a committed offline OSV-export over the estate (incl. a multi-window SPLIT pair)
+    Copy-Item (Join-Path $sidecars 'advisory-versions.v1.json') (Join-Path $out 'advisory-versions.v1.json') -Force
+    Invoke-Ua (@('audit', $fx1, '--advisories', (Join-Path $out 'advisory-versions.v1.json'), '--out', (Join-Path $out 'audit-core.v1.json') )) 'audit (Core fixture)'
+    $aud = Get-Content (Join-Path $out 'audit-core.v1.json') -Raw | ConvertFrom-Json
+    if ($aud.summary.byBoundaryAffected.internal -lt 1) { throw 'audit: the internal boundary must carry affected installs (Cassowary.Core)' }
+    if ($aud.summary.advisoriesWithAffected -lt 1) { throw 'audit: at least one advisory must fire' }
+
     # SPEC-023: the HACP seam — export each run's waves as task packets and assert the contract shape
     Invoke-Ua (@('export-packet', $fx1, '--wave', '1', '--out', (Join-Path $out 'packet-core.json') )) 'export-packet (Core wave)'
     Invoke-Ua (@('export-packet', $fx2, '--wave', '1', '--out', (Join-Path $out 'packet-diesel.json') )) 'export-packet (Diesel wave)'
