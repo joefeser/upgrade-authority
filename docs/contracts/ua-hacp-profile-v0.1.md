@@ -11,10 +11,10 @@ semantics live in this document, in the record's VALUES, and in `profileRefs:
 | Field | Source |
 |---|---|
 | `recordKind` / `schemaVersion` | schema consts (`hacp.v0_3_candidate.task_packet` / `hacp-0.3-candidate`) |
-| `packetId` | `ua-<package>-<old>-to-<new>-wave-<N>` — the FULL delta identity: distinct upgrades of one package never share a claim; exact parity with the `ua/wave-N/...` branch name |
+| `packetId` | `ua-<package>-<old>-to-<new>-wave-<N>-<8hex>` — the readable delta identity PLUS a disambiguating 8-hex sha256 of the canonical `(package, old, new, wave)` tuple (delimiters alone are ambiguous under adversarial version strings); distinct upgrades of one package can never share a claim |
 | `digest` | sha256 of the JCS (RFC 8785) serialization of `{"domain":"io.hacp.task-packet.v0.3-candidate","record":<record-minus-digest>}` — implemented in ua, **cross-verified byte-identical against the reference `canonicalize` v4 library**; the emitted display bytes stay in ua's house form (2-space, LF) — only the digest computation uses JCS |
 | `sourceContext.humanRequest` | **constant**: "operator-invoked export; the committed delta sidecar is the request record; ua V0 has no separate human-request artifact" |
-| `sourceContext.sourceRefs` | the wave's release-unit repos + `scan:<repo>` for every planned repo (the scan provenance surface) |
+| `sourceContext.sourceRefs` | the wave's release-unit repos + `scan:<repo>` for every repo with INGESTED scan evidence (facts or lock rows) — ownership-only names are never cited as scans |
 | `requestedScope` | wave-scoped: unit repos + the packages their units carry. NOTE: the plan-level `external-request-await` coordination reality (an externally-owned producer) reaches the packet through the wave's gate text (T6), not through scope — scope is what the EXECUTOR may touch |
 | `loopPolicy` | **constants** — `single_pass` / ceiling 1 / counter 0 / `incrementTrigger = packetId` / claimAttemptLimit 1 / automaticRetryAllowed false / boundaryStatement: "a ua wave is single-pass by construction: one branch, one commit; an existing branch refuses - never force-updated". ua's idempotency-by-refusal IS the loop boundary |
 | `forbiddenEffects` | **constants** (the house invariants): never merges; never force-updates; never downgrades; edits only verified sites |
