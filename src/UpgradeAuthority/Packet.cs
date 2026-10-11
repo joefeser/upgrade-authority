@@ -150,6 +150,13 @@ public static class Packet
     // (a second parse+JCS path, not the builder's structure) and recomputes the envelope digest.
     public static bool VerifyDigest(string emitted)
     {
+        try { return VerifyDigestCore(emitted); }
+        catch (Exception ex) when (ex is JsonException or UaException or InvalidOperationException or KeyNotFoundException)
+        { return false; } // malformed shapes NEVER verify (PR9 Baz r4) — never a crash, never a false pass
+    }
+
+    static bool VerifyDigestCore(string emitted)
+    {
         using var doc = JsonDocument.Parse(emitted);
         var root = doc.RootElement;
         var record = new List<(string, object)>();
