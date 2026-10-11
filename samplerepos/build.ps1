@@ -222,6 +222,22 @@ function Invoke-StagePlan {
 }
 
 function Invoke-StageCampaign {
+    # receipts carry an explicit terminal status: a mid-campaign failure writes
+    # status "failed" BEFORE the throw (a partial receipt must never masquerade as complete)
+    try { Invoke-StageCampaignCore }
+    catch {
+        $partialPath = Join-Path $out 'campaign' 'campaign.v1.json'
+        if (Test-Path $partialPath) {
+            $partial = Get-Content $partialPath -Raw | ConvertFrom-Json
+            $partial | Add-Member -NotePropertyName status -NotePropertyValue 'failed' -Force
+            $partial | Add-Member -NotePropertyName failure -NotePropertyValue "$_" -Force
+            $partial | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+        }
+        throw
+    }
+}
+
+function Invoke-StageCampaignCore {
     # the campaign demo (post-talk board item 1): walk the plan's waves in ua's WAVE ORDER
     # (ascending index = the dependency order ua derived: producers publish before consumers upgrade),
     # claim each wave's task packet (export), execute the executable ones (apply + push on the REAL
@@ -302,14 +318,14 @@ function Invoke-StageCampaign {
                 }
                 $entry.units += $unitEntry
                 # persist after EVERY unit: a later failure never orphans an earlier push's receipt
-                $receipt = [ordered]@{ schemaVersion = 'campaign.v1'; note = 'WorkReceipt-shaped evidence (artifact-memory receipts are vault-resident by their contract — never committed); minting real receipts is a future slice'; waves = $waves + $entry }
+                $receipt = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'in-progress'; note = 'WorkReceipt-shaped evidence (artifact-memory receipts are vault-resident by their contract — never committed); minting real receipts is a future slice'; waves = $waves + $entry }
                 $receipt | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $campDir 'campaign.v1.json')
             }
             $waves += $entry
         }
     }
 
-    $receipt = [ordered]@{ schemaVersion = 'campaign.v1'; note = 'WorkReceipt-shaped evidence (artifact-memory receipts are vault-resident by their contract — never committed); minting real receipts is a future slice'; waves = $waves }
+    $receipt = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'complete'; note = 'WorkReceipt-shaped evidence (artifact-memory receipts are vault-resident by their contract — never committed); minting real receipts is a future slice'; waves = $waves }
     $receipt | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $campDir 'campaign.v1.json')
 
     # assertions: executable waves really landed (or already-claimed on re-run); coordination waves recorded
