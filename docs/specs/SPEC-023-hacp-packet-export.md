@@ -17,7 +17,7 @@ WITS (or any HACP-conformant coordinator) cannot drive ua waves until a wave can
 |---|---|
 | `recordKind` | const `"hacp.v0_3_candidate.task_packet"` |
 | `schemaVersion` | const `"hacp-0.3-candidate"` |
-| `packetId` | `ua-<package>-<old>-to-<new>-wave-<N>-<8hex>` — the full delta identity + a disambiguating 8-hex tuple digest (round-1 finding 11 amended at implementation review: delimiter-only ids are ambiguous under adversarial version strings) |
+| `packetId` | `ua-<package>-<old>-to-<new>-wave-<N>-<64hex>` — the full delta identity + the FULL tuple digest (delimiter-only ids are ambiguous, and short suffixes are brute-forceable — implementation-review amendments) |
 | `digest` | the contract object: `algorithm: sha256`, `canonicalization: json-rfc8785-jcs`, `digestDomain: io.hacp.task-packet.v0.3-candidate`, `value` = sha256 hex of the **JCS (RFC 8785) serialization of `{"domain":<domain>,"record":<record-minus-digest>}`** per the hacp conformance package. ua implements an in-house JCS serializer (scoped: ua records are strings/ints/arrays/objects — no floats, no number-formatting hazards); the EMITTED bytes stay in ua's house display form (2-space, LF) — only the digest computation uses JCS |
 | `sourceContext.humanRequest` | profile constant: `"operator-invoked export; the committed delta sidecar is the request record; ua V0 has no separate human-request artifact"` |
 | `sourceContext.sourceRefs` | the wave's repos + the fixture's scan provenance (repo names) |

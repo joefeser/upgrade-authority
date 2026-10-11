@@ -52,11 +52,11 @@ public static class Packet
     // form) and Digest (JCS form). Dictionary insertion order IS the field order.
     static List<(string Key, object Value)> Build(Engine engine, Plan plan, PlanWave wave)
     {
-        // PR9 r1/r2: the FULL delta identity rides the id — readable prefix + a disambiguating
-        // 8-hex digest of the canonical tuple (delimiters alone are ambiguous: P 1 -> 2-to-3 and
-        // P 1-to-2 -> 3 collide as ua-P-1-to-2-to-3-wave-1; the suffix makes that impossible)
+        // PR9 r1-r3: the FULL delta identity rides the id — readable prefix + the FULL 64-hex digest
+        // of the canonical tuple. Delimiters alone are ambiguous (P 1 -> 2-to-3 vs P 1-to-2 -> 3 read
+        // identically) and a short suffix is brute-forceable (8 hex = 2^32); the full digest ends both
         var tupleHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{plan.Delta.PackageName}\0{plan.Delta.OldVersion}\0{plan.Delta.NewVersion}\0{wave.Index}"))).ToLowerInvariant()[..8];
+            $"{plan.Delta.PackageName}\0{plan.Delta.OldVersion}\0{plan.Delta.NewVersion}\0{wave.Index}"))).ToLowerInvariant();
         var packetId = $"ua-{plan.Delta.PackageName}-{plan.Delta.OldVersion}-to-{plan.Delta.NewVersion}-wave-{wave.Index}-{tupleHash}";
         var body = new List<(string, object)>
         {

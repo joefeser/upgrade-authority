@@ -11,7 +11,7 @@ semantics live in this document, in the record's VALUES, and in `profileRefs:
 | Field | Source |
 |---|---|
 | `recordKind` / `schemaVersion` | schema consts (`hacp.v0_3_candidate.task_packet` / `hacp-0.3-candidate`) |
-| `packetId` | `ua-<package>-<old>-to-<new>-wave-<N>-<8hex>` — the readable delta identity PLUS a disambiguating 8-hex sha256 of the canonical `(package, old, new, wave)` tuple (delimiters alone are ambiguous under adversarial version strings); distinct upgrades of one package can never share a claim |
+| `packetId` | `ua-<package>-<old>-to-<new>-wave-<N>-<64hex>` — the readable delta identity PLUS the full sha256 of the canonical `(package, old, new, wave)` tuple: delimiters alone are ambiguous under adversarial version strings, and a short suffix is brute-forceable — the full digest ends both; distinct upgrades of one package can never share a claim |
 | `digest` | sha256 of the JCS (RFC 8785) serialization of `{"domain":"io.hacp.task-packet.v0.3-candidate","record":<record-minus-digest>}` — implemented in ua, **cross-verified byte-identical against the reference `canonicalize` v4 library**; the emitted display bytes stay in ua's house form (2-space, LF) — only the digest computation uses JCS |
 | `sourceContext.humanRequest` | **constant**: "operator-invoked export; the committed delta sidecar is the request record; ua V0 has no separate human-request artifact" |
 | `sourceContext.sourceRefs` | the wave's release-unit repos + `scan:<repo>` for every repo with INGESTED scan evidence (facts or lock rows) — ownership-only names are never cited as scans |

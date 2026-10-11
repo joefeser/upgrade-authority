@@ -3219,8 +3219,9 @@ public static class Program
             if (stops3b.Count != 1 || !stops3b[0].Contains("P5 producer") || !stops3b[0].Contains("R1 claims P5") || !stops3b[0].Contains("R6 claims P5"))
                 throw new Exception("blockedOn must resolve to the contradiction's subject AND both claims: " + string.Join("|", stops3b));
             var pid3b = d3b.GetProperty("packetId").GetString()!;
-            if (!pid3b.Contains("-to-") || !pid3b.Contains("-wave-1") || pid3b.Length < 8 || pid3b[^9] != '-')
-                throw new Exception("packetId must carry the full delta identity (old-to-new), the wave, AND the 8-hex tuple suffix: " + pid3b);
+            var pidSuffix = pid3b[(pid3b.LastIndexOf('-') + 1)..];
+            if (!pid3b.Contains("-to-") || !pid3b.Contains("-wave-1") || pidSuffix.Length != 64 || !pidSuffix.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f'))
+                throw new Exception("packetId must carry the full delta identity (old-to-new), the wave, AND the 64-hex tuple digest: " + pid3b);
             // the adversarial collision the suffix exists to kill: same delimiters, different tuples
             var h1 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("P\01\02-to-3\01"))).ToLowerInvariant()[..8];
             var h2 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("P\01-to-2\03\01"))).ToLowerInvariant()[..8];
