@@ -42,5 +42,8 @@ jobs:
         if: always()
         run: |
           echo "## samplerepos campaign receipts" >> "$GITHUB_STEP_SUMMARY"
-          echo '(repo-side surfaces may repeat evidence commands and counts — artifact-memory receipts themselves are vault-resident)' >> "$GITHUB_STEP_SUMMARY"
+          echo '(terminal status must read complete — a failed/partial campaign marks itself; artifact-memory receipts themselves are vault-resident)' >> "$GITHUB_STEP_SUMMARY"
           cat samplerepos/out/campaign/campaign.v1.json >> "$GITHUB_STEP_SUMMARY" || echo '(no receipts — earlier stage failed)'
+          if grep -q '"status":  *"failed"' samplerepos/out/campaign/campaign.v1.json 2>/dev/null; then
+            echo "CAMPAIGN RECEIPT MARKED FAILED — see the failure field"; exit 1
+          fi
