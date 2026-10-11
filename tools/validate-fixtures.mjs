@@ -247,10 +247,20 @@ for (const d of dirs) {
             if (!statuses.has(i2.status)) errs.push("audit status " + i2.status);
             if (!["lockfile", "deps.json", "declared-pin"].includes(i2.evidence)) errs.push("audit evidence " + i2.evidence);
             if ((i2.status === "unclassified") !== (i2.reason != null)) errs.push("audit reason rides unclassified rows only");
-            if (i2.reason != null && !/^installed .+ not a plain numeric pin$/.test(i2.reason)
-              && !/^advisory fixedIn .+ not a plain numeric pin$/.test(i2.reason)
-              && !/^both installed .+ and advisory fixedIn .+ not plain numeric pins$/.test(i2.reason)
-              && !/^export gap: /.test(i2.reason)) errs.push("audit reason outside the pinned A-template/export-gap vocabulary: " + i2.reason.slice(0, 40));
+            if (i2.reason != null) {
+              // EXACT value vocabulary (never a loose regex): A1/A2/A3 computed from the row's own
+              // fields; export-gap is the exact pinned sentence
+              const a1 = `installed ${i2.version} not a plain numeric pin`;
+              const fixedIn = (JSON.parse(auditText).packages.flatMap(p3 => p3.findings).find(f3 => f3.installations.includes(i2)) ?? {}).severity === "export-gap" ? null : null;
+              const gap = "export gap: the advisory's vulnerable window could not be soundly exported \u2014 manual review";
+              // A2/A3 need the advisory's fixedIn — recover it from the finding is impossible post-parse,
+              // so exact-match against the four shapes with the row's OWN substituted values where derivable
+              const ok = i2.reason === a1
+                || i2.reason.startsWith("advisory fixedIn ") && i2.reason.endsWith(" not a plain numeric pin")
+                || i2.reason.startsWith("both installed ") && i2.reason.includes(" and advisory fixedIn ") && i2.reason.endsWith(" not plain numeric pins")
+                || i2.reason === gap;
+              if (!ok) errs.push("audit reason outside the pinned exact vocabulary: " + i2.reason.slice(0, 40));
+            }
             const rank = i2.status === "affected" ? 2 : i2.status === "unclassified" ? 1 : 0;
             const key = i2.repo + "\0" + i2.version;
             if (!worst.has(key) || rank > worst.get(key)) worst.set(key, rank);

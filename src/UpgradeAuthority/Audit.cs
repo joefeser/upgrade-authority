@@ -77,15 +77,16 @@ public static class Audit
                 return (null, $"advisory file {name}: empty advisoryId or packageId — every entry needs both");
             if (a.VulnerableVersions is not null && a.VulnerableVersions.Any(v => v is null))
                 return (null, $"advisory file {name}: advisory '{Esc(a.AdvisoryId)}' carries a null vulnerableVersions entry — every entry must be a string");
-            advisoryCount++; // the FILE total — counts ecosystem-skipped and duplicate rows too; consideredCount shows the gap
-            if (!string.IsNullOrEmpty(a.Ecosystem) && !string.Equals(a.Ecosystem, "nuget", StringComparison.OrdinalIgnoreCase))
-            { Console.Error.WriteLine($"note: advisory '{Esc(a.AdvisoryId)}' ecosystem '{Esc(a.Ecosystem)}' skipped (NuGet-only V0)"); continue; }
+            // dedup FIRST (identical rows collapse before ANY counting/skip — even non-nuget ones)
             var key = (a.AdvisoryId, a.PackageId.ToLowerInvariant());
             if (byKey.TryGetValue(key, out var dup))
             {
                 if (SameContent(dup, a)) { collapsed++; continue; } // identical duplicate collapses silently
                 return (null, $"advisory file {name}: '{Esc(a.AdvisoryId)}' for '{Esc(a.PackageId)}' appears twice with contradictory content — the truth file contradicts itself");
             }
+            advisoryCount++; // the FILE total post-collapse; ecosystem-skipped rows count, consideredCount shows the gap
+            if (!string.IsNullOrEmpty(a.Ecosystem) && !string.Equals(a.Ecosystem, "nuget", StringComparison.OrdinalIgnoreCase))
+            { Console.Error.WriteLine($"note: advisory '{Esc(a.AdvisoryId)}' ecosystem '{Esc(a.Ecosystem)}' skipped (NuGet-only V0)"); continue; }
             var isExportGap = string.Equals(a.Severity, ExportGapSeverity, StringComparison.Ordinal);
             var hasList = a.VulnerableVersions is { Count: > 0 };
             var hasFixed = a.FixedIn is not null && Apply.ParseCorePublic(a.FixedIn) is not null;
