@@ -247,6 +247,10 @@ for (const d of dirs) {
             if (!statuses.has(i2.status)) errs.push("audit status " + i2.status);
             if (!["lockfile", "deps.json", "declared-pin"].includes(i2.evidence)) errs.push("audit evidence " + i2.evidence);
             if ((i2.status === "unclassified") !== (i2.reason != null)) errs.push("audit reason rides unclassified rows only");
+            if (i2.reason != null && !/^installed .+ not a plain numeric pin$/.test(i2.reason)
+              && !/^advisory fixedIn .+ not a plain numeric pin$/.test(i2.reason)
+              && !/^both installed .+ and advisory fixedIn .+ not plain numeric pins$/.test(i2.reason)
+              && !/^export gap: /.test(i2.reason)) errs.push("audit reason outside the pinned A-template/export-gap vocabulary: " + i2.reason.slice(0, 40));
             const rank = i2.status === "affected" ? 2 : i2.status === "unclassified" ? 1 : 0;
             const key = i2.repo + "\0" + i2.version;
             if (!worst.has(key) || rank > worst.get(key)) worst.set(key, rank);

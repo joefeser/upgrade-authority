@@ -3327,8 +3327,8 @@ public static class Program
             var ecoSkip = Adv("v6.json", "{\"schemaVersion\":\"advisory-versions.v1\",\"source\":\"osv-export\",\"advisories\":[{\"advisoryId\":\"N\",\"packageId\":\"Left.Pad\",\"ecosystem\":\"npm\",\"fixedIn\":\"1.0.0\"}]}");
             var (ecoCanon, ecoRc) = Audit.Run(fa, ecoSkip);
             if (ecoRc != 0 || JsonDocument.Parse(ecoCanon!).RootElement.GetProperty("advisories").GetProperty("consideredCount").GetInt32() != 0
-                || JsonDocument.Parse(ecoCanon!).RootElement.GetProperty("advisories").GetProperty("advisoryCount").GetInt32() != 0)
-                throw new Exception("non-nuget rows must skip visibly (consideredCount 0)");
+                || JsonDocument.Parse(ecoCanon!).RootElement.GetProperty("advisories").GetProperty("advisoryCount").GetInt32() != 1)
+                throw new Exception("non-nuget rows must skip VISIBLY: consideredCount 0 while advisoryCount keeps the file total (1)");
             // CompareCore parity (the fixedIn path): structural
             foreach (var (inst, fix, want) in new[] { ("13.0.3", "13.0.3.0", "not-affected"), ("12.0.3", "13.0.3", "affected"), ("14.0.0", "13.0.3", "not-affected"), ("13.0.3-beta", "13.0.3", null) })
             {

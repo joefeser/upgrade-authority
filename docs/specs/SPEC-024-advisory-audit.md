@@ -97,3 +97,5 @@ Every count pinned (installation arithmetic is over DEDUPED `(repo, version)` ro
 - **Transitive-closure attribution beyond the inventory** — the inventory is what drift sees.
 - **Blocking/gating semantics** — audit reports; policy is not this spec.
 - **npm/other ecosystems** — skipped visibly (warn+note, the drift folder-feed precedent), never guessed.
+- **`introduced`-lower-bound windows exported as bare `fixedIn`** — the exporter flattens `[introduced, fixed)` to fixedIn; installs BELOW `introduced` (a prior, unaffected line) read affected. The exporter contract's split rule covers the common case; an `introduced`-aware entry shape is a later version. Receipted at implementation review (a real OSV export shape; the failure is an over-report, never a fabricated clean).
+- **Cross-command fixture-generation races** (ingest swapping a fixture mid-audit) — the shared `LoadEngine` surface every command uses; a same-process invariant, receipted (the corpus never mutates fixtures concurrently; the harness serializes its stages).

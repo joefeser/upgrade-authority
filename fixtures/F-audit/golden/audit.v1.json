@@ -111,16 +111,16 @@
             },
             {
               "repo": "appB",
+              "version": "13.0.2",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            },
+            {
+              "repo": "appB",
               "version": "13.0.3-beta",
               "evidence": "lockfile",
               "status": "unclassified",
               "reason": "installed 13.0.3-beta not a plain numeric pin"
-            },
-            {
-              "repo": "appB",
-              "version": "13.0.2",
-              "evidence": "declared-pin",
-              "status": "not-affected"
             }
           ]
         }
