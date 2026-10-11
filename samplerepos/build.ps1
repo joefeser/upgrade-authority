@@ -224,26 +224,29 @@ function Invoke-StagePlan {
 function Invoke-StageCampaign {
     # receipts carry an explicit terminal status: a mid-campaign failure writes
     # status "failed" BEFORE the throw (a partial receipt must never masquerade as complete)
+    # campDir is created UP FRONT so every failure path has somewhere to write (PR10 r5)
+    $campDir = Join-Path $out 'campaign'
+    if (-not (Test-Path $out)) { New-Item -ItemType Directory -Force -Path $out | Out-Null }
+    if (-not (Test-Path $campDir)) { New-Item -ItemType Directory -Force -Path $campDir | Out-Null }
     try { Invoke-StageCampaignCore }
     catch {
-        # the failure handler must NEVER mask the original error (PR10 r3/r4): an interrupted
-        # checkpoint write may be unparseable — fall back to a standalone failed record, and
-        # surface the ORIGINAL exception after writing
-        $partialPath = Join-Path $out 'campaign' 'campaign.v1.json'
+        # the failure handler must NEVER mask the ORIGINAL error (PR10 r3-r5): capture it first —
+        # the nested catch's $_ would otherwise rebind to the parse failure
+        $original = "$_"
+        $partialPath = Join-Path $campDir 'campaign.v1.json'
+        $wroteCheckpoint = $false
         try {
             $partial = Get-Content $partialPath -Raw | ConvertFrom-Json
             $partial | Add-Member -NotePropertyName status -NotePropertyValue 'failed' -Force
-            $partial | Add-Member -NotePropertyName failure -NotePropertyValue "$_" -Force
+            $partial | Add-Member -NotePropertyName failure -NotePropertyValue $original -Force
             $partial | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+            $wroteCheckpoint = $true
         }
-        catch {
-            $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = "$_"; note = 'the checkpoint receipt was unparseable (interrupted write) — this standalone record preserves the failure'; waves = @() }
-            $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
-        }
-        if (-not (Test-Path $partialPath)) {
-            # failures BEFORE the first checkpoint (plan read, first packet export) still leave a failed record
-            $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = "$_"; note = 'failed before the first unit checkpoint'; waves = @() }
-            New-Item -ItemType Directory -Force -Path (Split-Path $partialPath) | Out-Null
+        catch { }
+        if (-not $wroteCheckpoint) {
+            # absent (pre-first-checkpoint) or unparseable (interrupted write): a standalone failed
+            # record carrying the ORIGINAL failure, never the parse error
+            $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = $original; note = 'no parseable checkpoint receipt — this standalone record preserves the original failure'; waves = @() }
             $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
         }
         throw
@@ -259,7 +262,6 @@ function Invoke-StageCampaignCore {
     # committed to any repo — so this emits the evidence shape into gitignored out/; minting real
     # receipts against an artifact-memory vault is a future slice.
     if (-not (Test-Path (Join-Path $out 'fixture-core'))) { throw 'no plan outputs — run -Stage plan first' }
-    $campDir = Join-Path $out 'campaign'
     if (Test-Path $campDir) { Remove-Item -Recurse -Force $campDir }
     New-Item -ItemType Directory -Force -Path $campDir | Out-Null
 
