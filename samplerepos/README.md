@@ -71,6 +71,19 @@ checks after every native call; conditional flags via array splatting (empty-str
 parse in LOCAL time and would churn across machines) and are env-saved/removed in a `finally`;
 identity rides `git -c user.name=… -c user.email=…` per invocation.
 
+## The HACP seam (SPEC-023)
+
+The plan stage also exports each run's waves as **HACP v0.3-candidate task packets**
+(`out/packet-core.json`, `out/packet-diesel.json`) via `ua export-packet` — ua's first
+contract-record surface for external coordinators (WITS-shaped). The pinned schemas live at
+`docs/contracts/hacp/` (Apache-2.0, copied from joefeser/hacp), the field mapping and constants in
+`docs/contracts/ua-hacp-profile-v0.1.md`. ua's own emission-time checks enforce the contract shape;
+for full ajv validation on a developer machine with the hacp checkout + node:
+
+```powershell
+node -e "const {default:A}=require('<hacp>/node_modules/ajv/dist/2020.js');const fs=require('fs');const ajv=new A({strict:false});ajv.addSchema(JSON.parse(fs.readFileSync('<hacp>/schemas/v0.3-candidate/common-defs.schema.json')));const v=ajv.compile(JSON.parse(fs.readFileSync('<hacp>/schemas/v0.3-candidate/task-packet.schema.json')));console.log('VALID:',v(JSON.parse(fs.readFileSync('samplerepos/out/packet-diesel.json'))))"
+```
+
 ## v2 path (out of scope)
 
 A real feed SERVER (Docker/BaGet for an Artifactory-feel), multi-ecosystem (npm) estates, and

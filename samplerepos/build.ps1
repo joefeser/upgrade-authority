@@ -197,7 +197,17 @@ function Invoke-StagePlan {
     $booker = $plan2.repos | Where-Object { $_.repo -eq 'Cassowary.Booker' }
     if (-not $booker -or $booker.classification -ne 'affected') { throw 'plan (Diesel): Booker must be affected through the external target' }
 
-    Write-Host 'stage plan: all assertions green (registry ci-defined + anomaly; drift lockfile-evidence behind/current; Core plan affected x2; Diesel plan T5 + Booker affected)'
+    # SPEC-023: the HACP seam — export each run's waves as task packets and assert the contract shape
+    Invoke-Ua (@('export-packet', $fx1, '--wave', '1', '--out', (Join-Path $out 'packet-core.json') )) 'export-packet (Core wave)'
+    Invoke-Ua (@('export-packet', $fx2, '--wave', '1', '--out', (Join-Path $out 'packet-diesel.json') )) 'export-packet (Diesel wave)'
+    $pkt = Get-Content (Join-Path $out 'packet-diesel.json') -Raw | ConvertFrom-Json
+    if ($pkt.recordKind -ne 'hacp.v0_3_candidate.task_packet') { throw 'packet: recordKind const wrong' }
+    if ($pkt.profileRefs -notcontains 'ua-hacp-profile-v0.1') { throw 'packet: profile ref missing' }
+    if ($pkt.digest.value -notmatch '^[0-9a-f]{64}$') { throw 'packet: digest must be 64 lowercase hex' }
+    $gated = @($pkt.stopConditions | Where-Object { $_ -like '*available from the public feed*' })
+    if ($gated.Count -lt 1) { throw 'packet: the Diesel wave must carry the T5 gate' }
+
+    Write-Host 'stage plan: all assertions green (registry ci-defined + anomaly; drift lockfile-evidence behind/current; Core plan affected x2; Diesel plan T5 + Booker affected; HACP packets exported)'
 }
 
 switch ($Stage) {
