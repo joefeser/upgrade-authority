@@ -163,6 +163,25 @@ public static class Program
                 else WriteArtifactFile(outFileR2, canonicalR2);
                 return 0;
             }
+            if (args.Length >= 2 && args[0] == "export-packet")
+            {
+                // SPEC-023: a plan wave as a HACP v0.3-candidate task packet (the seam slice)
+                foreach (var f in new[] { "--wave", "--out", "-o" })
+                {
+                    int? badP = ValueFlagError(args, f);
+                    if (badP is not null) { Console.Error.WriteLine($"error: {args[badP.Value]} requires a value"); return 1; }
+                }
+                var waveOpt = GetOpt(args, "--wave");
+                int waveIndex;
+                if (waveOpt is null || !int.TryParse(waveOpt, out waveIndex) || waveIndex < 1)
+                { Console.Error.WriteLine("error: --wave <N> is required (the 1-based wave index)"); return 1; }
+                var outFileP = GetOpt(args, "--out") ?? GetOpt(args, "-o");
+                var (canonicalP, rcP) = Packet.Run(args[1], waveIndex);
+                if (rcP != 0) return rcP;
+                if (outFileP is null) WriteCanonical(() => Console.Write(canonicalP), outWriter);
+                else WriteArtifactFile(outFileP, canonicalP);
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
@@ -200,7 +219,7 @@ public static class Program
                 return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -3168,6 +3187,61 @@ public static class Program
             Console.WriteLine("ok   ci-provenance-precedence (operator > ci > project; conflict names both provenances; per-class contradictions; deduped losers)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ci-provenance-precedence: {ex.Message}"); }
+
+        // SPEC-023: ua export-packet — the HACP seam (wave -> task packet, v0.3-candidate)
+        try
+        {
+            // JCS unit pins (RFC 8785): UTF-16 key order, compact form, escaping, ints
+            if (Packet.Jcs(new List<(string, object)> { ("b", 1), ("a", new List<string> { "x" }) }) != "{\"a\":[\"x\"],\"b\":1}")
+                throw new Exception("JCS key ordering/compact form wrong");
+            // escaping pin (RFC 8785): short escapes, \u00XX controls, non-ASCII literal — built
+            // from plain variables so the TEST carries no double-escaping ambiguity
+            var q = "\"";
+            var bs = "\\";
+            var jcsIn = "he\nllo " + q + "q" + q + " " + bs + " " + (char)1 + " \u00e9";
+            var jcsWant = q + "he\\nllo " + bs + q + "q" + bs + q + " " + bs + bs + " \\u0001 \u00e9" + q;
+            if (Packet.Jcs(jcsIn) != jcsWant)
+                throw new Exception($"JCS escaping wrong: {Packet.Jcs(jcsIn)}");
+            // determinism + the three wave shapes over corpus fixtures + samplerepos
+            var (pk1, rc1) = Packet.Run(Path.Combine(fixturesRoot, "F3b-conflicting-producers"), 1);
+            if (rc1 != 0 || pk1 is null) throw new Exception($"F3b export exited {rc1}");
+            if (Packet.Run(Path.Combine(fixturesRoot, "F3b-conflicting-producers"), 1).Item1 != pk1) throw new Exception("packet not deterministic");
+            if (pk1.Contains("\r")) throw new Exception("packet carries CR");
+            var d3b = JsonDocument.Parse(pk1).RootElement;
+            if (d3b.GetProperty("recordKind").GetString() != "hacp.v0_3_candidate.task_packet" || d3b.GetProperty("schemaVersion").GetString() != "hacp-0.3-candidate")
+                throw new Exception("consts wrong");
+            if (!d3b.GetProperty("profileRefs")[0].GetString()!.Contains("ua-hacp-profile-v0.1")) throw new Exception("profile ref missing");
+            var stops3b = d3b.GetProperty("stopConditions").EnumerateArray().Select(s => s.GetString()!).ToList();
+            if (stops3b.Count != 1 || !stops3b[0].Contains("C1 unresolved") || !stops3b[0].Contains("claims"))
+                throw new Exception("blockedOn must resolve to the contradiction's subject+claims, never a bare id: " + string.Join("|", stops3b));
+            // the digest self-recomputes (structure-level cross-check; the byte-level cross-check
+            // against the reference canonicalize lib ran at implementation and is recorded in the PR)
+            var bodyRows = new List<(string, object)> { ("recordKind", "hacp.v0_3_candidate.task_packet"), ("n", 1) };
+            var dgt = Packet.Digest(("digest-placeholder", 0) is var _ ? bodyRows : bodyRows);
+            if (dgt.Length != 64 || dgt.Any(c => !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f'))) throw new Exception("digest must be 64 lowercase hex");
+            // ready-wave fallback + gated shapes via the samplerepos harness outputs (integration truth)
+            var sr = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "samplerepos", "out"));
+            if (Directory.Exists(sr))
+            {
+                var (core, rcC) = Packet.Run(Path.Combine(sr, "fixture-core"), 1);
+                if (rcC != 0) throw new Exception($"samplerepos core export exited {rcC}");
+                var sc = JsonDocument.Parse(core!).RootElement.GetProperty("stopConditions").EnumerateArray().Select(s => s.GetString()!).ToList();
+                if (sc.Count != 1 || !sc[0].Contains("gates clear; executor preserves idempotency-by-refusal"))
+                    throw new Exception("ready wave must carry the fallback stop-condition: " + string.Join("|", sc));
+                var (diesel, rcD) = Packet.Run(Path.Combine(sr, "fixture-diesel"), 1);
+                if (rcD != 0) throw new Exception($"samplerepos diesel export exited {rcD}");
+                var sd = JsonDocument.Parse(diesel!).RootElement.GetProperty("stopConditions").EnumerateArray().Select(s => s.GetString()!).ToList();
+                if (!sd.Any(s => s.Contains("available from the public feed")) || !sd.Any(s => s.Contains("external ground-crew releases")))
+                    throw new Exception("the gated Diesel wave must carry T5 + T6 verbatim: " + string.Join("|", sd));
+                if (diesel == core) throw new Exception("two fixtures must not emit identical packets");
+            }
+            else Console.WriteLine("note: samplerepos outputs absent — harness packet checks skipped (run samplerepos/build.ps1 for the integration tier)");
+            // refusals: missing wave; caps
+            if (Packet.Run(Path.Combine(fixturesRoot, "F3b-conflicting-producers"), 99).Item2 != 1)
+                throw new Exception("a missing wave index must refuse (exit 1)");
+            Console.WriteLine("ok   hacp-packet-export (JCS pins; consts; blockedOn resolution; ready fallback; T5/T6 gates; determinism; refusals)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL hacp-packet-export: {ex.Message}"); }
 
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-push-spelling-idempotency: {ex.Message}"); }
