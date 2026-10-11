@@ -1,0 +1,31 @@
+{
+  "scanId": "scan-49c06d5263fcfaa3829d",
+  "repoName": "Cassowary.Booker",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "330e79514a7481c8bb6c36d2acca07800bcd07b9",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-10T21:35:29.436619+00:00",
+  "analysisLevel": "Level1SemanticAnalysis",
+  "buildStatus": "Succeeded",
+  "solutions": [],
+  "projects": [
+    "Cassowary.Booker.csproj"
+  ],
+  "targetFrameworks": [
+    "net10.0"
+  ],
+  "knownGaps": [],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "aaa56ece66623d233498c6953a687f96",
+  "gitRootHash": "aaa56ece66623d233498c6953a687f96",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "133a79c482f6b8411cb2e91770a006308de6a5df1072f8451a755702d457abc6"
+}

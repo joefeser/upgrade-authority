@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "externalPackages": [
+    { "packageId": "Cassowary.GroundOps.Diesel", "note": "owned by ground-crew (another fictional team) — declared external on purpose: the produced-and-declared-external anomaly is a shape this estate demonstrates" }
+  ],
+  "producers": []
+}

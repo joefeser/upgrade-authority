@@ -1,0 +1,31 @@
+{
+  "scanId": "scan-7719a943cc110e2ce6be",
+  "repoName": "Cassowary.CrewWeb",
+  "remoteUrl": null,
+  "branch": "master",
+  "commitSha": "51a5d96fedc5b8cb784e43837f6157f0d7e757de",
+  "scannerVersion": "tracemap-milestone16",
+  "scannedAt": "2026-10-10T21:35:30.923077+00:00",
+  "analysisLevel": "Level1SemanticAnalysis",
+  "buildStatus": "Succeeded",
+  "solutions": [],
+  "projects": [
+    "Cassowary.CrewWeb.csproj"
+  ],
+  "targetFrameworks": [
+    "net10.0"
+  ],
+  "knownGaps": [],
+  "scanRootRelativePath": ".",
+  "scanRootPathHash": "8c2ccd16a6648c0d34d2dc524b277179",
+  "gitRootHash": "8c2ccd16a6648c0d34d2dc524b277179",
+  "compiledInputProvenance": null,
+  "sourceMetadataReconciliation": null,
+  "pdbInputProvenance": null,
+  "pdbEvidenceSummary": null,
+  "ilBodyProvenance": null,
+  "ilRewriteProvenance": null,
+  "ilRewritePdbProvenance": null,
+  "webFormsPublishProvenance": null,
+  "sourceSnapshotDigest": "5d82979b7abd1e2f683447091b4460c8143f860cfcfaa60cb50c177eb11216ec"
+}

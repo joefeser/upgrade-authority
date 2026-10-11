@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "ownership.v0",
+  "selfTeamId": "platform",
+  "ownerships": [
+    { "repo": "Cassowary.Core", "team": "platform" },
+    { "repo": "Cassowary.Booker", "team": "platform" },
+    { "repo": "Cassowary.CrewWeb", "team": "platform" },
+    { "repo": "Cassowary.GroundOps", "team": "ground-crew" }
+  ]
+}
