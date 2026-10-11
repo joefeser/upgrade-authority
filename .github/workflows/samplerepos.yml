@@ -1,0 +1,46 @@
+name: samplerepos
+
+# SPEC-022's receipted follow-up: a SCHEDULED integration gate for the samplerepos harness.
+# The offline deterministic selftest never runs the harness (that isolation is the design); this
+# job is the separate tier that catches harness regressions on a schedule instead. The tracemap
+# dependency is PINNED — the public repo's green badge must never depend on a sibling repo's HEAD.
+# Bumping the pin is a deliberate PR (reviewable diff: what changed upstream, what re-generated).
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch: {} # manual runs anytime
+
+permissions:
+  contents: read # least privilege (house rule)
+
+env:
+  TRACEMAP_PIN: cff969dca65c1b48d5cab2b543866b96ef794477 # pinned tracemap commit (deliberate bumps only)
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Clone tracemap at the pinned commit
+        run: |
+          git clone --quiet https://github.com/joefeser/tracemap.git /tmp/tracemap
+          git -C /tmp/tracemap checkout --quiet "$TRACEMAP_PIN"
+      - name: Build tracemap
+        run: dotnet build /tmp/tracemap/src/dotnet/TraceMap.Cli -c Release --nologo
+      - name: Build ua
+        run: dotnet build src/UpgradeAuthority -c Release --nologo
+      - name: Selftest (the offline tier — must stay green beside the integration tier)
+        run: dotnet run --project src/UpgradeAuthority -c Release -- selftest
+      - name: Run the full harness (pack, restore, scan, plan, campaign)
+        shell: pwsh
+        run: ./samplerepos/build.ps1 -Stage all -TracemapCli /tmp/tracemap/src/dotnet/TraceMap.Cli/bin/Release/net10.0/tracemap.dll
+      - name: Harness receipts
+        if: always()
+        run: |
+          echo "## samplerepos campaign receipts" >> "$GITHUB_STEP_SUMMARY"
+          echo '(repo-side surfaces may repeat evidence commands and counts — artifact-memory receipts themselves are vault-resident)' >> "$GITHUB_STEP_SUMMARY"
+          cat samplerepos/out/campaign/campaign.v1.json >> "$GITHUB_STEP_SUMMARY" || echo '(no receipts — earlier stage failed)'

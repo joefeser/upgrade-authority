@@ -71,6 +71,24 @@ checks after every native call; conditional flags via array splatting (empty-str
 parse in LOCAL time and would churn across machines) and are env-saved/removed in a `finally`;
 identity rides `git -c user.name=… -c user.email=…` per invocation.
 
+## The campaign stage (post-talk board item 1)
+
+`-Stage campaign` walks both plans' waves deepest-layer-first and EXECUTES what is executable on the
+REAL scratch git repos: per-repo scoped fixtures (apply/push run one checkout per run — their own
+refusal rule), `ua apply --repo` verification, `ua push` branches with gated commits, and
+**WorkReceipt-shaped evidence** (command/exitCode/counts) into gitignored `out/campaign/`. The
+action taxonomy is honest: `pushed` (edits landed, a real branch), `already-claimed` (push refuses
+exit 7 on the existing branch — idempotency-by-refusal IS the campaign's claim semantics), and
+`reported-only` (zero-edit waves: republish-required producers and external coordination push
+NOTHING — no branch, no claim; the report is the coordination artifact). artifact-memory
+WorkReceipts themselves are vault-resident by their own contract — never committed to any repo —
+so the harness emits the evidence shape only; minting real receipts against an artifact-memory
+vault is a future slice.
+
+A scheduled CI gate (`.github/workflows/samplerepos.yml`, weekly + manual) runs the full harness
+against a **PINNED tracemap commit** — the public badge never depends on a sibling repo's HEAD;
+bumping the pin is a deliberate, reviewable PR.
+
 ## The HACP seam (SPEC-023)
 
 The plan stage also exports each run's waves as **HACP v0.3-candidate task packets**
