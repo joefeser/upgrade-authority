@@ -39,15 +39,18 @@ function Invoke-Ua {
     if ($rc -ne 0) { throw "$What failed (exit $rc)" }
 }
 
-# raw runner: returns the exit code WITHOUT throwing (campaign expects refusals, e.g. push's 7)
+# raw runner: returns the exit code WITHOUT throwing (campaign expects refusals, e.g. push's 7).
+# Output goes to the HOST (never the return pipeline — dotnet-run build chatter would pollute $rc).
 function Invoke-UaRaw {
     param([string[]]$ArgList)
     if ($UaCli -ne '') {
-        & dotnet @($UaCli) + $ArgList
+        $cmdArgs = @($UaCli) + $ArgList            # build the array FIRST (spaced + is not concatenation)
+        & dotnet @cmdArgs | Out-Host
     }
     else {
         $proj = Join-Path $repoRoot 'src/UpgradeAuthority/UpgradeAuthority.csproj'
-        & dotnet (@('run', "--project:$proj", '-c', 'Release', '--') + $ArgList)
+        $cmdArgs = @('run', "--project:$proj", '-c', 'Release', '--') + $ArgList
+        & dotnet @cmdArgs | Out-Host
     }
     return $LASTEXITCODE
 }
@@ -219,7 +222,8 @@ function Invoke-StagePlan {
 }
 
 function Invoke-StageCampaign {
-    # the campaign demo (post-talk board item 1): walk the Core plan's waves deepest-layer-first,
+    # the campaign demo (post-talk board item 1): walk the plan's waves in ua's WAVE ORDER
+    # (ascending index = the dependency order ua derived: producers publish before consumers upgrade),
     # claim each wave's task packet (export), execute the executable ones (apply + push on the REAL
     # scratch git repos), and record WorkReceipt-SHAPED evidence (command/exitCode/counts/artifacts).
     # artifact-memory WorkReceipts themselves are VAULT-RESIDENT by their own contract — never
@@ -237,9 +241,14 @@ function Invoke-StageCampaign {
     foreach ($run in @(@('core', $plan1), @('diesel', $plan2))) {
         $name = $run[0]; $pl = $run[1]
         foreach ($w in $pl.waves) {
+            # the wave's REAL task packet (SPEC-023): exported here so the receipt cites the
+            # claimable id, never a synthetic label
+            $packetPath = Join-Path $campDir "packet-$name-wave-$($w.index).json"
+            Invoke-Ua (@('export-packet', (Join-Path $out "fixture-$name"), '--wave', "$($w.index)", '--out', $packetPath) ) "export-packet $name wave $($w.index)"
+            $packetId = (Get-Content $packetPath -Raw | ConvertFrom-Json).packetId
             $entry = [ordered]@{
                 run = $name; wave = $w.index; status = $w.status
-                packetId = "run-$name-wave-$($w.index)"   # linked below to the exported packet when present
+                packetId = $packetId
                 units = @()
             }
             foreach ($u in $w.releaseUnits) {
@@ -266,8 +275,11 @@ function Invoke-StageCampaign {
                 $pushOut = Join-Path $campDir "push-$name-$($u.repo)"
                 $rcPush = Invoke-UaRaw @('push', $scoped, '--repo', $scratchRepo, '--base', $base, '--out', $pushOut)
                 if ($rcPush -eq 7) {
-                    # a refusal writes NO report into the fresh dir (precondition fires first) — the branch
-                    # existing at all IS the evidence; idempotency-by-refusal is the claim semantics
+                    # exit 7 is the branch-exists refusal ONLY if the branch exists — any other
+                    # precondition refusal with exit 7 semantics is a failure, not a claim
+                    $expectedBranch = "ua/wave-$($w.index)/$($pl.delta.packageName)-$($pl.delta.oldVersion)-to-$($pl.delta.newVersion)"
+                    git -C $scratchRepo rev-parse --verify --quiet $expectedBranch *> $null
+                    if ($LASTEXITCODE -ne 0) { throw "push $($u.repo) refused (exit 7) but branch '$expectedBranch' does not exist — an unexpected precondition refusal, not already-claimed" }
                     $unitEntry.action = 'already-claimed'
                     $unitEntry.evidence += @{ command = "ua push --repo $($u.repo)"; exitCode = 7; counts = @{ }; artifacts = @() }
                 }
@@ -289,6 +301,9 @@ function Invoke-StageCampaign {
                 }
                 }
                 $entry.units += $unitEntry
+                # persist after EVERY unit: a later failure never orphans an earlier push's receipt
+                $receipt = [ordered]@{ schemaVersion = 'campaign.v1'; note = 'WorkReceipt-shaped evidence (artifact-memory receipts are vault-resident by their contract — never committed); minting real receipts is a future slice'; waves = $waves + $entry }
+                $receipt | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $campDir 'campaign.v1.json')
             }
             $waves += $entry
         }
