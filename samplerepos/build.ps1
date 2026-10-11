@@ -224,11 +224,14 @@ function Invoke-StagePlan {
 function Invoke-StageCampaign {
     # receipts carry an explicit terminal status: a mid-campaign failure writes
     # status "failed" BEFORE the throw (a partial receipt must never masquerade as complete)
-    # campDir is created UP FRONT so every failure path has somewhere to write (PR10 r5)
     $campDir = Join-Path $out 'campaign'
-    if (-not (Test-Path $out)) { New-Item -ItemType Directory -Force -Path $out | Out-Null }
-    if (-not (Test-Path $campDir)) { New-Item -ItemType Directory -Force -Path $campDir | Out-Null }
-    try { Invoke-StageCampaignCore }
+    try {
+        # directory setup INSIDE the protected region (PR10 r6): even its failure reaches the
+        # catch, which best-effort-creates the dir before writing the failed receipt
+        if (-not (Test-Path $out)) { New-Item -ItemType Directory -Force -Path $out | Out-Null }
+        if (-not (Test-Path $campDir)) { New-Item -ItemType Directory -Force -Path $campDir | Out-Null }
+        Invoke-StageCampaignCore
+    }
     catch {
         # the failure handler must NEVER mask the ORIGINAL error (PR10 r3-r5): capture it first —
         # the nested catch's $_ would otherwise rebind to the parse failure
@@ -245,9 +248,13 @@ function Invoke-StageCampaign {
         catch { }
         if (-not $wroteCheckpoint) {
             # absent (pre-first-checkpoint) or unparseable (interrupted write): a standalone failed
-            # record carrying the ORIGINAL failure, never the parse error
-            $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = $original; note = 'no parseable checkpoint receipt — this standalone record preserves the original failure'; waves = @() }
-            $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+            # record carrying the ORIGINAL failure, never the parse error. Best-effort directory
+            # creation — if even this fails, the rethrow below still surfaces the original error.
+            try {
+                if (-not (Test-Path $campDir)) { New-Item -ItemType Directory -Force -Path $campDir | Out-Null }
+                $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = $original; note = 'no parseable checkpoint receipt — this standalone record preserves the original failure'; waves = @() }
+                $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+            } catch { }
         }
         throw
     }
