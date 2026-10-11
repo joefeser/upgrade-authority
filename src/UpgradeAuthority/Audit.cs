@@ -96,9 +96,10 @@ public static class Audit
             considered++;
         }
         raw.Advisories = byKey.Values.OrderBy(a => a.AdvisoryId, StringComparer.Ordinal).ThenBy(a => a.PackageId, StringComparer.Ordinal).ToList();
-        // SPEC-024 §4: advisoryCount = the file's POST-COLLAPSE total (skipped-ecosystem rows still count —
-        // the FILE total; consideredCount shows the gap; identical duplicates collapse to one)
-        return (new ValidatedFile { File = raw, AdvisoryCount = advisoryCount - collapsed, ConsideredCount = considered }, null);
+        // SPEC-024 §4: advisoryCount = the file's POST-COLLAPSE total — dedup runs FIRST so identical
+        // duplicates never increment it; ecosystem-skipped rows still count (consideredCount shows the gap)
+        _ = collapsed;
+        return (new ValidatedFile { File = raw, AdvisoryCount = advisoryCount, ConsideredCount = considered }, null);
     }
 
     static bool SameContent(Advisory a, Advisory b) =>
