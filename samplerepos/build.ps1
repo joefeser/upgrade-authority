@@ -226,12 +226,25 @@ function Invoke-StageCampaign {
     # status "failed" BEFORE the throw (a partial receipt must never masquerade as complete)
     try { Invoke-StageCampaignCore }
     catch {
+        # the failure handler must NEVER mask the original error (PR10 r3/r4): an interrupted
+        # checkpoint write may be unparseable — fall back to a standalone failed record, and
+        # surface the ORIGINAL exception after writing
         $partialPath = Join-Path $out 'campaign' 'campaign.v1.json'
-        if (Test-Path $partialPath) {
+        try {
             $partial = Get-Content $partialPath -Raw | ConvertFrom-Json
             $partial | Add-Member -NotePropertyName status -NotePropertyValue 'failed' -Force
             $partial | Add-Member -NotePropertyName failure -NotePropertyValue "$_" -Force
             $partial | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+        }
+        catch {
+            $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = "$_"; note = 'the checkpoint receipt was unparseable (interrupted write) — this standalone record preserves the failure'; waves = @() }
+            $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+        }
+        if (-not (Test-Path $partialPath)) {
+            # failures BEFORE the first checkpoint (plan read, first packet export) still leave a failed record
+            $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = "$_"; note = 'failed before the first unit checkpoint'; waves = @() }
+            New-Item -ItemType Directory -Force -Path (Split-Path $partialPath) | Out-Null
+            $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
         }
         throw
     }
