@@ -5,7 +5,7 @@
 # conditional args via array splatting; $HOME instead of ~; every ua artifact goes through
 # `ua ... --out` (never > / Out-File — BOM/UTF-16 on 5.1).
 param(
-    [ValidateSet('pack', 'restore', 'scan', 'plan', 'all')]
+    [ValidateSet('pack', 'restore', 'scan', 'plan', 'campaign', 'all')]
     [string]$Stage = 'all',
     [string]$TracemapCli = '',     # absolute path to the tracemap CLI dll (REQUIRED for scan/all; pack/restore/plan run without it)
     [string]$UaCli = '',           # optional: path to a built ua dll. Default: dotnet-runs this repo's project.
@@ -35,13 +35,24 @@ function Invoke-Checked {
 
 function Invoke-Ua {
     param([string[]]$ArgList, [string]$What)
+    $rc = Invoke-UaRaw $ArgList
+    if ($rc -ne 0) { throw "$What failed (exit $rc)" }
+}
+
+# raw runner: returns the exit code WITHOUT throwing (campaign expects refusals, e.g. push's 7).
+# Output goes to the HOST (never the return pipeline — dotnet-run build chatter would pollute $rc).
+function Invoke-UaRaw {
+    param([string[]]$ArgList)
     if ($UaCli -ne '') {
-        Invoke-Checked 'dotnet' (@($UaCli) + $ArgList) $What
+        $cmdArgs = @($UaCli) + $ArgList            # build the array FIRST (spaced + is not concatenation)
+        & dotnet @cmdArgs | Out-Host
     }
     else {
         $proj = Join-Path $repoRoot 'src/UpgradeAuthority/UpgradeAuthority.csproj'
-        Invoke-Checked 'dotnet' (@('run', "--project:$proj", '-c', 'Release', '--') + $ArgList) $What
+        $cmdArgs = @('run', "--project:$proj", '-c', 'Release', '--') + $ArgList
+        & dotnet @cmdArgs | Out-Host
     }
+    return $LASTEXITCODE
 }
 
 function Invoke-StagePack {
@@ -210,10 +221,150 @@ function Invoke-StagePlan {
     Write-Host 'stage plan: all assertions green (registry ci-defined + anomaly; drift lockfile-evidence behind/current; Core plan affected x2; Diesel plan T5 + Booker affected; HACP packets exported)'
 }
 
+function Invoke-StageCampaign {
+    # receipts carry an explicit terminal status: a mid-campaign failure writes
+    # status "failed" BEFORE the throw (a partial receipt must never masquerade as complete)
+    $campDir = Join-Path $out 'campaign'
+    try {
+        # directory setup INSIDE the protected region (PR10 r6): even its failure reaches the
+        # catch, which best-effort-creates the dir before writing the failed receipt
+        if (-not (Test-Path $out)) { New-Item -ItemType Directory -Force -Path $out | Out-Null }
+        if (-not (Test-Path $campDir)) { New-Item -ItemType Directory -Force -Path $campDir | Out-Null }
+        Invoke-StageCampaignCore
+    }
+    catch {
+        # the failure handler must NEVER mask the ORIGINAL error (PR10 r3-r5): capture it first —
+        # the nested catch's $_ would otherwise rebind to the parse failure
+        $original = "$_"
+        $partialPath = Join-Path $campDir 'campaign.v1.json'
+        $wroteCheckpoint = $false
+        try {
+            $partial = Get-Content $partialPath -Raw | ConvertFrom-Json
+            $partial | Add-Member -NotePropertyName status -NotePropertyValue 'failed' -Force
+            $partial | Add-Member -NotePropertyName failure -NotePropertyValue $original -Force
+            $partial | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+            $wroteCheckpoint = $true
+        }
+        catch { }
+        if (-not $wroteCheckpoint) {
+            # absent (pre-first-checkpoint) or unparseable (interrupted write): a standalone failed
+            # record carrying the ORIGINAL failure, never the parse error. Best-effort directory
+            # creation — if even this fails, the rethrow below still surfaces the original error.
+            try {
+                if (-not (Test-Path $campDir)) { New-Item -ItemType Directory -Force -Path $campDir | Out-Null }
+                $fallback = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'failed'; failure = $original; note = 'no parseable checkpoint receipt — this standalone record preserves the original failure'; waves = @() }
+                $fallback | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $partialPath
+            } catch { }
+        }
+        throw
+    }
+}
+
+function Invoke-StageCampaignCore {
+    # the campaign demo (post-talk board item 1): walk the plan's waves in ua's WAVE ORDER
+    # (ascending index = the dependency order ua derived: producers publish before consumers upgrade),
+    # claim each wave's task packet (export), execute the executable ones (apply + push on the REAL
+    # scratch git repos), and record WorkReceipt-SHAPED evidence (command/exitCode/counts/artifacts).
+    # artifact-memory WorkReceipts themselves are VAULT-RESIDENT by their own contract — never
+    # committed to any repo — so this emits the evidence shape into gitignored out/; minting real
+    # receipts against an artifact-memory vault is a future slice.
+    if (-not (Test-Path (Join-Path $out 'fixture-core'))) { throw 'no plan outputs — run -Stage plan first' }
+    if (Test-Path $campDir) { Remove-Item -Recurse -Force $campDir }
+    New-Item -ItemType Directory -Force -Path $campDir | Out-Null
+
+    $plan1 = Get-Content (Join-Path $out 'plan-core.json') -Raw | ConvertFrom-Json
+    $plan2 = Get-Content (Join-Path $out 'plan-diesel.json') -Raw | ConvertFrom-Json
+    $waves = @()
+
+    foreach ($run in @(@('core', $plan1), @('diesel', $plan2))) {
+        $name = $run[0]; $pl = $run[1]
+        foreach ($w in $pl.waves) {
+            # the wave's REAL task packet (SPEC-023): exported here so the receipt cites the
+            # claimable id, never a synthetic label
+            $packetPath = Join-Path $campDir "packet-$name-wave-$($w.index).json"
+            Invoke-Ua (@('export-packet', (Join-Path $out "fixture-$name"), '--wave', "$($w.index)", '--out', $packetPath) ) "export-packet $name wave $($w.index)"
+            $packetId = (Get-Content $packetPath -Raw | ConvertFrom-Json).packetId
+            $entry = [ordered]@{
+                run = $name; wave = $w.index; status = $w.status
+                packetId = $packetId
+                units = @()
+            }
+            foreach ($u in $w.releaseUnits) {
+                $unitEntry = [ordered]@{ repo = $u.repo; action = 'coordination-only'; evidence = @() }
+                $scratchRepo = Join-Path $scratch $u.repo
+                if (-not (Test-Path $scratchRepo)) { throw "scratch repo missing: $scratchRepo (run -Stage scan)" }
+                # per-repo scoped fixture copies (apply/push execute ONE checkout per run — the refusal's own rule)
+                $scoped = Join-Path $campDir "fixture-$name-$($u.repo)"
+                Copy-Item -Recurse (Join-Path $out "fixture-$name") $scoped
+                $pxPath = Join-Path $scoped 'input' 'package-evidence.v0.json'
+                $px = Get-Content $pxPath -Raw | ConvertFrom-Json
+                $px.facts = @($px.facts | Where-Object { $_.repo -eq $u.repo })
+                $px.scanCoverage = @($px.scanCoverage | Where-Object { $_.repo -eq $u.repo })
+                $px | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $pxPath
+                # repo-local git identity for the push commit (portable; no global config assumed)
+                Invoke-Checked 'git' (@('-C', $scratchRepo, 'config', 'user.email', 'campaign@harness.invalid') ) "git identity $($u.repo)"
+                Invoke-Checked 'git' (@('-C', $scratchRepo, 'config', 'user.name', 'cassowary-campaign') ) "git identity name $($u.repo)"
+                $base = (git -C $scratchRepo branch --show-current).Trim()
+                $applyOut = Join-Path $campDir "apply-$name-$($u.repo)"
+                $rcApply = Invoke-UaRaw @('apply', $scoped, '--repo', $scratchRepo, '--out', $applyOut)
+                if ($rcApply -ne 0) { throw "apply $($u.repo) failed (exit $rcApply)" }
+                $unitEntry.action = 'applied'
+                $unitEntry.evidence += @{ command = "ua apply --repo $($u.repo)"; exitCode = $rcApply; counts = @{ }; artifacts = @() }
+                $pushOut = Join-Path $campDir "push-$name-$($u.repo)"
+                $rcPush = Invoke-UaRaw @('push', $scoped, '--repo', $scratchRepo, '--base', $base, '--out', $pushOut)
+                if ($rcPush -eq 7) {
+                    # exit 7 is the branch-exists refusal ONLY if the branch exists — any other
+                    # precondition refusal with exit 7 semantics is a failure, not a claim
+                    $expectedBranch = "ua/wave-$($w.index)/$($pl.delta.packageName)-$($pl.delta.oldVersion)-to-$($pl.delta.newVersion)"
+                    git -C $scratchRepo rev-parse --verify --quiet $expectedBranch *> $null
+                    if ($LASTEXITCODE -ne 0) { throw "push $($u.repo) refused (exit 7) but branch '$expectedBranch' does not exist — an unexpected precondition refusal, not already-claimed" }
+                    $unitEntry.action = 'already-claimed'
+                    $unitEntry.evidence += @{ command = "ua push --repo $($u.repo)"; exitCode = 7; counts = @{ }; artifacts = @() }
+                }
+                elseif ($rcPush -ne 0) { throw "push $($u.repo) failed (exit $rcPush)" }
+                else {
+                $pushReport = Get-Content (Join-Path $pushOut 'push.v1.json') -Raw | ConvertFrom-Json
+                $editTotal = ($pushReport.waves | Measure-Object -Property edits -Sum).Sum
+                if ($editTotal -eq 0) {
+                    # zero-edit waves (republish-required / external coordination) push NOTHING — no branch,
+                    # no claim; the report itself is the coordination artifact (honest taxonomy)
+                    $unitEntry.action = 'reported-only'
+                    $unitEntry.evidence += @{ command = "ua push --repo $($u.repo)"; exitCode = $rcPush; counts = @{ edits = 0 }; artifacts = @() }
+                }
+                else {
+                    $branch = "ua/wave-$($w.index)/$($pl.delta.packageName)-$($pl.delta.oldVersion)-to-$($pl.delta.newVersion)"
+                    $unitEntry.action = 'pushed'
+                    $unitEntry.branch = $branch
+                    $unitEntry.evidence += @{ command = "ua push --repo $($u.repo)"; exitCode = $rcPush; counts = @{ edits = $editTotal }; artifacts = @() }
+                }
+                }
+                $entry.units += $unitEntry
+                # persist after EVERY unit: a later failure never orphans an earlier push's receipt
+                $receipt = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'in-progress'; note = 'WorkReceipt-shaped evidence (artifact-memory receipts are vault-resident by their contract — never committed); minting real receipts is a future slice'; waves = $waves + $entry }
+                $receipt | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $campDir 'campaign.v1.json')
+            }
+            $waves += $entry
+        }
+    }
+
+    $receipt = [ordered]@{ schemaVersion = 'campaign.v1'; status = 'complete'; note = 'WorkReceipt-shaped evidence (artifact-memory receipts are vault-resident by their contract — never committed); minting real receipts is a future slice'; waves = $waves }
+    $receipt | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 (Join-Path $campDir 'campaign.v1.json')
+
+    # assertions: executable waves really landed (or already-claimed on re-run); coordination waves recorded
+    $c = Get-Content (Join-Path $campDir 'campaign.v1.json') -Raw | ConvertFrom-Json
+    $pushedCore = @($c.waves | Where-Object { $_.run -eq 'core' -and $_.wave -eq 2 } | ForEach-Object { $_.units } | Where-Object { $_.action -in @('pushed', 'already-claimed') })
+    if ($pushedCore.Count -lt 2) { throw "campaign: both Core consumers must push (or be already-claimed), got $($pushedCore.Count)" }
+    $producerWaves = @($c.waves | ForEach-Object { $_.units } | Where-Object { $_.repo -in @('Cassowary.Core', 'Cassowary.GroundOps') })
+    if ($producerWaves.Count -gt 0 -and $producerWaves.Where({ $_.action -ne 'reported-only' }).Count -gt 0) { throw 'campaign: zero-edit producer/external waves must be reported-only (no branch, no claim)' }
+    if ($producerWaves.Where({ $_.action -eq 'reported-only' }).Count -lt 2) { throw 'campaign: both producer/external waves must be recorded as reported-only' }
+    Write-Host 'stage campaign: waves walked claim->apply->push (or coordination/already-claimed); receipts at out/campaign/campaign.v1.json'
+}
+
 switch ($Stage) {
-    'pack'    { Invoke-StagePack }
-    'restore' { Invoke-StageRestore }
-    'scan'    { Invoke-StageScan }
-    'plan'    { Invoke-StagePlan }
-    'all'     { if ($TracemapCli -eq '') { throw '-TracemapCli is required for -Stage all' }; Invoke-StagePack; Invoke-StageRestore; Invoke-StageScan; Invoke-StagePlan }
+    'pack'      { Invoke-StagePack }
+    'restore'   { Invoke-StageRestore }
+    'scan'      { Invoke-StageScan }
+    'plan'      { Invoke-StagePlan }
+    'campaign'  { Invoke-StageCampaign }
+    'all'       { if ($TracemapCli -eq '') { throw '-TracemapCli is required for -Stage all' }; Invoke-StagePack; Invoke-StageRestore; Invoke-StageScan; Invoke-StagePlan; Invoke-StageCampaign }
 }
