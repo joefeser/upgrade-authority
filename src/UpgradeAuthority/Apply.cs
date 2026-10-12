@@ -151,6 +151,9 @@ public static class Apply
         return "ranged-or-prerelease";
     }
 
+    // SPEC-024: audit's usability predicate — parseable means "plain numeric pin" (the comparer's own test)
+    internal static int[]? ParseCorePublic(string v) => ParseCore(v);
+
     // Numeric core compare: null when either side is not a plain numeric pin (prerelease etc.).
     internal static int? CompareCore(string a, string b) // shared with Planner findings (SPEC-012)
     {

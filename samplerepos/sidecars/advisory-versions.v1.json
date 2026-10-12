@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "advisory-versions.v1",
+  "source": "osv-export",
+  "asOf": "2026-10-11",
+  "advisories": [
+    {
+      "advisoryId": "OSV-cassowary-core-multi.w1",
+      "packageId": "Cassowary.Core",
+      "ecosystem": "NuGet",
+      "fixedIn": "1.1.0",
+      "severity": "high"
+    },
+    {
+      "advisoryId": "OSV-cassowary-core-multi.w2",
+      "packageId": "Cassowary.Core",
+      "ecosystem": "NuGet",
+      "fixedIn": "1.2.5",
+      "severity": "high"
+    },
+    {
+      "advisoryId": "OSV-cassowary-diesel-gap",
+      "packageId": "Cassowary.GroundOps.Diesel",
+      "ecosystem": "NuGet",
+      "severity": "export-gap"
+    }
+  ]
+}

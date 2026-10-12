@@ -182,6 +182,21 @@ public static class Program
                 else WriteArtifactFile(outFileP, canonicalP);
                 return 0;
             }
+            if (args.Length >= 2 && args[0] == "audit")
+            {
+                // SPEC-024: the security-intelligence report (advisory truth x inventory x boundary)
+                foreach (var f in new[] { "--advisories", "--out", "-o" })
+                {
+                    int? badA = ValueFlagError(args, f);
+                    if (badA is not null) { Console.Error.WriteLine($"error: {args[badA.Value]} requires a value"); return 1; }
+                }
+                var outFileA = GetOpt(args, "--out") ?? GetOpt(args, "-o");
+                var (canonicalA, rcA) = Audit.Run(args[1], GetOpt(args, "--advisories"));
+                if (rcA != 0) return rcA;
+                if (outFileA is null) WriteCanonical(() => Console.Write(canonicalA), outWriter);
+                else WriteArtifactFile(outFileA, canonicalA);
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
@@ -219,7 +234,7 @@ public static class Program
                 return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -3256,6 +3271,74 @@ public static class Program
             Console.WriteLine("ok   hacp-packet-export (JCS pins; consts; blockedOn resolution; ready fallback; T5/T6 gates; determinism; refusals)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL hacp-packet-export: {ex.Message}"); }
+
+        // SPEC-024: ua audit — advisory truth x inventory x boundary
+        try
+        {
+            var fa = Path.Combine(fixturesRoot, "F-audit");
+            var advPath = Path.Combine(fa, "input", "advisory-versions.v1.json");
+            // golden + determinism + permutation
+            var (a1, r1) = Audit.Run(fa, advPath);
+            if (r1 != 0 || a1 is null) throw new Exception($"audit exited {r1}");
+            if (a1 != File.ReadAllText(Path.Combine(fa, "golden", "audit.v1.json"))) throw new Exception("audit.v1 differs from golden");
+            if (Audit.Run(fa, advPath).Item1 != a1) throw new Exception("audit not deterministic");
+            var d = JsonDocument.Parse(a1).RootElement;
+            if (d.GetProperty("schemaVersion").GetString() != "audit.v1") throw new Exception("schemaVersion");
+            var s = d.GetProperty("summary");
+            // the pinned arithmetic table (verified by hand against the fixture):
+            if (s.GetProperty("packagesObserved").GetInt32() != 4 || s.GetProperty("packagesListed").GetInt32() != 4
+                || s.GetProperty("affectedInstallations").GetInt32() != 5 || s.GetProperty("notAffectedInstallations").GetInt32() != 2
+                || s.GetProperty("unclassifiedInstallations").GetInt32() != 1 || s.GetProperty("advisoriesWithAffected").GetInt32() != 4)
+                throw new Exception("summary table wrong: " + s.GetRawText());
+            var bb = s.GetProperty("byBoundaryAffected");
+            if (bb.GetProperty("internal").GetInt32() != 2 || bb.GetProperty("external").GetInt32() != 1 || bb.GetProperty("unknown").GetInt32() != 2)
+                throw new Exception("byBoundaryAffected wrong: " + bb.GetRawText());
+            var advEcho = d.GetProperty("advisories");
+            if (advEcho.GetProperty("advisoryCount").GetInt32() != 9 || advEcho.GetProperty("consideredCount").GetInt32() != 9)
+                throw new Exception("advisory counts wrong");
+            // the showcase rows: padding tier, verbatim-prerelease tier, A1/A2 reasons, export-gap, anomaly, dual-advisory reason survival
+            var pkgs = d.GetProperty("packages").EnumerateArray().ToDictionary(p2 => p2.GetProperty("packageId").GetString());
+            var shared = pkgs["Contoso.Shared"];
+            if (shared.GetProperty("boundary").GetString() != "internal" || shared.GetProperty("anomaly").GetString() != "producedAndDeclaredExternal")
+                throw new Exception("anomaly package must be internal + anomaly named");
+            var f5 = shared.GetProperty("findings").EnumerateArray().First(f2 => f2.GetProperty("advisoryId").GetString() == "GHSA-cs-0005");
+            var i5 = f5.GetProperty("installations")[0];
+            if (i5.GetProperty("status").GetString() != "unclassified" || !i5.GetProperty("reason").GetString()!.Contains("fixedIn 2.2.0-rc not a plain numeric pin"))
+                throw new Exception("A2 reason must survive per-advisory: " + i5.GetRawText());
+            var gap = shared.GetProperty("findings").EnumerateArray().First(f2 => f2.GetProperty("advisoryId").GetString() == "GHSA-gap-0008");
+            if (gap.GetProperty("severity").GetString() != "export-gap" || !gap.GetProperty("installations")[0].GetProperty("reason").GetString()!.Contains("export gap"))
+                throw new Exception("export-gap entry must render unclassified with the gap reason");
+            var ser = pkgs["Serilog"];
+            var f2s = ser.GetProperty("findings").EnumerateArray().First(f3 => f3.GetProperty("advisoryId").GetString() == "GHSA-sl-0002");
+            var beta = f2s.GetProperty("installations").EnumerateArray().First(i6 => i6.GetProperty("version").GetString() == "3.1.1-beta");
+            if (beta.GetProperty("status").GetString() != "affected") throw new Exception("verbatim-prerelease tier must match its listed entry");
+            var pad = f2s.GetProperty("installations").EnumerateArray().First(i6 => i6.GetProperty("version").GetString() == "12.0.3");
+            if (pad.GetProperty("status").GetString() != "affected") throw new Exception("padding tier must match 12.0.3 vs listed 12.0.3.0");
+            // validation battery (exit 5 family + missing file exit 1 + collapse)
+            string Adv(string name, string content) { var pth = Path.Combine(Path.GetTempPath(), "ua-a24-" + Guid.NewGuid().ToString("N")[..8], name); Directory.CreateDirectory(Path.GetDirectoryName(pth)!); File.WriteAllText(pth, content); return pth; }
+            if (Audit.Run(fa, Adv("v1.json", "{\"schemaVersion\":\"advisory-versions.v0\",\"source\":\"operator-provided\",\"advisories\":[]}")).Item2 != 5) throw new Exception("schemaVersion mismatch must exit 5");
+            if (Audit.Run(fa, Adv("v2.json", "{\"schemaVersion\":\"advisory-versions.v1\",\"source\":\"weird\",\"advisories\":[]}")).Item2 != 5) throw new Exception("bad source must exit 5");
+            if (Audit.Run(fa, Adv("v3.json", "{\"schemaVersion\":\"advisory-versions.v1\",\"source\":\"operator-provided\",\"advisories\":[{\"advisoryId\":\"X\",\"packageId\":\"Y\"}]}")).Item2 != 5) throw new Exception("neither-usable must exit 5");
+            if (Audit.Run(fa, Adv("v4.json", "{\"schemaVersion\":\"advisory-versions.v1\",\"source\":\"operator-provided\",\"advisories\":[{\"advisoryId\":\"X\",\"packageId\":\"Y\",\"fixedIn\":\"1.0.0\",\"severity\":\"h\"},{\"advisoryId\":\"X\",\"packageId\":\"Y\",\"fixedIn\":\"2.0.0\",\"severity\":\"h\"}]}")).Item2 != 5) throw new Exception("contradictory duplicate must exit 5");
+            var (dupCanon, dupRc) = Audit.Run(fa, Adv("v5.json", "{\"schemaVersion\":\"advisory-versions.v1\",\"source\":\"operator-provided\",\"advisories\":[{\"advisoryId\":\"X\",\"packageId\":\"No.Such.Pkg\",\"fixedIn\":\"1.0.0\"},{\"advisoryId\":\"X\",\"packageId\":\"No.Such.Pkg\",\"fixedIn\":\"1.0.0\"}]}"));
+            if (dupRc != 0 || JsonDocument.Parse(dupCanon!).RootElement.GetProperty("advisories").GetProperty("advisoryCount").GetInt32() != 1)
+                throw new Exception("identical duplicates must collapse to advisoryCount 1");
+            if (Audit.Run(fa, fa + "-absent.json").Item2 != 1) throw new Exception("missing advisory file must exit 1");
+            var ecoSkip = Adv("v6.json", "{\"schemaVersion\":\"advisory-versions.v1\",\"source\":\"osv-export\",\"advisories\":[{\"advisoryId\":\"N\",\"packageId\":\"Left.Pad\",\"ecosystem\":\"npm\",\"fixedIn\":\"1.0.0\"}]}");
+            var (ecoCanon, ecoRc) = Audit.Run(fa, ecoSkip);
+            if (ecoRc != 0 || JsonDocument.Parse(ecoCanon!).RootElement.GetProperty("advisories").GetProperty("consideredCount").GetInt32() != 0
+                || JsonDocument.Parse(ecoCanon!).RootElement.GetProperty("advisories").GetProperty("advisoryCount").GetInt32() != 1)
+                throw new Exception("non-nuget rows must skip VISIBLY: consideredCount 0 while advisoryCount keeps the file total (1)");
+            // CompareCore parity (the fixedIn path): structural
+            foreach (var (inst, fix, want) in new[] { ("13.0.3", "13.0.3.0", "not-affected"), ("12.0.3", "13.0.3", "affected"), ("14.0.0", "13.0.3", "not-affected"), ("13.0.3-beta", "13.0.3", null) })
+            {
+                var cmp = Apply.CompareCore(inst, fix);
+                var got = cmp switch { < 0 => "affected", >= 0 => "not-affected", _ => "unclassified" };
+                if (got != (want ?? "unclassified")) throw new Exception($"parity shape {inst} vs {fix}");
+            }
+            Console.WriteLine("ok   audit-golden (F-audit bytes; arithmetic table; tiers; reasons; anomaly; export-gap; validation; parity)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL audit-golden: {ex.Message}"); }
 
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-push-spelling-idempotency: {ex.Message}"); }

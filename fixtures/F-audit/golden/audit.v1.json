@@ -1,0 +1,209 @@
+{
+  "schemaVersion": "audit.v1",
+  "advisories": {
+    "source": "osv-export",
+    "asOf": "2026-10-11",
+    "advisoryCount": 9,
+    "consideredCount": 9
+  },
+  "summary": {
+    "packagesObserved": 4,
+    "packagesListed": 4,
+    "affectedInstallations": 5,
+    "notAffectedInstallations": 2,
+    "unclassifiedInstallations": 1,
+    "byBoundaryAffected": {
+      "internal": 2,
+      "external": 1,
+      "unknown": 2
+    },
+    "advisoriesWithAffected": 4
+  },
+  "packages": [
+    {
+      "packageId": "Contoso.Core",
+      "boundary": "internal",
+      "findings": [
+        {
+          "advisoryId": "GHSA-cc-0003",
+          "severity": "high",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "1.0.0",
+              "evidence": "declared-pin",
+              "status": "affected"
+            }
+          ]
+        },
+        {
+          "advisoryId": "GHSA-multi-0006",
+          "severity": "low",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "1.0.0",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "Contoso.Shared",
+      "boundary": "internal",
+      "anomaly": "producedAndDeclaredExternal",
+      "findings": [
+        {
+          "advisoryId": "GHSA-cs-0004",
+          "severity": "high",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "2.0.0",
+              "evidence": "declared-pin",
+              "status": "affected"
+            }
+          ]
+        },
+        {
+          "advisoryId": "GHSA-cs-0005",
+          "severity": "moderate",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "2.0.0",
+              "evidence": "declared-pin",
+              "status": "unclassified",
+              "reason": "advisory fixedIn 2.2.0-rc not a plain numeric pin"
+            }
+          ]
+        },
+        {
+          "advisoryId": "GHSA-gap-0008",
+          "severity": "export-gap",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "2.0.0",
+              "evidence": "declared-pin",
+              "status": "unclassified",
+              "reason": "export gap: the advisory's vulnerable window could not be soundly exported — manual review"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "Newtonsoft.Json",
+      "boundary": "external",
+      "findings": [
+        {
+          "advisoryId": "GHSA-nj-0001",
+          "severity": "high",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "12.0.3",
+              "evidence": "lockfile",
+              "status": "affected"
+            },
+            {
+              "repo": "appB",
+              "version": "13.0.2",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            },
+            {
+              "repo": "appB",
+              "version": "13.0.3-beta",
+              "evidence": "lockfile",
+              "status": "unclassified",
+              "reason": "installed 13.0.3-beta not a plain numeric pin"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packageId": "Serilog",
+      "boundary": "unknown",
+      "findings": [
+        {
+          "advisoryId": "GHSA-clean-0007",
+          "severity": "low",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "3.1.1-beta",
+              "evidence": "lockfile",
+              "status": "unclassified",
+              "reason": "installed 3.1.1-beta not a plain numeric pin"
+            },
+            {
+              "repo": "appC",
+              "version": "12.0.3",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            },
+            {
+              "repo": "appC",
+              "version": "4.0.0",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            }
+          ]
+        },
+        {
+          "advisoryId": "GHSA-multi-0006",
+          "severity": "low",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "3.1.1-beta",
+              "evidence": "lockfile",
+              "status": "not-affected"
+            },
+            {
+              "repo": "appC",
+              "version": "12.0.3",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            },
+            {
+              "repo": "appC",
+              "version": "4.0.0",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            }
+          ]
+        },
+        {
+          "advisoryId": "GHSA-sl-0002",
+          "severity": "moderate",
+          "installations": [
+            {
+              "repo": "appA",
+              "version": "3.1.1-beta",
+              "evidence": "lockfile",
+              "status": "affected"
+            },
+            {
+              "repo": "appC",
+              "version": "12.0.3",
+              "evidence": "declared-pin",
+              "status": "affected"
+            },
+            {
+              "repo": "appC",
+              "version": "4.0.0",
+              "evidence": "declared-pin",
+              "status": "not-affected"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

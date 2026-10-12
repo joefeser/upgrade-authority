@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "producer-evidence.v0",
+  "source": "fixture-declared",
+  "externalPackages": [
+    {
+      "packageId": "Newtonsoft.Json"
+    },
+    {
+      "packageId": "Contoso.Shared"
+    }
+  ],
+  "producers": [
+    {
+      "repo": "corelib",
+      "packageId": "Contoso.Core",
+      "producedVersion": "1.0.0"
+    },
+    {
+      "repo": "shared",
+      "packageId": "Contoso.Shared",
+      "producedVersion": "2.0.0"
+    }
+  ]
+}

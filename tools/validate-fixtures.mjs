@@ -218,6 +218,69 @@ for (const d of dirs) {
       } catch (e) { errs.push("drift.v1 parse"); }
     }
   }
+  // SPEC-024: audit.v1 goldens — structural contract (closed key set via strict re-serialization)
+  {
+    const auditPath = join(fixturesDir, d, "golden", "audit.v1.json");
+    if (existsSync(auditPath)) {
+      try {
+        const auditText = readFileSync(auditPath, "utf8");
+        const au = JSON.parse(auditText);
+        const ord = (o, keys) => { const r = {}; for (const k of keys) if (k in o) r[k] = o[k]; return r; };
+        const canon = {
+          schemaVersion: au.schemaVersion,
+          advisories: ord(au.advisories ?? {}, ["source", "asOf", "advisoryCount", "consideredCount"]),
+          summary: ord(au.summary ?? {}, ["packagesObserved", "packagesListed", "affectedInstallations", "notAffectedInstallations", "unclassifiedInstallations", "byBoundaryAffected", "advisoriesWithAffected"]),
+          packages: (au.packages ?? []).map(p2 => ord(p2, ["packageId", "boundary", "anomaly", "findings"])),
+        };
+        canon.packages.forEach(p2 => { p2.findings = (p2.findings ?? []).map(f2 => ord(f2, ["advisoryId", "severity", "installations"])); p2.findings.forEach(f2 => f2.installations = (f2.installations ?? []).map(i2 => ord(i2, ["repo", "version", "evidence", "status", "reason"]))); });
+        if (auditText !== JSON.stringify(canon, null, 2) + "\n") errs.push("audit non-canonical serialization bytes (closed key set)");
+        if (au.schemaVersion !== "audit.v1") errs.push("audit schemaVersion");
+        if (!["operator-provided", "osv-export", "ghsa-export"].includes(au.advisories?.source)) errs.push("audit source");
+        const statuses = new Set(["affected", "not-affected", "unclassified"]);
+        const boundaries = new Set(["internal", "external", "unknown"]);
+        let nA = 0, nN = 0, nU = 0; const bb = { internal: 0, external: 0, unknown: 0 }; const withAffected = new Set();
+        for (const p2 of au.packages ?? []) {
+          if (!boundaries.has(p2.boundary)) errs.push("audit boundary " + p2.boundary);
+          if (p2.anomaly !== undefined && p2.anomaly !== "producedAndDeclaredExternal") errs.push("audit anomaly vocabulary");
+          const worst = new Map();
+          for (const f2 of p2.findings) for (const i2 of f2.installations) {
+            if (!statuses.has(i2.status)) errs.push("audit status " + i2.status);
+            if (!["lockfile", "deps.json", "declared-pin"].includes(i2.evidence)) errs.push("audit evidence " + i2.evidence);
+            if ((i2.status === "unclassified") !== (i2.reason != null)) errs.push("audit reason rides unclassified rows only");
+            if (i2.reason != null) {
+              // EXACT value vocabulary (never a loose regex): A1/A2/A3 computed from the row's own
+              // fields; export-gap is the exact pinned sentence
+              const a1 = `installed ${i2.version} not a plain numeric pin`;
+              const fixedIn = (JSON.parse(auditText).packages.flatMap(p3 => p3.findings).find(f3 => f3.installations.includes(i2)) ?? {}).severity === "export-gap" ? null : null;
+              const gap = "export gap: the advisory's vulnerable window could not be soundly exported \u2014 manual review";
+              // A2/A3 need the advisory's fixedIn — recover it from the finding is impossible post-parse,
+              // so exact-match against the four shapes with the row's OWN substituted values where derivable
+              const ok = i2.reason === a1
+                || i2.reason.startsWith("advisory fixedIn ") && i2.reason.endsWith(" not a plain numeric pin")
+                || i2.reason.startsWith("both installed ") && i2.reason.includes(" and advisory fixedIn ") && i2.reason.endsWith(" not plain numeric pins")
+                || i2.reason === gap;
+              if (!ok) errs.push("audit reason outside the pinned exact vocabulary: " + i2.reason.slice(0, 40));
+            }
+            const rank = i2.status === "affected" ? 2 : i2.status === "unclassified" ? 1 : 0;
+            const key = i2.repo + "\0" + i2.version;
+            if (!worst.has(key) || rank > worst.get(key)) worst.set(key, rank);
+            if (rank === 2) withAffected.add(f2.advisoryId);
+          }
+          nA += [...worst.values()].filter(v => v === 2).length;
+          nU += [...worst.values()].filter(v => v === 1).length;
+          nN += [...worst.values()].filter(v => v === 0).length;
+          bb[p2.boundary] += [...worst.entries()].filter(([, v]) => v === 2).length;
+        }
+        const s2 = au.summary ?? {};
+        if (s2.affectedInstallations !== nA || s2.unclassifiedInstallations !== nU || s2.notAffectedInstallations !== nN) errs.push("audit summary installation counts do not match packages[] (worst-status arithmetic)");
+        if (JSON.stringify(s2.byBoundaryAffected) !== JSON.stringify(bb)) errs.push("audit byBoundaryAffected mismatch");
+        if (s2.advisoriesWithAffected !== withAffected.size) errs.push("audit advisoriesWithAffected mismatch");
+        if (s2.packagesListed !== (au.packages ?? []).length) errs.push("audit packagesListed mismatch");
+        if (!Number.isInteger(s2.packagesObserved) || s2.packagesObserved < (au.packages ?? []).length) errs.push("audit packagesObserved < packagesListed");
+        if ((au.advisories?.consideredCount ?? -1) > (au.advisories?.advisoryCount ?? -1)) errs.push("audit consideredCount > advisoryCount");
+      } catch { errs.push("audit.v1 parse"); }
+    }
+  }
   // SPEC-020: registry.v1 goldens — structural contract. ord is STRICT like drift's: unknown keys
   // drop out of the rendering, so an out-of-shape golden fails the byte comparison, not silently passes.
   {
