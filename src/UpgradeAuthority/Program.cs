@@ -197,6 +197,37 @@ public static class Program
                 else WriteArtifactFile(outFileA, canonicalA);
                 return 0;
             }
+            if (args.Length >= 2 && args[0] == "export-campaign")
+            {
+                // SPEC-025: every wave's packet + the digest-bound campaign manifest
+                int? badM = ValueFlagError(args, "--out", "-o");
+                if (badM is not null) { Console.Error.WriteLine($"error: {args[badM.Value]} requires a value"); return 1; }
+                var outDirM = GetOpt(args, "--out") ?? GetOpt(args, "-o");
+                if (outDirM is null) { Console.Error.WriteLine("error: --out <dir> is required (wave packets + the manifest are files)"); return 1; }
+                string manifestText; List<(string File, string Text)> waveFiles; int rcM;
+                try { (manifestText, waveFiles, rcM) = Manifest.Run(args[1]); }
+                catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
+                if (rcM != 0) return rcM;
+                if (waveFiles.Count != waveFiles.Select(w => w.File).Distinct().Count()) return 4; // unreachable; count guard
+                // atomic multi-file output: temp sibling + swap (the apply/push precedent)
+                var outParentM = Path.GetDirectoryName(Path.GetFullPath(outDirM)) ?? ".";
+                var outNameM = Path.GetFileName(Path.GetFullPath(outDirM));
+                var tempDirM = Path.Combine(outParentM, "." + outNameM + ".tmp-" + Guid.NewGuid().ToString("N")[..8]);
+                try
+                {
+                    Directory.CreateDirectory(tempDirM);
+                    foreach (var (file, text) in waveFiles) File.WriteAllText(Path.Combine(tempDirM, file), text, new System.Text.UTF8Encoding(false));
+                    File.WriteAllText(Path.Combine(tempDirM, "campaign-manifest.v1.json"), manifestText, new System.Text.UTF8Encoding(false));
+                    var backupM = Path.Combine(outParentM, "." + outNameM + ".old-" + Guid.NewGuid().ToString("N")[..8]);
+                    if (Directory.Exists(outDirM)) Directory.Move(outDirM, backupM);
+                    try { Directory.Move(tempDirM, outDirM); }
+                    catch { if (Directory.Exists(backupM)) Directory.Move(backupM, outDirM); throw; }
+                    if (Directory.Exists(backupM)) Directory.Delete(backupM, true);
+                }
+                finally { if (Directory.Exists(tempDirM)) Directory.Delete(tempDirM, true); }
+                Console.Error.WriteLine($"exported: {waveFiles.Count} wave packet(s) + campaign-manifest.v1 -> {outDirM}");
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
@@ -234,7 +265,7 @@ public static class Program
                 return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -3339,6 +3370,81 @@ public static class Program
             Console.WriteLine("ok   audit-golden (F-audit bytes; arithmetic table; tiers; reasons; anomaly; export-gap; validation; parity)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL audit-golden: {ex.Message}"); }
+
+        // SPEC-025: ua export-campaign — the manifest + wave packets
+        try
+        {
+            var ecDir = Path.Combine(Path.GetTempPath(), "ua-m25-" + Guid.NewGuid().ToString("N")[..8]);
+            var ecRc = Main(new[] { "export-campaign", Path.Combine(fixturesRoot, "F-case"), "--out", ecDir });
+            if (ecRc != 0) throw new Exception($"export-campaign exited {ecRc}");
+            var files = Directory.GetFiles(ecDir).Select(Path.GetFileName).OrderBy(f => f).ToList();
+            if (!files.SequenceEqual(new[] { "campaign-manifest.v1.json", "wave-1.json" })) throw new Exception("unexpected output set: " + string.Join(",", files));
+            var mText = File.ReadAllText(Path.Combine(ecDir, "campaign-manifest.v1.json"));
+            var m = JsonDocument.Parse(mText).RootElement;
+            if (m.GetProperty("schemaVersion").GetString() != "campaign-manifest.v1") throw new Exception("schemaVersion");
+            if (!m.GetProperty("campaignId").GetString()!.StartsWith("ua-NEWTONSOFT.JSON-12.0.3-to-13.0.3-")) throw new Exception("campaignId prefix");
+            if (m.GetProperty("campaignId").GetString()!.Length < 70) throw new Exception("campaignId must carry the full digest");
+            if (string.IsNullOrEmpty(m.GetProperty("generator").GetString())) throw new Exception("generator required");
+            // wave file == export-packet bytes; the manifest row matches the packet
+            var waveText = File.ReadAllText(Path.Combine(ecDir, "wave-1.json"));
+            if (waveText != Packet.Run(Path.Combine(fixturesRoot, "F-case"), 1).Item1) throw new Exception("wave file differs from export-packet output");
+            var pkt = JsonDocument.Parse(waveText).RootElement;
+            var row = m.GetProperty("packets").GetProperty("wave-1");
+            if (row.GetProperty("packetId").GetString() != pkt.GetProperty("packetId").GetString()
+                || row.GetProperty("digest").GetString() != pkt.GetProperty("digest").GetProperty("value").GetString())
+                throw new Exception("manifest row does not match the packet");
+            // the envelope digest verifies through the independent round-trip path (domain-generalized)
+            if (!Packet.VerifyDigest(mText, "io.ua.campaign-manifest.v1")) throw new Exception("manifest digest must verify");
+            // embedded schema pins == committed copies
+            var pinObj = m.GetProperty("profile").GetProperty("hacpSchemaSha256");
+            foreach (var pin in pinObj.EnumerateObject())
+            {
+                var committed = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(fixturesRoot, "..", "docs", "contracts", "hacp", pin.Name)))).ToLowerInvariant();
+                if (pin.Value.GetString() != committed) throw new Exception($"embedded pin drift for {pin.Name}");
+            }
+            // determinism
+            var ecDir2 = Path.Combine(Path.GetTempPath(), "ua-m25-" + Guid.NewGuid().ToString("N")[..8]);
+            Main(new[] { "export-campaign", Path.Combine(fixturesRoot, "F-case"), "--out", ecDir2 });
+            if (File.ReadAllText(Path.Combine(ecDir2, "campaign-manifest.v1.json")) != mText) throw new Exception("manifest not deterministic");
+            // THE REPLAN SCENARIO (the pinned mutation): flip caseB's ownership team — same packetId,
+            // changed digest + changed inputSha256 + changed planSha256 + unchanged campaignId prefix
+            var scratch = Path.Combine(Path.GetTempPath(), "ua-m25r-" + Guid.NewGuid().ToString("N")[..8]);
+            CopyDir(Path.Combine(fixturesRoot, "F-case"), scratch);
+            var owPath = Path.Combine(scratch, "input", "ownership.v0.json");
+            var owNode = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(owPath))!;
+            foreach (var e2 in owNode["ownerships"]!.AsArray()) if (e2!["repo"]!.GetValue<string>() == "caseB") e2["team"] = "team-b";
+            File.WriteAllText(owPath, owNode.ToJsonString());
+            var ecDir3 = Path.Combine(Path.GetTempPath(), "ua-m25-" + Guid.NewGuid().ToString("N")[..8]);
+            Main(new[] { "export-campaign", scratch, "--out", ecDir3 });
+            var m2Text = File.ReadAllText(Path.Combine(ecDir3, "campaign-manifest.v1.json"));
+            var m2 = JsonDocument.Parse(m2Text).RootElement;
+            var row2 = m2.GetProperty("packets").GetProperty("wave-1");
+            var wave2 = File.ReadAllText(Path.Combine(ecDir3, "wave-1.json"));
+            var pkt2 = JsonDocument.Parse(wave2).RootElement;
+            if (row2.GetProperty("packetId").GetString() != pkt.GetProperty("packetId").GetString())
+                throw new Exception("the replan keeps the SAME packetId (tuple+wave unchanged)");
+            if (row2.GetProperty("digest").GetString() == row.GetProperty("digest").GetString())
+                throw new Exception("the replan MUST change the packet digest (evidence changed)");
+            if (m2.GetProperty("estate").GetProperty("inputSha256").GetProperty("ownership.v0.json").GetString()
+                == m.GetProperty("estate").GetProperty("inputSha256").GetProperty("ownership.v0.json").GetString())
+                throw new Exception("the replan MUST change inputSha256[ownership]");
+            if (m2.GetProperty("estate").GetProperty("planSha256").GetString() == m.GetProperty("estate").GetProperty("planSha256").GetString())
+                throw new Exception("the replan MUST change planSha256");
+            if (m2.GetProperty("campaignId").GetString() != m.GetProperty("campaignId").GetString())
+                throw new Exception("campaignId: same estate (repos unchanged) so the SAME id — the revision lives in the digests, not the id");
+            if (!pkt2.GetProperty("expectedEvidence").EnumerateArray().Any(e => e.GetString()!.Contains("external-request-await")))
+                throw new Exception("the external ownership flip must surface in expectedEvidence");
+            // stray-file refusal
+            File.WriteAllText(Path.Combine(scratch, "input", "stray.notes"), "junk");
+            if (Main(new[] { "export-campaign", scratch, "--out", Path.Combine(Path.GetTempPath(), "ua-m25x-" + Guid.NewGuid().ToString("N")[..8]) }) != 3)
+                throw new Exception("a stray input file must be a typed refusal (exit 3)");
+            // usage + bare flag
+            if (Main(new[] { "export-campaign", Path.Combine(fixturesRoot, "F-case") }) != 1) throw new Exception("missing --out must exit 1");
+            if (Main(new[] { "export-campaign", Path.Combine(fixturesRoot, "F-case"), "--out" }) != 1) throw new Exception("bare --out must exit 1");
+            Directory.Delete(ecDir, true); Directory.Delete(ecDir2, true); Directory.Delete(ecDir3, true); Directory.Delete(scratch, true);
+            Console.WriteLine("ok   campaign-manifest (bytes; envelope verify; embedded pins; replan same-id/changed-digest; stray refusal; usage)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL campaign-manifest: {ex.Message}"); }
 
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL pkgcase-push-spelling-idempotency: {ex.Message}"); }

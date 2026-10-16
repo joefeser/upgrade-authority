@@ -89,6 +89,15 @@ A scheduled CI gate (`.github/workflows/samplerepos.yml`, weekly + manual) runs 
 against a **PINNED tracemap commit** — the public badge never depends on a sibling repo's HEAD;
 bumping the pin is a deliberate, reviewable PR.
 
+## The campaign manifest (SPEC-025 — the WITS intake contract)
+
+`ua export-campaign <fixture> --out <dir>` writes every wave's task packet plus
+`campaign-manifest.v1.json` — the digest-bound provenance record: `campaignId` (the WITS Case key),
+estate repos, per-input sha256s, `planSha256`, the generator version, and the pinned HACP schema
+digests (embedded as build resources). A coordinator distinguishes an identical resubmission
+(duplicate) from a **replan** (same packetId, changed digest + changed snapshot) by diffing
+manifests. The outcome mapping and intake rules live at `docs/contracts/ua-wits-integration.md`.
+
 ## The HACP seam (SPEC-023)
 
 The plan stage also exports each run's waves as **HACP v0.3-candidate task packets**

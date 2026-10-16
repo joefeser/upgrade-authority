@@ -50,6 +50,8 @@ public static class Packet
 
     // The packet body as a deterministic ordered structure — consumed by Write (house display
     // form) and Digest (JCS form). Dictionary insertion order IS the field order.
+    internal static List<(string Key, object Value)> BuildForExport(Engine engine, Plan plan, PlanWave wave) => Build(engine, plan, wave);
+
     static List<(string Key, object Value)> Build(Engine engine, Plan plan, PlanWave wave)
     {
         // PR9 r1-r3: the FULL delta identity rides the id — readable prefix + the FULL 64-hex digest
@@ -136,11 +138,11 @@ public static class Packet
         input.Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal).ToList();
 
     // ---- digest: sha256 of the JCS serialization of {"domain":<domain>,"record":<record-minus-digest>} ----
-    public static string Digest(List<(string Key, object Value)> body)
+    public static string Digest(List<(string Key, object Value)> body, string? domain = null)
     {
         var envelope = new List<(string, object)>
         {
-            ("domain", DigestDomain),
+            ("domain", domain ?? DigestDomain),
             ("record", BodyWithoutDigest(body)),
         };
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Jcs(envelope)))).ToLowerInvariant(); // the contract's value pattern is lowercase hex
@@ -148,14 +150,14 @@ public static class Packet
 
     // Independent round-trip verification (PR9 r1): parses the EMITTED text through System.Text.Json
     // (a second parse+JCS path, not the builder's structure) and recomputes the envelope digest.
-    public static bool VerifyDigest(string emitted)
+    public static bool VerifyDigest(string emitted, string? domain = null)
     {
-        try { return VerifyDigestCore(emitted); }
+        try { return VerifyDigestCore(emitted, domain ?? DigestDomain); }
         catch (Exception ex) when (ex is JsonException or UaException or InvalidOperationException or KeyNotFoundException)
         { return false; } // malformed shapes NEVER verify (PR9 Baz r4) — never a crash, never a false pass
     }
 
-    static bool VerifyDigestCore(string emitted)
+    static bool VerifyDigestCore(string emitted, string domain)
     {
         using var doc = JsonDocument.Parse(emitted);
         var root = doc.RootElement;
@@ -165,7 +167,7 @@ public static class Packet
             if (prop.Name == "digest") continue;
             record.Add((prop.Name, JsonToNode(prop.Value)));
         }
-        var envelope = new List<(string, object)> { ("domain", DigestDomain), ("record", record) };
+        var envelope = new List<(string, object)> { ("domain", domain), ("record", record) };
         var expected = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Jcs(envelope)))).ToLowerInvariant();
         var actual = root.GetProperty("digest").GetProperty("value").GetString();
         return expected == actual;
@@ -262,6 +264,32 @@ public static class Packet
         }
         sb.Append('"');
     }
+
+    // SPEC-025: the manifest writer — same display form, MANIFEST-owned validation (round-2 note (a):
+    // Packet.Write's stringSet caps are packet-contract checks; the manifest validates its own shape)
+    public static string WriteRecord(List<(string Key, object Value)> body, string domain)
+    {
+        var digestRow = body.First(kv => kv.Key == "digest");
+        var digestValue = Digest(body, domain);
+        body[body.IndexOf(digestRow)] = ("digest", new List<(string, object)>
+        {
+            ("algorithm", "sha256"),
+            ("canonicalization", "json-rfc8785-jcs"),
+            ("digestDomain", domain),
+            ("value", digestValue),
+        });
+        var sb = new StringBuilder();
+        sb.Append("{\n");
+        for (int i = 0; i < body.Count; i++)
+        {
+            sb.Append("  ").Append(Q(body[i].Item1)).Append(": ");
+            AppendValue(body[i].Item2, sb, 1);
+            sb.Append(i < body.Count - 1 ? "," : "").Append('\n');
+        }
+        sb.Append("}\n");
+        return sb.ToString();
+    }
+
 
     // ---- house display form (2-space, LF, fixed key order — the emitted bytes; only the DIGEST uses JCS) ----
     public static string Write(List<(string Key, object Value)> body)

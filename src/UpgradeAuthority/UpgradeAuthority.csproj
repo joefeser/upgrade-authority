@@ -8,4 +8,8 @@
     <AssemblyName>ua</AssemblyName>
     <RootNamespace>UpgradeAuthority</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\contracts\hacp/task-packet.schema.json" Link="contracts/task-packet.schema.json" />
+    <EmbeddedResource Include="..\..\docs\contracts\hacp\common-defs.schema.json" Link="contracts\common-defs.schema.json" />
+  </ItemGroup>
 </Project>
