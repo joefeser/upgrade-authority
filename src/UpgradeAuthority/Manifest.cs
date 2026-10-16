@@ -117,10 +117,15 @@ public static class Manifest
     // planner-independent (plan.Repos is classification-shaped; a cycle plan omits not-affected repos)
     static HashSet<string> AllEstateRepos(Engine engine)
     {
+        // the FULL estate surface (PR12 Baz r2): producers ∪ facts ∪ lockfile rows ∪ ownership
+        // entries ∪ scan coverage — repos appearing ONLY in ownership.v0 or coverage are still
+        // estate members; omitting them collides distinct estates on one campaignId
         var all = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in engine.ProducersView) all.Add(engine.RepoIdentity(p.Repo));
         foreach (var repo in engine.FactsView.Keys) all.Add(repo);
         foreach (var repo in engine.LockRowsView.Keys) all.Add(repo);
+        foreach (var o in engine.OwnershipView) all.Add(engine.RepoIdentity(o.Repo));
+        foreach (var c in engine.CoverageView) all.Add(engine.RepoIdentity(c.Repo));
         return all;
     }
 }
