@@ -3434,10 +3434,31 @@ public static class Program
                 throw new Exception("campaignId: same estate (repos unchanged) so the SAME id — the revision lives in the digests, not the id");
             if (!pkt2.GetProperty("expectedEvidence").EnumerateArray().Any(e => e.GetString()!.Contains("external-request-await")))
                 throw new Exception("the external ownership flip must surface in expectedEvidence");
-            // stray-file refusal
+            // stray-file refusal (top level AND nested — a subdir can neither bypass nor hide; PR12 Baz)
             File.WriteAllText(Path.Combine(scratch, "input", "stray.notes"), "junk");
             if (Main(new[] { "export-campaign", scratch, "--out", Path.Combine(Path.GetTempPath(), "ua-m25x-" + Guid.NewGuid().ToString("N")[..8]) }) != 3)
                 throw new Exception("a stray input file must be a typed refusal (exit 3)");
+            File.Delete(Path.Combine(scratch, "input", "stray.notes"));
+            Directory.CreateDirectory(Path.Combine(scratch, "input", "subdir"));
+            File.WriteAllText(Path.Combine(scratch, "input", "subdir", "x.json"), "{}");
+            if (Main(new[] { "export-campaign", scratch, "--out", Path.Combine(Path.GetTempPath(), "ua-m25n-" + Guid.NewGuid().ToString("N")[..8]) }) != 3)
+                throw new Exception("a NESTED input file must be a typed refusal (exit 3)");
+            Directory.Delete(Path.Combine(scratch, "input", "subdir"), true);
+            // raw-byte hashing: same decoded text, different bytes (BOM) => different digests (PR12 Codex P1)
+            {
+                var bDir = Path.Combine(Path.GetTempPath(), "ua-m25b-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(Path.Combine(fixturesRoot, "F-case"), bDir);
+                var bom = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(File.ReadAllBytes(Path.Combine(bDir, "input", "delta.json"))).ToArray();
+                File.WriteAllBytes(Path.Combine(bDir, "input", "delta.json"), bom);
+                var bOut = Path.Combine(Path.GetTempPath(), "ua-m25bo-" + Guid.NewGuid().ToString("N")[..8]);
+                var rcB = Main(new[] { "export-campaign", bDir, "--out", bOut });
+                if (rcB != 0) throw new Exception($"BOM-prefixed delta must still load (loader decodes), exited {rcB}");
+                var bM = JsonDocument.Parse(File.ReadAllText(Path.Combine(bOut, "campaign-manifest.v1.json"))).RootElement;
+                if (bM.GetProperty("estate").GetProperty("inputSha256").GetProperty("delta.json").GetString()
+                    == m.GetProperty("estate").GetProperty("inputSha256").GetProperty("delta.json").GetString())
+                    throw new Exception("BOM bytes must change the input digest (raw-byte hashing)");
+                Directory.Delete(bDir, true); Directory.Delete(bOut, true);
+            }
             // usage + bare flag
             if (Main(new[] { "export-campaign", Path.Combine(fixturesRoot, "F-case") }) != 1) throw new Exception("missing --out must exit 1");
             if (Main(new[] { "export-campaign", Path.Combine(fixturesRoot, "F-case"), "--out" }) != 1) throw new Exception("bare --out must exit 1");

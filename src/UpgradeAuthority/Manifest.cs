@@ -31,15 +31,22 @@ public static class Manifest
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return (null, new(), 3); }
 
         var inputDir = Path.Combine(fixtureDir, "input");
-        var present = Directory.GetFiles(inputDir).Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        // RECURSIVE enumeration (PR12 Baz r1): nested files can neither bypass the check nor hide;
+        // every entry must be an EXACT known top-level name — subdirectories are refused outright
+        var present = Directory.EnumerateFiles(inputDir, "*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(inputDir, f).Replace('\\', '/'))
+            .OrderBy(f => f, StringComparer.Ordinal).ToList();
         var unknown = present.Where(f => !KnownInputs.Contains(f)).ToList();
         if (unknown.Count > 0)
-            throw new UaException($"cannot snapshot input: unrecognized file(s) in input/ ({string.Join(", ", unknown)}) — the manifest hashes exactly the loader's known inputs; stray bytes are never blessed into the snapshot");
+            throw new UaException($"cannot snapshot input: unrecognized file(s) under input/ ({string.Join(", ", unknown)}) — the manifest hashes exactly the loader's known top-level inputs; stray or nested bytes are never blessed into the snapshot");
 
         var inputSha = new List<(string, object)>();
-        foreach (var f in present) inputSha.Add((f, Sha256(File.ReadAllText(Path.Combine(inputDir, f)))));
+        foreach (var f in present)
+            inputSha.Add((f, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(inputDir, f)))).ToLowerInvariant())); // RAW BYTES — encoding/BOM differences stay distinct (PR12 Codex P1/Baz)
 
-        var repos = plan.Repos.Select(r => r.Repo).OrderBy(r => r, StringComparer.Ordinal).ToList();
+        // the COMPLETE estate (PR12 Codex P1): plan.Repos omits not-affected repos in cycle-stop plans —
+        // use every repo the engine knows (producers, facts, lockfiles, ownership, coverage), the AllRepos set
+        var repos = AllEstateRepos(engine).OrderBy(r => r, StringComparer.Ordinal).ToList();
         var campaignId = $"ua-{plan.Delta.PackageName}-{plan.Delta.OldVersion}-to-{plan.Delta.NewVersion}-" +
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
                 $"{plan.Delta.PackageName}\0{plan.Delta.OldVersion}\0{plan.Delta.NewVersion}\0{string.Join("\0", repos)}"))).ToLowerInvariant();
@@ -58,7 +65,8 @@ public static class Manifest
             }));
         }
 
-        var generator = typeof(Manifest).Assembly.GetName().Version?.ToString() ?? "unknown";
+        var generator = typeof(Manifest).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(Manifest).Assembly.GetName().Version?.ToString() ?? "unknown";
         var body = new List<(string, object)>
         {
             ("schemaVersion", SchemaVersion),
@@ -104,4 +112,15 @@ public static class Manifest
     }
 
     static string Sha256(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s))).ToLowerInvariant();
+
+    // the engine's full repo surface: producers, facts, lockfile rows, ownership entries, coverage —
+    // planner-independent (plan.Repos is classification-shaped; a cycle plan omits not-affected repos)
+    static HashSet<string> AllEstateRepos(Engine engine)
+    {
+        var all = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var p in engine.ProducersView) all.Add(engine.RepoIdentity(p.Repo));
+        foreach (var repo in engine.FactsView.Keys) all.Add(repo);
+        foreach (var repo in engine.LockRowsView.Keys) all.Add(repo);
+        return all;
+    }
 }
