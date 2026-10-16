@@ -55,6 +55,8 @@ public sealed class Engine
     // resolves it (mirrors included).
     internal IReadOnlyList<ProducerEntry> ProducersView => _pe.Producers;
     internal IReadOnlyList<ExternalPackage> ExternalView => _pe.ExternalPackages;
+    internal IReadOnlyList<OwnershipEntry> OwnershipView => _ow.Ownerships;
+    internal IReadOnlyList<ScanCoverage> CoverageView => _px.ScanCoverage;
     internal string RepoIdentity(string repo) => Norm(repo);
 
     // SPEC-017 §5: the plan echoes the config — deduped, ordinal (permutation-stable); the config's

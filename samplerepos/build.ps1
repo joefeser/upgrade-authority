@@ -215,7 +215,16 @@ function Invoke-StagePlan {
     if ($aud.summary.byBoundaryAffected.internal -lt 1) { throw 'audit: the internal boundary must carry affected installs (Cassowary.Core)' }
     if ($aud.summary.advisoriesWithAffected -lt 1) { throw 'audit: at least one advisory must fire' }
 
-    # SPEC-023: the HACP seam — export each run's waves as task packets and assert the contract shape
+    # SPEC-025: export the FULL campaign per run — every wave's packet + the digest-bound manifest
+    Invoke-Ua (@('export-campaign', $fx1, '--out', (Join-Path $out 'campaign-core') )) 'export-campaign (Core)'
+    Invoke-Ua (@('export-campaign', $fx2, '--out', (Join-Path $out 'campaign-diesel') )) 'export-campaign (Diesel)'
+    $mfst = Get-Content (Join-Path $out 'campaign-core' 'campaign-manifest.v1.json') -Raw | ConvertFrom-Json
+    if ($mfst.campaignId -notlike 'ua-Cassowary.Core-*') { throw 'manifest: campaignId prefix wrong' }
+    if ($mfst.estate.planSha256 -notmatch '^[0-9a-f]{64}$') { throw 'manifest: planSha256 missing' }
+    if ($null -eq $mfst.packets.'wave-1') { throw 'manifest: wave-1 row missing' }
+    if (-not (Test-Path (Join-Path $out 'campaign-core' 'wave-1.json'))) { throw 'manifest: wave-1.json missing' }
+
+    # SPEC-023: the HACP seam — export each run's lead waves as standalone task packets (kept for the one-packet quick path)
     Invoke-Ua (@('export-packet', $fx1, '--wave', '1', '--out', (Join-Path $out 'packet-core.json') )) 'export-packet (Core wave)'
     Invoke-Ua (@('export-packet', $fx2, '--wave', '1', '--out', (Join-Path $out 'packet-diesel.json') )) 'export-packet (Diesel wave)'
     $pkt = Get-Content (Join-Path $out 'packet-diesel.json') -Raw | ConvertFrom-Json
