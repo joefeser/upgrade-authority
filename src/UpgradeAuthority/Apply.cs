@@ -66,8 +66,8 @@ public static class Apply
             var backupDir = Path.Combine(outParent, "." + outName + ".old-" + Guid.NewGuid().ToString("N")[..8]);
             if (Directory.Exists(realOutDir)) FsSwap.MoveDir(realOutDir, backupDir);
             try { FsSwap.MoveDir(outDir, realOutDir); }
-            catch { if (Directory.Exists(backupDir)) FsSwap.MoveDir(backupDir, realOutDir); throw; }
-            if (Directory.Exists(backupDir)) FsSwap.DeleteDir(backupDir);
+            catch { if (Directory.Exists(backupDir)) FsSwap.RollbackMove(backupDir, realOutDir); throw; }
+            if (Directory.Exists(backupDir)) FsSwap.TryDeleteDirQuiet(backupDir); // installed — old-output cleanup is never fatal
         }
         finally { FsSwap.TryDeleteDirQuiet(outDir); }
 

@@ -490,13 +490,12 @@ public static class ScanEstate
                 {
                     if (Directory.Exists(scanDir)) FsSwap.MoveDir(scanDir, old);
                     try { FsSwap.MoveDir(tmp, scanDir); }
-                    catch { if (Directory.Exists(old)) FsSwap.MoveDir(old, scanDir); throw; }
-                    if (Directory.Exists(old)) FsSwap.DeleteDir(old);
+                    catch { if (Directory.Exists(old)) FsSwap.RollbackMove(old, scanDir); throw; }
                 }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"warning: {entry.Name}: scan swap failed ({ex.Message}) — cached scan left as-is");
-                    TryDeleteDir(tmp);
+                    FsSwap.TryDeleteDirQuiet(tmp);
                     lock (gate)
                     {
                         entry.Status = "skipped";
@@ -505,6 +504,8 @@ public static class ScanEstate
                     }
                     return;
                 }
+                // installed — the NEW scan is live; old-snapshot cleanup can never un-install it
+                if (Directory.Exists(old)) FsSwap.TryDeleteDirQuiet(old);
                 lock (gate)
                 {
                     entry.BuildFreshness = freshness;

@@ -11,8 +11,30 @@ namespace UpgradeAuthority;
 static class FsSwap
 {
     public static void MoveDir(string src, string dst) => Retry($"move {Path.GetFileName(src)} -> {Path.GetFileName(dst)}", () => Directory.Move(src, dst));
-    public static void DeleteDir(string dir) { if (Directory.Exists(dir)) Retry($"delete {Path.GetFileName(dir)}", () => Directory.Delete(dir, true)); }
+
+    public static void DeleteDir(string dir)
+    {
+        try { if (!Directory.Exists(dir)) return; }
+        catch (Exception ex) { Console.Error.WriteLine($"warning: swap delete: could not probe {dir} ({ex.Message}) — remove manually"); return; }
+        Retry($"delete {Path.GetFileName(dir)}", () =>
+        {
+            // read-only payload (a scanner writing attribute-locked files) would make Delete throw
+            // forever — clear attributes best-effort before each attempt
+            try { foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal); } catch { /* best effort */ }
+            try { Directory.Delete(dir, true); }
+            catch (DirectoryNotFoundException) { /* already gone — idempotent success */ }
+        });
+    }
+
     public static void MoveFile(string src, string dst) => Retry($"move {Path.GetFileName(src)} -> {Path.GetFileName(dst)}", () => File.Move(src, dst, true));
+
+    // best-effort rollback inside a catch: the ORIGINAL install error must be what the caller sees;
+    // a failed rollback leaves the previous output visible at its .old- sibling (discovery-ignored)
+    public static void RollbackMove(string backup, string dst)
+    {
+        try { MoveDir(backup, dst); }
+        catch (Exception rex) { Console.Error.WriteLine($"warning: rollback failed — previous output left at {backup} ({rex.Message}); the original error follows"); }
+    }
 
     // cleanup on failure paths: a leftover temp is discovery-ignored — the ORIGINAL error must survive
     public static void TryDeleteDirQuiet(string dir)

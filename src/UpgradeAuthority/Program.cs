@@ -221,8 +221,8 @@ public static class Program
                     var backupM = Path.Combine(outParentM, "." + outNameM + ".old-" + Guid.NewGuid().ToString("N")[..8]);
                     if (Directory.Exists(outDirM)) FsSwap.MoveDir(outDirM, backupM);
                     try { FsSwap.MoveDir(tempDirM, outDirM); }
-                    catch { if (Directory.Exists(backupM)) FsSwap.MoveDir(backupM, outDirM); throw; }
-                    if (Directory.Exists(backupM)) FsSwap.DeleteDir(backupM);
+                    catch { if (Directory.Exists(backupM)) FsSwap.RollbackMove(backupM, outDirM); throw; }
+                    if (Directory.Exists(backupM)) FsSwap.TryDeleteDirQuiet(backupM); // installed — old-output cleanup is never fatal
                 }
                 finally { FsSwap.TryDeleteDirQuiet(tempDirM); }
                 Console.Error.WriteLine($"exported: {waveFiles.Count} wave packet(s) + campaign-manifest.v1 -> {outDirM}");

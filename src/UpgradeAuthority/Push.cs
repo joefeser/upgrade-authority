@@ -333,8 +333,8 @@ public static class Push
             var backup = Path.Combine(outParent, "." + outName + ".old-" + Guid.NewGuid().ToString("N")[..8]);
             if (Directory.Exists(outDir)) FsSwap.MoveDir(outDir, backup);
             try { FsSwap.MoveDir(tmp, outDir); }
-            catch { if (Directory.Exists(backup)) FsSwap.MoveDir(backup, outDir); throw; }
-            if (Directory.Exists(backup)) FsSwap.DeleteDir(backup);
+            catch { if (Directory.Exists(backup)) FsSwap.RollbackMove(backup, outDir); throw; }
+            if (Directory.Exists(backup)) FsSwap.TryDeleteDirQuiet(backup); // installed — old-output cleanup is never fatal
         }
         finally { FsSwap.TryDeleteDirQuiet(tmp); }
     }
