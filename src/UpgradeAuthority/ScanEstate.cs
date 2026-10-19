@@ -129,7 +129,7 @@ public static class ScanEstate
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
                 .Where(d => Push.Git(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
                 .Where(d => UsableOriginUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
-                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.Ordinal) // case-EXACT like seenOrigins (fetch-optimization only — the sequential loop fetches inline anyone this phase skipped, so grouping differences can never drop a scan)
                 .Select(g => g.OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).First()) // name-ordinal first-wins over one origin — SAME rule as the sequential loop (C34 r11: alternates are not fetched)
                 .Select(d => (Action)(() =>
                 {
