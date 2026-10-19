@@ -611,7 +611,9 @@ public static class Ingest
             SchemaVersion = "package-evidence.v0", Source = "tracemap-ingest",
             Facts = evidence.Values.SelectMany(v => v).ToList(), ScanCoverage = coverage,
         };
-        File.WriteAllText(Path.Combine(inputDir, "package-evidence.v0.json"), JsonSerializer.Serialize(pkgEvidence, WriteOpts));
+        // pinned newline (ReplaceLineEndings): newer .NET runtimes emit \r\n for indented JSON on
+        // Windows — artifact bytes must not float with the host runtime (same class as StableJsonEncoder)
+        File.WriteAllText(Path.Combine(inputDir, "package-evidence.v0.json"), JsonSerializer.Serialize(pkgEvidence, WriteOpts).ReplaceLineEndings("\n"));
 
         // SPEC-019 §5.3: assemble the freshness channel — scan-estate recorded per-scan buildFreshness
         // next to the facts (folder-name keyed); translate to REPO keys here (the one place that knows both).
@@ -641,7 +643,7 @@ public static class Ingest
         }
         if (freshnessEntries.Count > 0)
             File.WriteAllText(Path.Combine(inputDir, "build-freshness.v0.json"), JsonSerializer.Serialize(
-                new BuildFreshnessFile { SchemaVersion = "build-freshness.v0", Repos = freshnessEntries }, WriteOpts));
+                new BuildFreshnessFile { SchemaVersion = "build-freshness.v0", Repos = freshnessEntries }, WriteOpts).ReplaceLineEndings("\n"));
 
         // Lockfile rows — SPEC-008: one v2 file for ALL repos with lockfile facts (repos sorted by name);
         // no lockfile file at all when there are none (unchanged for lockfile-less scans)
@@ -653,7 +655,7 @@ public static class Ingest
                 Repos = lockfiles.OrderBy(kv => kv.Key, StringComparer.Ordinal)
                     .Select(kv => new LockfileRepo { Repo = kv.Key, Rows = kv.Value }).ToList(),
             };
-            File.WriteAllText(Path.Combine(inputDir, "lockfile-rows.v2.json"), JsonSerializer.Serialize(v2, WriteOpts));
+            File.WriteAllText(Path.Combine(inputDir, "lockfile-rows.v2.json"), JsonSerializer.Serialize(v2, WriteOpts).ReplaceLineEndings("\n"));
         }
 
         // Sidecars (validated)
@@ -672,7 +674,7 @@ public static class Ingest
         }
         catch
         {
-            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            FsSwap.TryDeleteDirQuiet(tempDir);
             throw;
         }
 
@@ -680,12 +682,12 @@ public static class Ingest
         var backupDir = Path.Combine(outParent, "." + outName + ".old-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
-            if (Directory.Exists(outDir)) Directory.Move(outDir, backupDir);
-            try { Directory.Move(tempDir, outDir); }
-            catch { if (Directory.Exists(backupDir)) Directory.Move(backupDir, outDir); throw; }
-            if (Directory.Exists(backupDir)) Directory.Delete(backupDir, true);
+            if (Directory.Exists(outDir)) FsSwap.MoveDir(outDir, backupDir);
+            try { FsSwap.MoveDir(tempDir, outDir); }
+            catch { if (Directory.Exists(backupDir)) FsSwap.MoveDir(backupDir, outDir); throw; }
+            if (Directory.Exists(backupDir)) FsSwap.DeleteDir(backupDir);
         }
-        finally { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); }
+        finally { FsSwap.TryDeleteDirQuiet(tempDir); }
         Console.Error.WriteLine($"ingested: {evidence.Values.Sum(v => v.Count)} consumer facts, {lockfiles.Values.Sum(v => v.Count)} lockfile rows, {repoKeys.Count} repos → {outDir}");
         return 0;
     }
@@ -851,7 +853,7 @@ public static class Ingest
             if (p.Provenance is null) { p.Provenance = MarkerProvenance(p); stamped = true; }
         if (produced.Count == 0)
         {
-            if (stamped) File.WriteAllText(dst, JsonSerializer.Serialize(existing, WriteOpts));
+            if (stamped) File.WriteAllText(dst, JsonSerializer.Serialize(existing, WriteOpts).ReplaceLineEndings("\n"));
             return 0;
         }
         // NuGet ids are case-insensitive: repo key ordinal, package id ignore-case
@@ -880,7 +882,7 @@ public static class Ingest
             added++;
         }
         if (existing.Source == "empty") existing.Source = "tracemap-ingest"; // a placeholder became real
-        File.WriteAllText(dst, JsonSerializer.Serialize(existing, WriteOpts));
+        File.WriteAllText(dst, JsonSerializer.Serialize(existing, WriteOpts).ReplaceLineEndings("\n"));
         if (added > 0) Console.Error.WriteLine($"note: {added} producer(s) from PackageProduced facts merged into producer-evidence.v0 (sidecar entries preserved; scan evidence is declaration-only — publicationStatus unknown)");
         return 0;
     }

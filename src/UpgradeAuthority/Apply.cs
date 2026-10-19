@@ -64,12 +64,12 @@ public static class Apply
 
             // safe swap: move old aside, move new in, delete old; rollback on failure
             var backupDir = Path.Combine(outParent, "." + outName + ".old-" + Guid.NewGuid().ToString("N")[..8]);
-            if (Directory.Exists(realOutDir)) Directory.Move(realOutDir, backupDir);
-            try { Directory.Move(outDir, realOutDir); }
-            catch { if (Directory.Exists(backupDir)) Directory.Move(backupDir, realOutDir); throw; }
-            if (Directory.Exists(backupDir)) Directory.Delete(backupDir, true);
+            if (Directory.Exists(realOutDir)) FsSwap.MoveDir(realOutDir, backupDir);
+            try { FsSwap.MoveDir(outDir, realOutDir); }
+            catch { if (Directory.Exists(backupDir)) FsSwap.MoveDir(backupDir, realOutDir); throw; }
+            if (Directory.Exists(backupDir)) FsSwap.DeleteDir(backupDir);
         }
-        finally { if (Directory.Exists(outDir)) Directory.Delete(outDir, true); }
+        finally { FsSwap.TryDeleteDirQuiet(outDir); }
 
         Console.Error.WriteLine($"apply: {manifest.Waves.Sum(w => w.Units.Sum(u => u.Edits?.Count ?? 0))} verified edit(s) across {manifest.Waves.Count} wave(s) -> {realOutDir}");
         return 0;

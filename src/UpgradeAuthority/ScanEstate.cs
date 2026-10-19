@@ -488,10 +488,10 @@ public static class ScanEstate
                 var old = Path.Combine(scansDir, "." + entry.Name + ".old-" + Guid.NewGuid().ToString("N")[..8]);
                 try
                 {
-                    if (Directory.Exists(scanDir)) Directory.Move(scanDir, old);
-                    try { Directory.Move(tmp, scanDir); }
-                    catch { if (Directory.Exists(old)) Directory.Move(old, scanDir); throw; }
-                    if (Directory.Exists(old)) TryDeleteDir(old);
+                    if (Directory.Exists(scanDir)) FsSwap.MoveDir(scanDir, old);
+                    try { FsSwap.MoveDir(tmp, scanDir); }
+                    catch { if (Directory.Exists(old)) FsSwap.MoveDir(old, scanDir); throw; }
+                    if (Directory.Exists(old)) FsSwap.DeleteDir(old);
                 }
                 catch (Exception ex)
                 {

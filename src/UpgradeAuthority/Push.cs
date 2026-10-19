@@ -331,12 +331,12 @@ public static class Push
             Directory.CreateDirectory(tmp);
             File.WriteAllText(Path.Combine(tmp, "push.v1.json"), Render(r));
             var backup = Path.Combine(outParent, "." + outName + ".old-" + Guid.NewGuid().ToString("N")[..8]);
-            if (Directory.Exists(outDir)) Directory.Move(outDir, backup);
-            try { Directory.Move(tmp, outDir); }
-            catch { if (Directory.Exists(backup)) Directory.Move(backup, outDir); throw; }
-            if (Directory.Exists(backup)) Directory.Delete(backup, true);
+            if (Directory.Exists(outDir)) FsSwap.MoveDir(outDir, backup);
+            try { FsSwap.MoveDir(tmp, outDir); }
+            catch { if (Directory.Exists(backup)) FsSwap.MoveDir(backup, outDir); throw; }
+            if (Directory.Exists(backup)) FsSwap.DeleteDir(backup);
         }
-        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+        finally { FsSwap.TryDeleteDirQuiet(tmp); }
     }
 
     static string Render(PushReport r)
