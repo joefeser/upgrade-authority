@@ -114,7 +114,7 @@ public static class Ownership
             rootObj[prop.Name] = JsonNode.Parse(prop.Value.GetRawText())!; // mirrors + future fields, byte-preserved
         }
         rootObj["ownerships"] = JsonSerializer.SerializeToNode(ownerships, JsonOpts);
-        File.WriteAllText(outFile, JsonSerializer.Serialize(rootObj, new JsonSerializerOptions { WriteIndented = true }).ReplaceLineEndings("\n") + "\n");
+        File.WriteAllText(outFile, JsonSerializer.Serialize(rootObj, WriteOpts).ReplaceLineEndings("\n") + "\n");
         Console.Error.WriteLine($"ownership: {discovered.Count} repos scanned, {added} new assigned, {ownerships.Count} total -> {outFile}");
         return 0;
     }
@@ -203,9 +203,12 @@ public static class Ownership
     {
         var outParent = Path.GetDirectoryName(Path.GetFullPath(outFile)) ?? ".";
         Directory.CreateDirectory(outParent);
-        var json = JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true });
+        var json = JsonSerializer.Serialize(file, WriteOpts);
         File.WriteAllText(outFile, json.ReplaceLineEndings("\n") + "\n");
     }
 
+    // pinned escaping (StableJsonEncoder): ownership.v0.json bytes feed campaign inputSha256 —
+    // they must not float with the host runtime's default encoder table
+    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, Encoder = StableJsonEncoder.Instance };
     static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 }

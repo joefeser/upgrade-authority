@@ -116,7 +116,7 @@ public static class ScanEstate
         var entries = new List<ManifestEntry>();
         var plannedScans = new List<(ManifestEntry Entry, string RepoPath, string HeadSha, bool StaleWaived, string? WorktreePath, string Freshness, string? Fingerprint, string Trunk)>();
         var freshDirs = new List<string>();
-        var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name
+            var seenOrigins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // normalized origin -> first checkout name
         // C30 r9 / spec §2: plain-mode FETCHES parallelize (the network-bound phase); every decision
         // below stays sequential in name-ordinal order and reads only the fetched state.
         var fetched = new HashSet<string>(StringComparer.Ordinal);
@@ -129,7 +129,7 @@ public static class ScanEstate
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
                 .Where(d => Push.Git(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
                 .Where(d => UsableOriginUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
-                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? Ingest.NormalizeRepoBasic(u34.Trim()) : d, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).First()) // name-ordinal first-wins over one origin — SAME rule as the sequential loop (C34 r11: alternates are not fetched)
                 .Select(d => (Action)(() =>
                 {
@@ -179,9 +179,9 @@ public static class ScanEstate
             // unset/empty, which would silently dedupe every URL-less repo onto the key "origin"
             // (PR #2 Baz round 1 — proven by the selftest's empty-URL case).
             if (Push.Git(repoPath, "config --get remote.origin.url", out var urlOut, out _) != 0
-                || Ingest.NormalizeRepoBasic(urlOut.Trim()).Length == 0)
+                || NormalizeOriginUrl(urlOut).Length == 0)
             { entries.Add(Skip("origin remote has no usable URL (alternate-checkout identity unavailable — check git remote set-url origin")); continue; }
-            var normOrigin = Ingest.NormalizeRepoBasic(urlOut.Trim());
+            var normOrigin = NormalizeOriginUrl(urlOut);
             if (seenOrigins.TryGetValue(normOrigin, out var firstName))
             { entries.Add(Skip($"alternate checkout of {firstName} (same origin) — one scan per repo; pass scan dirs to ingest explicitly to combine deliberately")); continue; }
             seenOrigins[normOrigin] = name;
@@ -666,7 +666,14 @@ public static class ScanEstate
 
     static bool UsableOriginUrl(string repoPath) =>
         Push.Git(repoPath, "config --get remote.origin.url", out var u, out _) == 0
-        && Ingest.NormalizeRepoBasic(u.Trim()).Length > 0;
+        && NormalizeOriginUrl(u).Length > 0;
+
+    // Windows checkout reality (first real Windows run, 2026-10-19): `git remote add` stores a
+    // local origin URL verbatim (backslash separators) while `git clone` canonicalizes its local
+    // URLs to forward slashes — the SAME origin read as two identity keys and the alternate-checkout
+    // dedupe silently scanned both. Fold separators; case stays folded too (the parallel fetch path
+    // already groups OrdinalIgnoreCase — drive-letter case `c:\` vs `C:\`).
+    static string NormalizeOriginUrl(string url) => Ingest.NormalizeRepoBasic(url.Trim().Replace('\\', '/'));
 
     static bool IsGitRepoWithOrigin(string repoPath)
     {
@@ -864,5 +871,5 @@ public static class ScanEstate
     }
 
     static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Encoder = StableJsonEncoder.Instance };
 }

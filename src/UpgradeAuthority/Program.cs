@@ -317,6 +317,24 @@ public static class Program
         foreach (var d in Directory.GetDirectories(src)) CopyDir(d, Path.Combine(dst, Path.GetFileName(d)));
     }
 
+    // byte-compare failures must be self-explanatory: first differing byte + a context snippet
+    // from both files (found on a real Windows machine: the diff was \u0060 vs a raw backtick,
+    // invisible without this) — used by the ingest-artifact goldens
+    static string FirstByteDiff(string producedPath, string goldenPath)
+    {
+        if (!File.Exists(producedPath)) return "produced file missing";
+        var a = File.ReadAllBytes(producedPath);
+        var b = File.ReadAllBytes(goldenPath);
+        var n = Math.Min(a.Length, b.Length);
+        for (var i = 0; i < n; i++)
+            if (a[i] != b[i])
+                return $"first diff at byte {i}: produced \"{Snippet(a, i)}\" vs golden \"{Snippet(b, i)}\"";
+        return $"common prefix matches; lengths differ: produced {a.Length} vs golden {b.Length}";
+        static string Snippet(byte[] bytes, int i) =>
+            System.Text.Encoding.UTF8.GetString(bytes[Math.Max(0, i - 30)..Math.Min(bytes.Length, i + 30)])
+                .Replace("\r", "\\r").Replace("\n", "\\n");
+    }
+
     // tracked files under root when git is available (the EOL guard checks the checkout, not artifacts);
     // otherwise walk the tree skipping build-output directories
     static List<string> SelfTestTreeFiles(string root)
@@ -2075,7 +2093,7 @@ public static class Program
                 LoadEngine(inc14).BuildPlan();
             }
             catch (UaException ex14) { loadMsg14 = ex14.Message; }
-            var ingestMsg14 = cap14.ToString().Split('\n').First(l => l.StartsWith("error: "));
+            var ingestMsg14 = cap14.ToString().Split('\n').First(l => l.StartsWith("error: ")).TrimEnd('\r'); // StringWriter WriteLine ends \r\n on Windows (Environment.NewLine)
             if (loadMsg14 is null || ingestMsg14 != "error: " + loadMsg14) throw new Exception($"shared-validator drift: ingest '{ingestMsg14}' vs load '{loadMsg14}'");
             // config contradictions
             var (_, e1) = Scope.ParseAndValidate("{\"schemaVersion\":\"estate-scope.v0\",\"include\":[\"a\"],\"exclude\":[\"a\"]}", "s.json");
@@ -3097,7 +3115,7 @@ public static class Program
             {
                 var produced = Path.Combine(outC, "input", Path.GetFileName(gen));
                 if (!File.Exists(produced) || !File.ReadAllBytes(produced).SequenceEqual(File.ReadAllBytes(gen))) // BYTES — encoding/BOM differences are differences (PR7 Codex r3)
-                    throw new Exception($"generated ingest artifact differs from the F-ci fixture input: {Path.GetFileName(gen)}");
+                    throw new Exception($"generated ingest artifact differs from the F-ci fixture input: {Path.GetFileName(gen)} — {FirstByteDiff(produced, gen)}");
             }
             if (Directory.GetFiles(Path.Combine(outC, "input")).Length != Directory.GetFiles(Path.Combine(fcC, "input")).Length)
                 throw new Exception("generated input set differs from the fixture's");
@@ -3703,6 +3721,26 @@ public static class Program
             Console.WriteLine("ok   estate-worktree-parallel (checkout untouched; namespace isolation; foreign survives; N-independent bytes)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL estate-worktree-parallel: {ex.Message}"); }
+
+        // pinned artifact escaping: JavaScriptEncoder.Default is runtime-versioned (a newer .NET
+        // stopped escaping the backtick and byte-compares/goldens/inputSha256 drifted between SDK
+        // bands — first seen on a real Windows work machine, 2026-10-19). StableJsonEncoder pins
+        // the table; this case fails if the pin ever drifts from the committed-artifact table.
+        try
+        {
+            var encOpts = new JsonSerializerOptions { Encoder = StableJsonEncoder.Instance };
+            var enc = JsonSerializer.Serialize("a`b&c'd+e<f>g\"h\\i\njé😀", encOpts);
+            var encExpected = "\"a\\u0060b\\u0026c\\u0027d\\u002Be\\u003Cf\\u003Eg\\\"h\\\\i\\nj\\u00E9\\uD83D\\uDE00\"";
+            if (enc != encExpected) throw new Exception($"pinned table drifted: {enc}");
+            if (enc.Contains('`') || enc.Contains('&') || enc.Contains('<') || enc.Contains('é'))
+                throw new Exception("pinned table let an escapable char through raw");
+            // the escape covers the whole run, not just the trigger char: ", \ and controls inside
+            // an encoder-invoked value must render exactly as the writer's own style would
+            var roundTrip = JsonSerializer.Deserialize<string>(enc);
+            if (roundTrip != "a`b&c'd+e<f>g\"h\\i\njé😀") throw new Exception("pinned escaping is not round-trip clean");
+            Console.WriteLine("ok   stable-json-encoder (artifact escape table pinned across runtimes)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL stable-json-encoder: {ex.Message}"); }
 
         // working-tree EOL guard: a CRLF checkout (core.autocrlf=true on Windows) converts unpinned
         // text files and silently breaks byte-exact apply goldens (seen on a real work machine: apply-F13).
