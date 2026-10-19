@@ -684,8 +684,8 @@ public static class Ingest
         {
             if (Directory.Exists(outDir)) FsSwap.MoveDir(outDir, backupDir);
             try { FsSwap.MoveDir(tempDir, outDir); }
-            catch { if (Directory.Exists(backupDir)) FsSwap.RollbackMove(backupDir, outDir); throw; }
-            if (Directory.Exists(backupDir)) FsSwap.TryDeleteDirQuiet(backupDir); // installed — old-output cleanup is never fatal
+            catch { FsSwap.RollbackMove(backupDir, outDir); throw; }
+            FsSwap.TryDeleteDirQuiet(backupDir); // installed — old-output cleanup is never fatal
         }
         finally { FsSwap.TryDeleteDirQuiet(tempDir); }
         Console.Error.WriteLine($"ingested: {evidence.Values.Sum(v => v.Count)} consumer facts, {lockfiles.Values.Sum(v => v.Count)} lockfile rows, {repoKeys.Count} repos → {outDir}");

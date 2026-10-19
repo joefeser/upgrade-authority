@@ -12,27 +12,27 @@ static class FsSwap
 {
     public static void MoveDir(string src, string dst) => Retry($"move {Path.GetFileName(src)} -> {Path.GetFileName(dst)}", () => Directory.Move(src, dst));
 
-    public static void DeleteDir(string dir)
+    public static void DeleteDir(string dir) => Retry($"delete {Path.GetFileName(dir)}", () =>
     {
-        try { if (!Directory.Exists(dir)) return; }
-        catch (Exception ex) { Console.Error.WriteLine($"warning: swap delete: could not probe {dir} ({ex.Message}) — remove manually"); return; }
-        Retry($"delete {Path.GetFileName(dir)}", () =>
-        {
-            // read-only payload (a scanner writing attribute-locked files) would make Delete throw
-            // forever — clear attributes best-effort before each attempt
-            try { foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal); } catch { /* best effort */ }
-            try { Directory.Delete(dir, true); }
-            catch (DirectoryNotFoundException) { /* already gone — idempotent success */ }
-        });
-    }
+        // probe-free: attempt the delete and treat not-found as success, so an access error on an
+        // existence probe can never silently skip cleanup (attribute clearing is best-effort —
+        // read-only payload would otherwise make Delete throw forever)
+        try { foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal); }
+        catch (DirectoryNotFoundException) { return; } // already gone — idempotent success
+        catch { /* best effort */ }
+        try { Directory.Delete(dir, true); }
+        catch (DirectoryNotFoundException) { /* already gone — idempotent success */ }
+    });
 
     public static void MoveFile(string src, string dst) => Retry($"move {Path.GetFileName(src)} -> {Path.GetFileName(dst)}", () => File.Move(src, dst, true));
 
     // best-effort rollback inside a catch: the ORIGINAL install error must be what the caller sees;
-    // a failed rollback leaves the previous output visible at its .old- sibling (discovery-ignored)
+    // nothing-moved-aside is a no-op; a failed rollback leaves the previous output visible at its
+    // .old- sibling (discovery-ignored)
     public static void RollbackMove(string backup, string dst)
     {
         try { MoveDir(backup, dst); }
+        catch (DirectoryNotFoundException) { return; } // nothing was moved aside — nothing to restore
         catch (Exception rex) { Console.Error.WriteLine($"warning: rollback failed — previous output left at {backup} ({rex.Message}); the original error follows"); }
     }
 
@@ -45,8 +45,8 @@ static class FsSwap
 
     public static void TryDeleteFileQuiet(string file)
     {
-        try { if (File.Exists(file)) File.Delete(file); }
-        catch (Exception ex) { Console.Error.WriteLine($"warning: could not remove swap temp {file} ({ex.Message}) — remove manually"); }
+        try { File.Delete(file); } // probe-free: absent file is a no-op success, not a silent skip
+        catch (Exception ex) when (ex is not (FileNotFoundException or DirectoryNotFoundException)) { Console.Error.WriteLine($"warning: could not remove swap temp {file} ({ex.Message}) — remove manually"); }
     }
 
     static void Retry(string what, Action op)
