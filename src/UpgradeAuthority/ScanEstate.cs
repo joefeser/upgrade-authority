@@ -116,7 +116,7 @@ public static class ScanEstate
         var entries = new List<ManifestEntry>();
         var plannedScans = new List<(ManifestEntry Entry, string RepoPath, string HeadSha, bool StaleWaived, string? WorktreePath, string Freshness, string? Fingerprint, string Trunk)>();
         var freshDirs = new List<string>();
-            var seenOrigins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // normalized origin -> first checkout name
+            var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name (case EXACT: case-sensitive servers host distinct repos at case-variant paths — a missed Windows drive-letter-case dedupe over-scans honestly; a wrong merge silently drops a repo)
         // C30 r9 / spec §2: plain-mode FETCHES parallelize (the network-bound phase); every decision
         // below stays sequential in name-ordinal order and reads only the fetched state.
         var fetched = new HashSet<string>(StringComparer.Ordinal);
@@ -671,9 +671,16 @@ public static class ScanEstate
     // Windows checkout reality (first real Windows run, 2026-10-19): `git remote add` stores a
     // local origin URL verbatim (backslash separators) while `git clone` canonicalizes its local
     // URLs to forward slashes — the SAME origin read as two identity keys and the alternate-checkout
-    // dedupe silently scanned both. Fold separators; case stays folded too (the parallel fetch path
-    // already groups OrdinalIgnoreCase — drive-letter case `c:\` vs `C:\`).
-    static string NormalizeOriginUrl(string url) => Ingest.NormalizeRepoBasic(url.Trim().Replace('\\', '/'));
+    // dedupe silently scanned both. Fold separators ONLY for Windows-shaped local paths (drive
+    // letter or UNC): a backslash is a legal filename character on POSIX, where /a\b.git and
+    // /a/b.git are distinct origins. Case stays exact (see seenOrigins).
+    static string NormalizeOriginUrl(string url)
+    {
+        var t = url.Trim();
+        if ((t.Length >= 2 && t[1] == ':' && char.IsAsciiLetter(t[0])) || t.StartsWith(@"\\"))
+            t = t.Replace('\\', '/');
+        return Ingest.NormalizeRepoBasic(t);
+    }
 
     static bool IsGitRepoWithOrigin(string repoPath)
     {
@@ -870,6 +877,6 @@ public static class ScanEstate
         catch (Exception ex) { Console.Error.WriteLine($"warning: could not clean {dir} ({ex.Message}) — remove it manually"); }
     }
 
-    static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true, Encoder = StableJsonEncoder.Instance }; // Encoder pins WRITE bytes (cache metadata); reads are unaffected
     static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Encoder = StableJsonEncoder.Instance };
 }

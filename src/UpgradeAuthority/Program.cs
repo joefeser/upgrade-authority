@@ -331,8 +331,8 @@ public static class Program
                 return $"first diff at byte {i}: produced \"{Snippet(a, i)}\" vs golden \"{Snippet(b, i)}\"";
         return $"common prefix matches; lengths differ: produced {a.Length} vs golden {b.Length}";
         static string Snippet(byte[] bytes, int i) =>
-            System.Text.Encoding.UTF8.GetString(bytes[Math.Max(0, i - 30)..Math.Min(bytes.Length, i + 30)])
-                .Replace("\r", "\\r").Replace("\n", "\\n");
+            string.Concat(System.Text.Encoding.UTF8.GetString(bytes[Math.Max(0, i - 30)..Math.Min(bytes.Length, i + 30)])
+                .Select(c => char.IsControl(c) ? $"\\u{(int)c:X4}" : c.ToString())); // every control char, not just CR/LF — fixture bytes are untrusted terminal input
     }
 
     // tracked files under root when git is available (the EOL guard checks the checkout, not artifacts);
