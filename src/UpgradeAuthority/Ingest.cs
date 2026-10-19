@@ -918,5 +918,7 @@ public static class Ingest
     }
 
     static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    // pinned escaping (StableJsonEncoder): ingest artifacts are byte-compared against goldens
+    // and feed campaign inputSha256 — output must not float with the host runtime's default table
+    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Encoder = StableJsonEncoder.Instance };
 }

@@ -7,6 +7,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <AssemblyName>ua</AssemblyName>
     <RootNamespace>UpgradeAuthority</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks> <!-- StableJsonEncoder: TextEncoder's abstract surface takes char* -->
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="..\..\docs\contracts\hacp/task-packet.schema.json" Link="contracts/task-packet.schema.json" />

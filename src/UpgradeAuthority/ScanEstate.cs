@@ -116,7 +116,7 @@ public static class ScanEstate
         var entries = new List<ManifestEntry>();
         var plannedScans = new List<(ManifestEntry Entry, string RepoPath, string HeadSha, bool StaleWaived, string? WorktreePath, string Freshness, string? Fingerprint, string Trunk)>();
         var freshDirs = new List<string>();
-        var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name
+            var seenOrigins = new Dictionary<string, string>(StringComparer.Ordinal); // normalized origin -> first checkout name (case EXACT: case-sensitive servers host distinct repos at case-variant paths — a missed Windows drive-letter-case dedupe over-scans honestly; a wrong merge silently drops a repo)
         // C30 r9 / spec §2: plain-mode FETCHES parallelize (the network-bound phase); every decision
         // below stays sequential in name-ordinal order and reads only the fetched state.
         var fetched = new HashSet<string>(StringComparer.Ordinal);
@@ -129,7 +129,7 @@ public static class ScanEstate
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
                 .Where(d => Push.Git(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
                 .Where(d => UsableOriginUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
-                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? Ingest.NormalizeRepoBasic(u34.Trim()) : d, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.Ordinal) // case-EXACT like seenOrigins (fetch-optimization only — the sequential loop fetches inline anyone this phase skipped, so grouping differences can never drop a scan)
                 .Select(g => g.OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).First()) // name-ordinal first-wins over one origin — SAME rule as the sequential loop (C34 r11: alternates are not fetched)
                 .Select(d => (Action)(() =>
                 {
@@ -179,9 +179,9 @@ public static class ScanEstate
             // unset/empty, which would silently dedupe every URL-less repo onto the key "origin"
             // (PR #2 Baz round 1 — proven by the selftest's empty-URL case).
             if (Push.Git(repoPath, "config --get remote.origin.url", out var urlOut, out _) != 0
-                || Ingest.NormalizeRepoBasic(urlOut.Trim()).Length == 0)
+                || NormalizeOriginUrl(urlOut).Length == 0)
             { entries.Add(Skip("origin remote has no usable URL (alternate-checkout identity unavailable — check git remote set-url origin")); continue; }
-            var normOrigin = Ingest.NormalizeRepoBasic(urlOut.Trim());
+            var normOrigin = NormalizeOriginUrl(urlOut);
             if (seenOrigins.TryGetValue(normOrigin, out var firstName))
             { entries.Add(Skip($"alternate checkout of {firstName} (same origin) — one scan per repo; pass scan dirs to ingest explicitly to combine deliberately")); continue; }
             seenOrigins[normOrigin] = name;
@@ -666,7 +666,21 @@ public static class ScanEstate
 
     static bool UsableOriginUrl(string repoPath) =>
         Push.Git(repoPath, "config --get remote.origin.url", out var u, out _) == 0
-        && Ingest.NormalizeRepoBasic(u.Trim()).Length > 0;
+        && NormalizeOriginUrl(u).Length > 0;
+
+    // Windows checkout reality (first real Windows run, 2026-10-19): `git remote add` stores a
+    // local origin URL verbatim (backslash separators) while `git clone` canonicalizes its local
+    // URLs to forward slashes — the SAME origin read as two identity keys and the alternate-checkout
+    // dedupe silently scanned both. Fold separators ONLY for Windows-shaped local paths (drive
+    // letter or UNC): a backslash is a legal filename character on POSIX, where /a\b.git and
+    // /a/b.git are distinct origins. Case stays exact (see seenOrigins).
+    static string NormalizeOriginUrl(string url)
+    {
+        var t = url.Trim();
+        if ((t.Length >= 2 && t[1] == ':' && char.IsAsciiLetter(t[0])) || t.StartsWith(@"\\"))
+            t = t.Replace('\\', '/');
+        return Ingest.NormalizeRepoBasic(t);
+    }
 
     static bool IsGitRepoWithOrigin(string repoPath)
     {
@@ -863,6 +877,6 @@ public static class ScanEstate
         catch (Exception ex) { Console.Error.WriteLine($"warning: could not clean {dir} ({ex.Message}) — remove it manually"); }
     }
 
-    static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true, Encoder = StableJsonEncoder.Instance }; // Encoder pins WRITE bytes (cache metadata); reads are unaffected
+    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Encoder = StableJsonEncoder.Instance };
 }

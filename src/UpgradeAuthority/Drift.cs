@@ -444,5 +444,5 @@ public static class Drift
     }
 
     static readonly JsonSerializerOptions Opts = new() { PropertyNameCaseInsensitive = true };
-    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Encoder = StableJsonEncoder.Instance };
 }
