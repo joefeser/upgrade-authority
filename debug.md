@@ -95,6 +95,35 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
 - Post-fix state: both repos scan under worktree mode; ownership update
   reports honestly (123 scanned / 131 total / absent assignments named).
 
+## 2026-10-21 — REGISTRY: boundary.unknownPackages = 223 (producer-extraction gap)
+
+- Registry live: producers=2 (both project-declared), internal=2,
+  external=[] (delta-less bootstrap templated it empty), anomalies clean.
+- Owner fact: ALL internal packages are produced IN this estate (library
+  repos are nuget-only producers; no cross-team dependencies). So internal
+  packages in unknownPackages = PRODUCER FACTS NOT EXTRACTED — only 2
+  PackageProduced facts arrived from 125 repos.
+- Root cause (tracemap source): ReadProducedPackages reads ONLY csproj
+  PropertyGroups — no props files, no import chain. SDK-style libs that
+  don't restate PackageId/AssemblyName in the csproj (declared centrally,
+  same culture as the CPM flag) are skipped. The 2 found declare in-file.
+- Diagnostic (run on the estate machine; pick a repo that produces one of
+  the internal library packages):
+
+  ```powershell
+  $r = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*<lib-fragment>*' | Select-Object -First 1
+  Select-String "$($r.FullName)\facts.ndjson" -Pattern 'PackageProduced' | Measure-Object | ForEach-Object Count
+  Get-ChildItem "<that repo's checkout>\src" -Filter *.csproj -Recurse -Depth 3 | Select-Object -First 1 | Get-Content
+  Get-Content "<that repo's checkout>\Directory.Build.props" -ErrorAction SilentlyContinue
+  ```
+
+  Expected: count 0; a csproj without PackageId/AssemblyName; the central
+  props carrying them. That output is the evidence for the tracemap fix.
+- Moves: (a) no-code stopgap — operator-declare producers in
+  producer-evidence.v0.json (operatorDeclared is first-class) and declare
+  the public-feed externals; (b) proper fix in tracemap — props-aware
+  produced extraction (merge nearest Directory.Build.props).
+
 ## 2026-10-21 — THE CLEAN PASS (saga complete)
 
 - Final run: `2 scanned, 123 reused, 0 SKIPPED, 14 out-of-scope` — both
