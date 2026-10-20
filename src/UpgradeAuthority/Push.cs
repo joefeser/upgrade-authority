@@ -310,13 +310,43 @@ public static class Push
 
     static string Json(string s) => System.Text.Json.JsonSerializer.Serialize(s);
 
-    internal static int Git(string cwd, string args, out string stdout, out string stderr)
+    internal static int Git(string cwd, string args, out string stdout, out string stderr) =>
+        Git(cwd, args, out stdout, out stderr, timeoutSeconds: 0, nonInteractive: false);
+
+    // timeoutSeconds > 0 kills the WHOLE process tree after the budget — git spawns credential-manager
+    // children that outlive it, and a blocked prompt froze a full estate scan silently for 10+ minutes
+    // (found live 2026-10-21; killing the stuck git processes resumed the run). nonInteractive makes
+    // git FAIL FAST ("terminal prompts disabled") instead of popping a hidden window during unattended
+    // phases — scan-estate uses both so a broken credential can never wedge a run again.
+    internal static int Git(string cwd, string args, out string stdout, out string stderr, int timeoutSeconds, bool nonInteractive)
     {
         var psi = new ProcessStartInfo("git", args) { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        if (nonInteractive)
+        {
+            psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+            psi.EnvironmentVariables["GCM_INTERACTIVE"] = "never";
+        }
         using var p = Process.Start(psi)!;
-        stdout = p.StandardOutput.ReadToEnd();
-        stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit();
+        if (timeoutSeconds <= 0)
+        {
+            stdout = p.StandardOutput.ReadToEnd();
+            stderr = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            return p.ExitCode;
+        }
+        // async reads so killing a hung child cannot deadlock the pipe readers
+        var outTask = p.StandardOutput.ReadToEndAsync();
+        var errTask = p.StandardError.ReadToEndAsync();
+        if (!p.WaitForExit(timeoutSeconds * 1000))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { /* already exiting */ }
+            try { p.WaitForExit(5000); } catch { /* reaped or gone */ }
+            stdout = outTask.IsCompleted ? outTask.Result : "";
+            stderr = $"git {(args.Split(' ')[0])} timed out after {timeoutSeconds}s (killed — likely a credential prompt or hung remote)";
+            return 124; // GNU-timeout convention; callers treat non-zero as failure and skip with this reason
+        }
+        stdout = outTask.Result;
+        stderr = errTask.Result;
         return p.ExitCode;
     }
 

@@ -14,6 +14,15 @@ namespace UpgradeAuthority;
 // drive the whole wrapper offline and deterministically.
 public static class ScanEstate
 {
+    // per-git-invocation kill budget: a blocked credential prompt or hung remote can otherwise wedge an
+    // unattended estate run forever (found live 2026-10-21 — killing the stuck git resumed the run).
+    // 0 disables the timer. Override with --git-timeout <seconds>.
+    public static int GitTimeoutSeconds = 120;
+
+    // every git call here is unattended: prompts disabled (fail fast) + bounded by the kill timer
+    static int GitT(string cwd, string args, out string o, out string e) =>
+        Push.Git(cwd, args, out o, out e, GitTimeoutSeconds, nonInteractive: true);
+
     public sealed class ScanRequest
     {
         public string RepoPath = "";
@@ -86,7 +95,7 @@ public static class ScanEstate
         { Console.Error.WriteLine("error: --update-checkouts and --worktree are mutually exclusive refresh modes — pick in-place refresh or isolated worktree scans"); return 1; }
         if (parallel < 1 || parallel > 64)
         { Console.Error.WriteLine("error: --parallel requires a value in 1..64"); return 1; }
-        if (Push.Git(reposRoot, "--version", out _, out _) != 0)
+        if (GitT(reposRoot, "--version", out _, out _) != 0)
         { Console.Error.WriteLine("error: git not found on PATH (required for freshness checks)"); return 1; }
         // scope is read ONCE, here: the parsed form filters this run and the exact bytes are
         // snapshotted for ingest (§4.4) — a file replaced mid-run can never split the evidence
@@ -129,14 +138,14 @@ public static class ScanEstate
                 .Where(d => !Path.GetFileName(d).StartsWith('.'))
                 .Where(d => new DirectoryInfo(d).LinkTarget is null) // C31 r10: a symlinked child is never fetched (the eligibility loop rejects it for the same reason)
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
-                .Where(d => Push.Git(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
+                .Where(d => GitT(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
                 .Where(d => UsableOriginUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
-                .GroupBy(d => Push.Git(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.Ordinal) // case-EXACT like seenOrigins (fetch-optimization only — the sequential loop fetches inline anyone this phase skipped, so grouping differences can never drop a scan)
+                .GroupBy(d => GitT(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.Ordinal) // case-EXACT like seenOrigins (fetch-optimization only — the sequential loop fetches inline anyone this phase skipped, so grouping differences can never drop a scan)
                 .Select(g => g.OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).First()) // name-ordinal first-wins over one origin — SAME rule as the sequential loop (C34 r11: alternates are not fetched)
                 .Select(d => (Action)(() =>
                 {
                     var n30 = Path.GetFileName(d);
-                    if (Push.Git(d, "fetch origin", out _, out var ferr30) != 0)
+                    if (GitT(d, "fetch origin", out _, out var ferr30) != 0)
                         lock (fetchFailures) { fetchFailures[n30] = ferr30; Console.Error.WriteLine($"fetch   {n30} FAILED ({TrimReason(ferr30)})"); }
                     else lock (fetched) { fetched.Add(n30); Console.Error.WriteLine($"fetch   {n30}"); }
                 })).ToArray();
@@ -174,10 +183,10 @@ public static class ScanEstate
             if (new DirectoryInfo(repoPath).LinkTarget is not null)
             { entries.Add(Skip("symlinked directory — pass the real checkout's parent (or the scan dir to ingest explicitly)")); continue; }
             if (!Scope.IsInScope(name, scope)) { Console.Error.WriteLine($"scope  {name} (out of scope by config)"); entries.Add(new ManifestEntry { Name = name, Status = "out-of-scope" }); continue; }
-            if (Push.Git(repoPath, "rev-parse HEAD", out var headOut, out _) != 0)
+            if (GitT(repoPath, "rev-parse HEAD", out var headOut, out _) != 0)
             { entries.Add(Skip("not a git repository or no commits")); continue; }
             var headSha = headOut.Trim();
-            if (Push.Git(repoPath, "remote", out var remotesOut, out _) != 0
+            if (GitT(repoPath, "remote", out var remotesOut, out _) != 0
                 || !remotesOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Contains("origin"))
             { entries.Add(Skip("no origin remote")); continue; } // never bypassable (SPEC-017 §4.1 F2)
             // alternate-checkout dedupe: name-ordinal first checkout of an origin wins (ingest's
@@ -185,7 +194,7 @@ public static class ScanEstate
             // config --get (the raw truth): `remote get-url` ECHOES THE REMOTE NAME when the URL is
             // unset/empty, which would silently dedupe every URL-less repo onto the key "origin"
             // (PR #2 Baz round 1 — proven by the selftest's empty-URL case).
-            if (Push.Git(repoPath, "config --get remote.origin.url", out var urlOut, out _) != 0
+            if (GitT(repoPath, "config --get remote.origin.url", out var urlOut, out _) != 0
                 || NormalizeOriginUrl(urlOut).Length == 0)
             { entries.Add(Skip("origin remote has no usable URL (alternate-checkout identity unavailable — check git remote set-url origin")); continue; }
             var normOrigin = NormalizeOriginUrl(urlOut);
@@ -198,21 +207,21 @@ public static class ScanEstate
             var trunk = "";
             string? worktreePath = null;
             var scanMode = worktreeMode ? "worktree" : "in-place";
-            if (updateCheckouts && Push.Git(repoPath, "status --porcelain", out var preStatus, out _) != 0)
+            if (updateCheckouts && GitT(repoPath, "status --porcelain", out var preStatus, out _) != 0)
             { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree (checked before fetch)")); continue; } // Baz r13: before ANY mutation, fetch included
             if (fetchFailures.TryGetValue(name, out var fetchErr))
             { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
-            if (!fetched.Contains(name) && Push.Git(repoPath, "fetch origin", out _, out fetchErr) != 0) // sequential fallback (parallel=1 or refresh modes fetch inline)
+            if (!fetched.Contains(name) && GitT(repoPath, "fetch origin", out _, out fetchErr) != 0) // sequential fallback (parallel=1 or refresh modes fetch inline)
             { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
             // trunk resolution: --trunk override (validated), else origin/main -> origin/dev; recorded RESOLVED
             if (trunkOverride is not null)
             {
-                if (Push.Git(repoPath, $"rev-parse --verify origin/{trunkOverride}", out _, out _) != 0)
+                if (GitT(repoPath, $"rev-parse --verify origin/{trunkOverride}", out _, out _) != 0)
                 { entries.Add(Skip($"--trunk origin/{trunkOverride} does not exist on this repo")); continue; }
                 trunk = $"origin/{trunkOverride}";
             }
-            else if (Push.Git(repoPath, "rev-parse --verify origin/main", out _, out _) == 0) trunk = "origin/main";
-            else if (Push.Git(repoPath, "rev-parse --verify origin/dev", out _, out _) == 0) trunk = "origin/dev";
+            else if (GitT(repoPath, "rev-parse --verify origin/main", out _, out _) == 0) trunk = "origin/main";
+            else if (GitT(repoPath, "rev-parse --verify origin/dev", out _, out _) == 0) trunk = "origin/dev";
             else { entries.Add(Skip("no origin/main or origin/dev branch (pass --trunk <branch> to override)")); continue; }
 
             if (worktreeMode)
@@ -223,7 +232,7 @@ public static class ScanEstate
                 SweepWorktreeLeftovers(repoPath, wtRoot, name);
                 // The satellite is created INSIDE the bounded worker (Codex P1): materializing N worktrees
                 // in the sequential pass would defeat --parallel's disk bound. The sha needs no satellite:
-                Push.Git(repoPath, $"rev-parse {trunk}", out var tipWt, out _);
+                GitT(repoPath, $"rev-parse {trunk}", out var tipWt, out _);
                 headSha = tipWt.Trim(); // the scanned sha is the trunk tip, not the checkout HEAD
                 worktreePath = Path.Combine(wtRoot, $"{name}-PENDING"); // real path minted by the worker
                 // F5/F6 do not apply: the satellite is pristine by construction; staleScan stays false
@@ -231,7 +240,7 @@ public static class ScanEstate
             else if (updateCheckouts)
             {
                 // Joe's script: dirty => rescue branch + commit (never silent, never dropped); then trunk + ff-only.
-                if (Push.Git(repoPath, "status --porcelain", out var dirtyOut, out _) != 0)
+                if (GitT(repoPath, "status --porcelain", out var dirtyOut, out _) != 0)
                 { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree")); continue; } // C36 r12
                 if (dirtyOut.Trim().Length > 0)
                 {
@@ -241,14 +250,14 @@ public static class ScanEstate
                         for (var suf = 1; suf <= 15; suf++) // Baz r10: EVERY candidate is probed (incl. the last); an exhausted range is a visible refusal
                         {
                             var candidate = suf == 1 ? $"ua/rescue-{headSha[..8]}" : $"ua/rescue-{headSha[..8]}-{suf}";
-                            Push.Git(repoPath, $"rev-parse --verify {candidate}", out var rbChk, out _);
+                            GitT(repoPath, $"rev-parse --verify {candidate}", out var rbChk, out _);
                             if (rbChk.Trim().Length == 0) { rescueBranch = candidate; rescueOk = true; break; }
                         }
                         if (!rescueOk)
                         { entries.Add(Skip("rescue branch range exhausted (15 prior rescues at this HEAD) — clean up ua/rescue-* branches")); continue; }
-                        var rcB = Push.Git(repoPath, $"checkout -b {rescueBranch}", out _, out _);
-                        var rcA = rcB == 0 ? Push.Git(repoPath, "add -A", out _, out _) : 1;
-                        var commitErr = ""; var rcC = rcA == 0 ? Push.Git(repoPath, "commit -m \"ua scan-estate rescue: preserve dirty working tree before refresh\"", out _, out commitErr) : 1;
+                        var rcB = GitT(repoPath, $"checkout -b {rescueBranch}", out _, out _);
+                        var rcA = rcB == 0 ? GitT(repoPath, "add -A", out _, out _) : 1;
+                        var commitErr = ""; var rcC = rcA == 0 ? GitT(repoPath, "commit -m \"ua scan-estate rescue: preserve dirty working tree before refresh\"", out _, out commitErr) : 1;
                         if (rcB != 0 || rcA != 0 || rcC != 0)
                         { entries.Add(Skip($"dirty-tree rescue failed ({TrimReason(commitErr ?? "git error")} — identity configured? ua never invents one)")); continue; }
                         Console.Error.WriteLine($"rescue {name}: stray work committed to {rescueBranch} (find it there — never dropped)");
@@ -256,29 +265,29 @@ public static class ScanEstate
                     }
                 }
                 var localTrunk = trunk["origin/".Length..];
-                if (Push.Git(repoPath, $"rev-parse --verify {localTrunk}", out _, out _) != 0)
+                if (GitT(repoPath, $"rev-parse --verify {localTrunk}", out _, out _) != 0)
                 {
-                    if (Push.Git(repoPath, $"checkout -b {localTrunk} --track {trunk}", out _, out var coErr) != 0)
+                    if (GitT(repoPath, $"checkout -b {localTrunk} --track {trunk}", out _, out var coErr) != 0)
                     { entries.Add(Skip($"checkout trunk failed: {TrimReason(coErr)}")); continue; }
                 }
-                else if (Push.Git(repoPath, $"checkout {localTrunk}", out _, out var coErr) != 0)
+                else if (GitT(repoPath, $"checkout {localTrunk}", out _, out var coErr) != 0)
                 { entries.Add(Skip($"checkout trunk failed: {TrimReason(coErr)}")); continue; }
-                Push.Git(repoPath, $"rev-list --count {trunk}..{localTrunk}", out var aheadOut, out _);
+                GitT(repoPath, $"rev-list --count {trunk}..{localTrunk}", out var aheadOut, out _);
                 if (int.TryParse(aheadOut.Trim(), out var ahead) && ahead > 0)
                 { entries.Add(Skip("local commits ahead of the trunk tip — refresh refused rather than merge (rebase deliberately and re-run)")); continue; }
-                if (Push.Git(repoPath, $"merge --ff-only {trunk}", out _, out var ffErr) != 0)
+                if (GitT(repoPath, $"merge --ff-only {trunk}", out _, out var ffErr) != 0)
                 { entries.Add(Skip($"fast-forward failed: {TrimReason(ffErr)}")); continue; }
-                Push.Git(repoPath, "rev-parse HEAD", out var newHead, out _);
+                GitT(repoPath, "rev-parse HEAD", out var newHead, out _);
                 headSha = newHead.Trim();
             }
             else
             {
                 // F5/F6, always evaluated: the outcome feeds the staleScan cache rule under --allow-stale
-                Push.Git(repoPath, $"rev-parse {trunk}", out var tipOut, out _);
+                GitT(repoPath, $"rev-parse {trunk}", out var tipOut, out _);
                 var tip = tipOut.Trim();
                 if (tip != headSha)
                     fail = $"HEAD {Sha7(headSha)} is not at {trunk} tip {Sha7(tip)}";
-                else if (Push.Git(repoPath, "status --porcelain", out var statusOut, out _) != 0 || statusOut.Trim().Length > 0)
+                else if (GitT(repoPath, "status --porcelain", out var statusOut, out _) != 0 || statusOut.Trim().Length > 0)
                     fail = "working tree not clean (uncommitted or untracked changes; --allow-stale to scan anyway)";
             }
             var staleWaived = fail is not null;
@@ -365,7 +374,7 @@ public static class ScanEstate
             {
                 if (worktreePath is not null)
                 {
-                    if (Push.Git(repoPath, $"worktree add --detach \"{satellite}\" {resolvedTrunk}", out _, out var wtErr) != 0)
+                    if (GitT(repoPath, $"worktree add --detach \"{satellite}\" {resolvedTrunk}", out _, out var wtErr) != 0)
                     {
                         lock (gate)
                         {
@@ -435,8 +444,8 @@ public static class ScanEstate
                 if (satellite is not null)
                 {
                     // satellite lifecycle: remove what we created, only what we created (§3.2 safety rules)
-                    Push.Git(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _);
-                    Push.Git(repoPath, "worktree prune", out _, out _);
+                    GitT(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _);
+                    GitT(repoPath, "worktree prune", out _, out _);
                 }
                 if (rc != 0 || !File.Exists(Path.Combine(tmp, "facts.ndjson")) || !File.Exists(Path.Combine(tmp, "scan-manifest.json")))
                 {
@@ -537,8 +546,8 @@ public static class ScanEstate
             {
                 if (satellite is not null && Directory.Exists(satellite))
                 {
-                    Push.Git(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _); // every exit path cleans its own satellite (Codex P1)
-                    Push.Git(repoPath, "worktree prune", out _, out _);
+                    GitT(repoPath, $"worktree remove --force \"{satellite}\"", out _, out _); // every exit path cleans its own satellite (Codex P1)
+                    GitT(repoPath, "worktree prune", out _, out _);
                 }
             }
         })).ToArray();
@@ -675,7 +684,7 @@ public static class ScanEstate
     }
 
     static bool UsableOriginUrl(string repoPath) =>
-        Push.Git(repoPath, "config --get remote.origin.url", out var u, out _) == 0
+        GitT(repoPath, "config --get remote.origin.url", out var u, out _) == 0
         && NormalizeOriginUrl(u).Length > 0;
 
     // Windows checkout reality (first real Windows run, 2026-10-19): `git remote add` stores a
@@ -694,7 +703,7 @@ public static class ScanEstate
 
     static bool IsGitRepoWithOrigin(string repoPath)
     {
-        if (Push.Git(repoPath, "remote", out var remotes, out _) != 0) return false;
+        if (GitT(repoPath, "remote", out var remotes, out _) != 0) return false;
         return remotes.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Contains("origin");
     }
 
@@ -708,7 +717,7 @@ public static class ScanEstate
         var (files, truncated) = DepsManifests(repoPath);
         if (files.Count == 0 && !truncated) return "none";
         if (truncated) return "stale"; // fail closed: a discarded suffix could hold the OLDEST manifest (Codex P1 r3)
-        if (Push.Git(repoPath, "log -1 --format=%ct HEAD", out var ctOut, out _) != 0) return "stale"; // no committer date ⇒ cannot certify fresh
+        if (GitT(repoPath, "log -1 --format=%ct HEAD", out var ctOut, out _) != 0) return "stale"; // no committer date ⇒ cannot certify fresh
         if (!long.TryParse(ctOut.Trim(), out var commitTime)) return "stale";
         var oldest = files.Min(f => new FileInfo(f).LastWriteTimeUtc.Ticks);
         return new DateTimeOffset(oldest, TimeSpan.Zero).ToUnixTimeSeconds() >= commitTime ? "fresh" : "stale";
@@ -801,7 +810,7 @@ public static class ScanEstate
         if (!Directory.Exists(uaRoot)) return;
         // OWNERSHIP-CHECKED sweep (Baz r2): a pattern-matching directory is ours only if git itself
         // lists it as this repo's worktree — a foreign actor creating <name>-<8hex> inside ua/ survives.
-        Push.Git(repoPath, "worktree list --porcelain", out var wl, out _);
+        GitT(repoPath, "worktree list --porcelain", out var wl, out _);
         var owned = new HashSet<string>(StringComparer.Ordinal);
         foreach (var line in wl.Split('\n'))
             if (line.StartsWith("worktree ", StringComparison.Ordinal))
@@ -817,8 +826,8 @@ public static class ScanEstate
                 && Path.GetFileName(d).Length == name.Length + 1 + 8
                 && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)
                 && owned.Contains(Path.GetFullPath(d)))) continue;
-            Push.Git(repoPath, "worktree remove --force \"" + d + "\"", out _, out _);
-            Push.Git(repoPath, "worktree prune", out _, out _);
+            GitT(repoPath, "worktree remove --force \"" + d + "\"", out _, out _);
+            GitT(repoPath, "worktree prune", out _, out _);
             if (Directory.Exists(d)) TryDeleteDir(d); // dir survived an admin-less removal
         }
         }

@@ -197,6 +197,30 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
 - Backlog linkage: this stretch is silent spot (c) in the activity-output
   candidate — banner + per-repo counter + elapsed for EVERY long phase.
 
+## 2026-10-21 — GIT ARMOR SHIPPED: prompts fail fast + kill timer (a blocked git can never wedge a run again)
+
+- Incident, closed: the estate run froze ~10 min in the silent freshness
+  stretch on blocked git processes; killing them by hand resumed the run
+  (operator did exactly that). Root shape: an unattended git call can
+  block forever on a credential prompt (hidden window) or hung remote.
+- Shipped on this branch: every scan-estate git invocation now runs with
+  `GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=never` (a credential problem
+  FAILS FAST with "terminal prompts disabled" instead of popping a
+  hidden window) and a kill timer — default 120s, `--git-timeout <s>`
+  to change, 0 disables — that kills the WHOLE process tree (credential
+  manager children included) and skips that repo with a typed reason.
+- Verified locally: a fake `git` that sleeps 300s on fetch, with
+  `--git-timeout 3` — each repo killed at 3s, per-repo
+  `fetch ... FAILED (git fetch timed out after 3s (killed — likely a
+  credential prompt or hung remote))`, typed skip lines, and the run
+  COMPLETED in 3.1s instead of hanging. Selftest 163 green.
+- Note for a run already in flight: the armor applies after re-pulling
+  this branch and rebuilding ua — a currently-running process keeps the
+  old behavior (manual kill still works).
+- Footnote: local toy repos showed "working tree not clean" after an
+  in-place scan because tracemap leaves `obj/` behind and the toys have
+  no .gitignore; real repos that ignore bin/obj are unaffected.
+
 ## 2026-10-21 — LOCAL E2E PASS: the whole chain verified off the estate machine
 
 - Setup: two tiny local git repos with LOCAL bare origins (fetch runs

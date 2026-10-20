@@ -253,6 +253,11 @@ public static class Program
                 int parallel = 2;
                 if (parallelOpt is not null && (!int.TryParse(parallelOpt, out parallel) || parallel < 1 || parallel > 64))
                 { Console.Error.WriteLine("error: --parallel requires a value in 1..64"); return 1; }
+                var gitTimeoutOpt = GetOpt(args, "--git-timeout");
+                int gitTimeout = ScanEstate.GitTimeoutSeconds;
+                if (gitTimeoutOpt is not null && (!int.TryParse(gitTimeoutOpt, out gitTimeout) || gitTimeout < 0))
+                { Console.Error.WriteLine("error: --git-timeout requires a value in seconds (0 disables the kill timer)"); return 1; }
+                ScanEstate.GitTimeoutSeconds = gitTimeout;
                 var excludes = new List<string>();
                 for (int i = 0; i < args.Length; i++)
                     if (args[i] == "--exclude") // repeatable tracemap pass-through (folder globs, NOT scope exclusion)
@@ -265,7 +270,7 @@ public static class Program
                 return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
