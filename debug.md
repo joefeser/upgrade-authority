@@ -21,11 +21,14 @@ git pull
 dotnet build src/dotnet/TraceMap.sln -c Release
 Get-Item C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll | Select-Object LastWriteTime
 
-# 3) full estate rescan — WORKTREE mode (behind-tip/dirty checkouts are irrelevant there)
+# 3) full estate rescan — WORKTREE mode (behind-tip/dirty checkouts are irrelevant there).
+#    If the out dir has NO ownership.v0.json yet, bootstrap needs --self <teamId> ONCE
+#    (teams are never invented); if the sidecar already exists --self is unnecessary.
 dotnet $ua scan-estate --repos-root <repos-root> `
   --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
   --scope <repos-root>\repos.txt `
-  --out C:\ua-estate --parallel 8 --worktree
+  --out C:\ua-estate --parallel 8 --worktree --self <teamId>
+#    (a rerun after this error costs nothing: all completed scans reuse from cache instantly)
 
 # 4) VINTAGE CENSUS before ingest — every scan must carry the CURRENT dll hash.
 #    (A one-repo spot check only proves the dll; a repo that happened to be in the
