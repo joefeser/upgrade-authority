@@ -319,7 +319,7 @@ public static class Ingest
         foreach (var (rKey, rPkg, rFid) in deferredUnevidenced)
             if (!pinEvidenced.Contains((rKey, rPkg.ToLowerInvariant())))
             {
-                ingestGaps.Add($"fact {rFid}: constraint not evidenced (no version on the reference and no central pin for it) — {rPkg}");
+                ingestGaps.Add($"fact {rFid} in {rKey}: constraint not evidenced (no version on the reference and no central pin for it) — {rPkg}"); // repo NAMED: 130-repo estates cannot triage anonymous fact ids
                 repoIngestGaps.Add((rKey, $"constraint not evidenced: {rPkg}"));
             }
 
