@@ -219,12 +219,12 @@ public static class Program
                     foreach (var (file, text) in waveFiles) File.WriteAllText(Path.Combine(tempDirM, file), text, new System.Text.UTF8Encoding(false));
                     File.WriteAllText(Path.Combine(tempDirM, "campaign-manifest.v1.json"), manifestText, new System.Text.UTF8Encoding(false));
                     var backupM = Path.Combine(outParentM, "." + outNameM + ".old-" + Guid.NewGuid().ToString("N")[..8]);
-                    if (Directory.Exists(outDirM)) Directory.Move(outDirM, backupM);
-                    try { Directory.Move(tempDirM, outDirM); }
-                    catch { if (Directory.Exists(backupM)) Directory.Move(backupM, outDirM); throw; }
-                    if (Directory.Exists(backupM)) Directory.Delete(backupM, true);
+                    if (Directory.Exists(outDirM)) FsSwap.MoveDir(outDirM, backupM);
+                    try { FsSwap.MoveDir(tempDirM, outDirM); }
+                    catch { FsSwap.RollbackMove(backupM, outDirM); throw; }
+                    FsSwap.TryDeleteDirQuiet(backupM); // installed — old-output cleanup is never fatal
                 }
-                finally { if (Directory.Exists(tempDirM)) Directory.Delete(tempDirM, true); }
+                finally { FsSwap.TryDeleteDirQuiet(tempDirM); }
                 Console.Error.WriteLine($"exported: {waveFiles.Count} wave packet(s) + campaign-manifest.v1 -> {outDirM}");
                 return 0;
             }
@@ -388,8 +388,8 @@ public static class Program
         // PR9 r1: atomic replace — a truncated write can never masquerade as a complete artifact
         var tmp = path + ".tmp-" + Guid.NewGuid().ToString("N")[..8];
         File.WriteAllText(tmp, text, new System.Text.UTF8Encoding(false));
-        try { File.Move(tmp, path, overwrite: true); }
-        catch { File.Delete(tmp); throw; }
+        try { FsSwap.MoveFile(tmp, path); }
+        catch { FsSwap.TryDeleteFileQuiet(tmp); throw; }
         Console.Error.WriteLine($"wrote {path}");
     }
 
