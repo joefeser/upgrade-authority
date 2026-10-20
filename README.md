@@ -66,8 +66,8 @@ on first run (nothing to create by hand):
 $ua = "run","--project","src/UpgradeAuthority","-c","Release","--"
 
 # 0) prerequisite: the evidence provider — clone + build tracemap once
-#    git clone https://github.com/joefeser/tracemap; dotnet build -c Release
-#    then pass its bin\Release\net10.0\tracemap.dll below
+#      git clone https://github.com/joefeser/tracemap C:\tracemap
+#      dotnet build -c Release          # run INSIDE the cloned tracemap repo
 
 # 1) one command: freshness-check every repo → cached tracemap scans → bootstrap → plan → report
 dotnet $ua scan-estate --repos-root C:\repos --out C:\ua-estate `
