@@ -141,7 +141,8 @@ public static class Ingest
         {
             if (producerPath is null) producerSatisfiedByScan = false; // re-checked after facts parse (B1(b))
             if (ownershipPath is null) multiDirMissing.Add("--ownership");
-            if (deltaPath is null) multiDirMissing.Add("--delta");
+            // delta deliberately NOT here: it is optional at fixture-build time (estate-first flow —
+            // registry/drift/audit never read it; the campaign commands refuse with instructions)
         }
 
         // Parse all scans (multi-dir: one per repo)
@@ -186,8 +187,8 @@ public static class Ingest
         // delta is OPTIONAL at fixture-build time (the estate-first flow: "i don't want a delta file,
         // i want everything" — registry/drift/audit never read it; only the campaign commands need one,
         // and they refuse with instructions when it's absent)
-        var deltaFile = deltaPath ?? Path.Combine(scanDirs[0], "delta.json");
-        var hasDelta = File.Exists(deltaFile);
+        var deltaFile = deltaPath ?? (scanDirs.Length == 1 ? Path.Combine(scanDirs[0], "delta.json") : null); // auto-discovery is single-dir only — a multi-dir run with no --delta proceeds delta-less
+        var hasDelta = deltaFile is not null && File.Exists(deltaFile);
         Console.Error.WriteLine($"ingest: {allFacts.Count} fact(s) across {repoKeys.Count} repo(s) from {scanDirs.Length} scan dir(s){(hasDelta ? "" : " — no delta (see note)")}");
         Console.Error.WriteLine("ingest: classifying gaps vs compile-health, joining lockfile rows, writing the fixture...");
         if (!hasDelta)
@@ -583,7 +584,8 @@ public static class Ingest
             if (missing2.Count > 0)
             {
                 var hint = missing2.Contains("--producer") ? "" : " (--producer satisfied by PackageProduced facts)";
-                Console.Error.WriteLine($"error: {scanDirs.Length} scan dirs in this run ({string.Join(", ", scanDirs.Select(Path.GetFileName))}) — sidecars are run-wide: pass {string.Join(" ", missing2)} explicitly (auto-discovery is single-dir only){hint}");
+                var dirList = string.Join(", ", scanDirs.Take(3).Select(Path.GetFileName)) + (scanDirs.Length > 3 ? $" (+{scanDirs.Length - 3} more)" : ""); // never a 130-name wall
+                Console.Error.WriteLine($"error: {scanDirs.Length} scan dirs in this run ({dirList}) — sidecars are run-wide: pass {string.Join(" ", missing2)} explicitly (auto-discovery is single-dir only){hint}");
                 return 1;
             }
         }

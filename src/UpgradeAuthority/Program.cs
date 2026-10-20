@@ -1102,13 +1102,15 @@ public static class Program
                 throw new Exception("missing root must exit 1");
             Console.WriteLine("ok   ingest-scans-root-missing-root (exit 1)"); pass++;
 
-            // sidecar explicitness: two dirs, sidecar PRESENT in one dir but flag omitted => typed error (per kind)
+            // sidecar explicitness: two dirs, sidecar PRESENT in one dir but flag omitted => typed error (per kind).
+            // DELTA is exempt since the estate-first flow: omitting --delta proceeds delta-less, and a delta.json
+            // sitting in a scan dir is still NEVER auto-discovered for multi-dir runs
             var d1 = Path.Combine(rich2, "scans", "svc"); var d2 = Path.Combine(rich2, "scans", "billing");
             var o2 = Path.Combine(Path.GetTempPath(), "ua-sr-o2-" + Guid.NewGuid().ToString("N")[..8]);
             var eP = Path.Combine(rich2, "sidecars-estate2", "producer-evidence.v0.json");
             var eO = Path.Combine(rich2, "sidecars-estate2", "ownership.v0.json");
             var eD = Path.Combine(rich2, "sidecars-estate2", "delta.json");
-            foreach (var omit in new[] { "producer", "ownership", "delta" })
+            foreach (var omit in new[] { "producer", "ownership" })
             {
                 var tmpScan = Path.Combine(Path.GetTempPath(), "ua-sr-scan-" + Guid.NewGuid().ToString("N")[..8]);
                 CopyDir(d1, tmpScan);
@@ -1122,7 +1124,15 @@ public static class Program
                 if (rc != 1) throw new Exception($"present-but-implicit {omit}: exit {rc}, expected 1");
                 ForceDelete(tmpScan);
             }
-            Console.WriteLine("ok   ingest-scans-root-sidecar-explicitness (present-but-implicit refused, per kind)"); pass++;
+            {
+                var tmpScan = Path.Combine(Path.GetTempPath(), "ua-sr-scan-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(d1, tmpScan);
+                File.Copy(eD, Path.Combine(tmpScan, "delta.json"), true); // present-but-implicit delta
+                if (Ingest.Run(new[] { tmpScan, d2 }, o2, eP, eO, null) != 0) throw new Exception("omitted --delta must proceed (estate-first: delta optional)");
+                if (File.Exists(Path.Combine(o2, "input", "delta.json"))) throw new Exception("a delta.json sitting in a scan dir must never be auto-discovered for multi-dir runs");
+                ForceDelete(tmpScan);
+            }
+            Console.WriteLine("ok   ingest-scans-root-sidecar-explicitness (present-but-implicit refused, per kind; delta omitted = proceed, never auto-discovered)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ingest-scans-root-cases: {ex.Message}"); }
 
