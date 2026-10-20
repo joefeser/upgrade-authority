@@ -65,6 +65,10 @@ on first run (nothing to create by hand):
 ```powershell
 $ua = "run","--project","src/UpgradeAuthority","-c","Release","--"
 
+# 0) prerequisite: the evidence provider — clone + build tracemap once
+#    git clone https://github.com/joefeser/tracemap; dotnet build -c Release
+#    then pass its bin\Release\net10.0\tracemap.dll below
+
 # 1) one command: freshness-check every repo → cached tracemap scans → bootstrap → plan → report
 dotnet $ua scan-estate --repos-root C:\repos --out C:\ua-estate `
   --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
@@ -73,30 +77,36 @@ dotnet $ua scan-estate --repos-root C:\repos --out C:\ua-estate `
 
 # First run CREATES the estate working dir — this is the whole init state:
 #   C:\ua-estate\scans\<repo>\              cached tracemap scans (re-runs rescan only movers)
-#   C:\ua-estate\ownership.v0.json          BOOTSTRAPPED — every repo set to my-team; hand-edit the real teams
+#   C:\ua-estate\ownership.v0.json          BOOTSTRAPPED — every repo this run SCANNED set to my-team;
+#                                           hand-edit the real teams (repos that skipped appear when they first scan)
 #   C:\ua-estate\producer-evidence.v0.json  BOOTSTRAPPED — externalPackages lists the delta target; extend it
 #   C:\ua-estate\delta.json                 BOOTSTRAPPED template — swap in your real delta when ready
 #   C:\ua-estate\fixture\                   planner inputs (ingested evidence + copies of the sidecars)
 #   C:\ua-estate\plan.json, report.md, scan-estate.v1.json
 
-# 2) hand-edit the two bootstrapped sidecars (ownership teams; known external packages), then
-#    re-run the same command — existing sidecars are sacred: re-runs never overwrite your edits,
-#    ownership only appends repos it hasn't seen
+# 2) hand-edit the two bootstrapped sidecars (ownership teams; known external packages) and/or swap
+#    in your real delta.json, then RE-RUN WITHOUT the --delta-* flags (they bootstrap the template
+#    only; with a real delta in place, a --delta-package that differs from it is a typed error):
+#    dotnet $ua scan-estate --repos-root C:\repos --out C:\ua-estate --tracemap ... --self my-team
+#    Existing sidecars are sacred — re-runs never overwrite your edits; ownership only appends
+#    repos it hasn't seen (assigned to my-team until you edit them).
 
-# 3) the boundary and the extras (each is optional, each needs only the fixture dir):
-dotnet $ua registry C:\ua-estate\fixture                 # internal / external / unknown boundary
-dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json     # behind/current/ahead vs feed truth
-dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json   # advisory worst-status
-dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign    # per-wave packets + manifest
+# 3) the boundary and the extras (each is optional, each reads the fixture dir; each needs a
+#    truth file YOU provide — ua never fetches):
+dotnet $ua registry C:\ua-estate\fixture                 # internal / external / unknown boundary (no inputs needed)
+dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json     # YOU write/export this: the versions your feed serves
+dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json   # YOU write/export this: operator rows or an OSV/GHSA export
+dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign    # per-wave packets + campaign manifest
 ```
 
 Useful `scan-estate` flags the short form omits: `--update-checkouts` (fetch + fast-forward to
 trunk tip first — a behind checkout makes evidence stale twice over), `--index-deps-json --build`
 (closure evidence from build-output `deps.json` — converts "unknown" repos into answers; `--build`
-compiles, offline), `--worktree` (scan isolated worktrees, never touching your checkout),
-`--scope <file>` (declare repos out of scope, visible in the report), `--parallel <N>` (parallel
-fetches). Repos must be clean and at their origin trunk tip, or they are visibly skipped — that
-precondition is the point.
+compiles each checkout, which restores from your configured NuGet feeds and **executes the repo's
+build scripts with your privileges — only point it at repos you trust**), `--worktree` (scan
+isolated worktrees, never touching your checkout), `--scope <file>` (declare repos out of scope,
+visible in the report), `--parallel <N>` (parallel fetches). Repos must be clean and at their
+origin trunk tip, or they are visibly skipped — that precondition is the point.
 
 ## The commands
 
@@ -114,7 +124,7 @@ precondition is the point.
 | `ua audit` | Advisory worst-status report: joins an operator-provided `advisory-versions.v1` truth file (operator-provided rows, or OSV/GHSA exports) against the estate's installed versions — per (repo, version) classification with worst-status arithmetic (`affected` > `unclassified` > `not-affected`), per-advisory reasons preserved, export gaps rendered `unclassified` with a manual-review note, never fabricated clean. |
 | `ua export-packet` | Emits one wave as a self-describing [HACP](docs/contracts/hacp/README.md) task packet (digest-bound, RFC 8785 canonical) — the seam an external executor/reviewer consumes; ua's own execution of the same wave (`apply`/`push`) remains the reference path. |
 | `ua export-campaign` | The whole plan as a `campaign-manifest.v1` — every wave's packet id + digest, input/plan content hashes over raw bytes, the complete-estate campaign id — the handoff artifact for coordinating outside ua (review tooling, queues, a human process). |
-| `ua selftest` | The full offline deterministic self-check (160 cases, byte-exact on Windows/macOS/Linux) plus the fixture validator (31 goldens). |
+| `ua selftest` | The full offline deterministic self-check (160 cases, byte-exact on Windows/macOS/Linux). The fixture validator is a separate companion command: `node tools/validate-fixtures.mjs` (31 goldens). |
 
 ## Honesty model (the short version)
 
