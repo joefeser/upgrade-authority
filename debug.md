@@ -163,6 +163,24 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   CREDENTIAL PROMPT (Git Credential Manager window behind the terminal
   or on another monitor — the run waits forever). Check the taskbar
   before killing anything.
+- FROZEN (confirmed live 2026-10-21 — both CPU snapshots identical):
+  1. Alt-tab / taskbar for a credential window; answering it resumes
+     the run unaided.
+  2. None → Ctrl+C once; if ignored: `Get-Process git,dotnet -
+     ErrorAction SilentlyContinue | Stop-Process` (safe — per-repo
+     atomic swaps; nothing half-installed when nothing completed).
+  3. State check after the kill:
+
+     ```powershell
+     Get-ChildItem C:\ua-estate -Force -Directory | Select-Object Name
+     Get-ChildItem C:\ua-estate\scans -Force -Directory -ErrorAction SilentlyContinue | Measure-Object | Select-Object Count
+     ```
+
+     Expected: the old cache intact (same count as before the run). If
+     scans is EMPTY and a dot-named sibling exists (`.scans.old-*` /
+     `.scans.tmp-*`), the hung run moved the cache aside — restore it
+     by moving that sibling back to `scans` before anything else, and
+     record the sibling name here.
 - Ctrl+C is safe at any point (per-repo atomic swaps; completed repos
   stay cached; a re-run continues). Fallback strategy that fits a day:
   Ctrl+C → run the 3-repo scoped rescan higher up (about a minute) →
