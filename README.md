@@ -58,6 +58,23 @@ Requires the .NET 10 SDK. Everything else is self-contained.
 
 ## From zero on your estate
 
+There are two ways to drive ua, and the choice belongs up front:
+
+- **One shot — `ua scan-estate`.** One command from a folder of repo checkouts to a plan: it
+  fetches every origin to prove each repo is at its trunk tip before reusing anything, scans
+  only what moved, bootstraps the sidecars you'd otherwise hand-create, and runs
+  ingest → plan → report. That freshness guarantee is exactly what a **real estate run** wants —
+  and the wrong cost for testing, because every invocation re-pays the fetch.
+- **One command at a time.** `ingest` over scans you already have (seconds, offline, explicit
+  sidecars) produces the `fixture` folder; then `plan`, `report`, `registry`, `drift`, `audit`,
+  and `export-campaign` each read only that fixture — instant, re-runnable, in any order. This
+  is the loop for **testing and exploring**: set up once, iterate freely, re-ingest only when a
+  sidecar changes, and never re-scan unless you run `scan-estate` again.
+
+The walkthrough below is the one-shot path (it also *creates* the inputs the step-by-step path
+consumes — the scans and the sidecars). Already have scans and want the cheap loop? Jump to
+[Iterating without re-scanning](#iterating-without-re-scanning-the-cheap-test-loop).
+
 The demo above runs on committed data. On your own repos, the entry point is `ua scan-estate` —
 one command takes a folder of repo checkouts to a plan, and **bootstraps every sidecar you need**
 on first run (nothing to create by hand):
