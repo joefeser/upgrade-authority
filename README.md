@@ -172,26 +172,61 @@ already have. Don't pay it twice: the whole chain after scanning reads one folde
 and re-runs in seconds, offline, as many times as you like:
 
 ```powershell
+$ua = "run","--project","src/UpgradeAuthority","-c","Release","--"
+
 # ONE-TIME: turn your existing scans into the fixture (seconds; no network):
-#   copy your sidecars next to the scans folder (ownership.v0.json, producer-evidence.v0.json, delta.json)
+#   copy your sidecars next to the scans folder (ownership.v0.json, producer-evidence.v0.json)
+#   — a delta.json is OPTIONAL at this step (registry/drift/audit don't need one; see below)
 dotnet $ua ingest --scans-root C:\ua-estate\scans `
   --producer C:\ua-estate\producer-evidence.v0.json `
   --ownership C:\ua-estate\ownership.v0.json `
-  --delta C:\ua-estate\delta.json `
   --out C:\ua-estate\fixture
 
-# THEN iterate freely — every command below reads only the fixture (instant, re-runnable):
-dotnet $ua plan C:\ua-estate\fixture
-dotnet $ua report C:\ua-estate\fixture
+# THEN iterate freely — every command below reads only the fixture (instant, re-runnable).
+# plan/report PRINT to the console by default; --out writes the file:
+dotnet $ua plan C:\ua-estate\fixture --out C:\ua-estate\plan.json
+dotnet $ua report C:\ua-estate\fixture --out C:\ua-estate\report.md
 dotnet $ua registry C:\ua-estate\fixture
-dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json
-dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json
+dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json --out C:\ua-estate\drift.json
+dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json --out C:\ua-estate\audit.json
 dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign
 ```
 
 Changed a sidecar (edited ownership teams, declared more externals, swapped the delta)? Re-run
 the one `ingest` — still seconds. Re-scan only ever happens when you run `scan-estate` again,
 and then only for repos that actually moved. The fetch phase can be widened with `--parallel <N>`.
+
+### Where the delta comes from (and when you need one)
+
+The delta is the ONE package upgrade you're planning a campaign around — ua plans one at a time
+(V0). You do **not** need one to see your estate: `registry`, `drift`, and `audit` never read it,
+and `ingest` builds the fixture without one. You DO need one for `plan`, `report`, `apply`,
+`push`, `export-packet`, and `export-campaign` — those refuse with a pointer here when it's
+missing. Three ways to get a `delta.json`:
+
+1. **Hand-write it** — it's six lines; `oldVersion`/`newVersion` are the upgrade's endpoints:
+
+   ```json
+   {
+     "version": "package-delta.v1",
+     "sourceRepo": "https://your-vcs/your-org/producer-repo.git",
+     "sourceCommitSha": "the commit that introduced the new version (or 40 zeros)",
+     "changes": [ {
+       "id": "any-short-label",
+       "packageName": "Your.Package",
+       "ecosystem": "nuget",
+       "changeType": "updated",
+       "oldVersion": "1.0.0",
+       "newVersion": "2.0.0"
+     } ]
+   }
+   ```
+
+2. **Let scan-estate bootstrap the template** — `--delta-package <id> --delta-old <v> --delta-new <v>`
+   writes the file on first run (drop the flags on re-runs once your real delta is in place).
+3. **Generate candidates from feed truth** — `ua drift <fixture> --feed feed-versions.v1.json
+   --emit-deltas <dir>` writes one delta file per distinct behind-version it found; pick one and
+   copy it in as `delta.json`.
 
 ## The commands
 

@@ -413,7 +413,12 @@ public static class Program
         var pe = Load<ProducerEvidence>("producer-evidence.v0.json");
         var ow = Load<OwnershipFile>("ownership.v0.json");
         var px = Load<PackageEvidence>("package-evidence.v0.json");
-        var delta = Load<DeltaFile>("delta.json");
+        // delta.json is OPTIONAL (estate-first flow): registry/drift/audit never read it — only the
+        // campaign commands do, and they refuse with instructions when it's absent
+        var deltaPathF = Path.Combine(fixtureDir, "input", "delta.json");
+        var delta = File.Exists(deltaPathF)
+            ? Load<DeltaFile>("delta.json")
+            : new DeltaFile { Version = "package-delta.v1" };
         // SPEC-008: exactly one lockfile input file, any of v0/v1/v2
         var lockFiles = new[] { "lockfile-rows.v2.json", "lockfile-rows.v1.json", "lockfile-rows.v0.json" }
             .Select(n => (name: n, path: Path.Combine(fixtureDir, "input", n))).Where(t => File.Exists(t.path)).ToList();
@@ -502,7 +507,7 @@ public static class Program
             }
             freshnessFile = parsed;
         }
-        return new Engine(pe, ow, px, delta, lockRepos, scopeFile, freshnessFile);
+        return new Engine(pe, ow, px, delta, lockRepos, scopeFile, freshnessFile, hasDelta: File.Exists(deltaPathF));
     }
 
     // SPEC-007 §7: load-time typed errors — one row per resolution group; v1 rows carry their key fields.
@@ -2156,6 +2161,36 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scope-plan-statement: {ex.Message}"); }
 
+        // estate-first flow: ingest WITHOUT a delta builds the fixture (note, not an error);
+        // registry/drift-style engine views work; BuildPlan refuses with a pointer to the README
+        try
+        {
+            var outNd = Path.Combine(Path.GetTempPath(), "ua-no-delta-out-" + Guid.NewGuid().ToString("N")[..8]);
+            var sideNd = Path.Combine(Path.GetTempPath(), "ua-no-delta-side-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(sideNd);
+            File.WriteAllText(Path.Combine(sideNd, "producer.json"), "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[]}");
+            File.WriteAllText(Path.Combine(sideNd, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"svc\",\"team\":\"team-a\"}]}");
+            var errNdPrev = Console.Error;
+            var capNd = new System.IO.StringWriter();
+            int rcNd;
+            try { Console.SetError(capNd); rcNd = Ingest.Run(new[] { Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich", "scans", "svc") }, outNd, Path.Combine(sideNd, "producer.json"), Path.Combine(sideNd, "ownership.json"), null); }
+            finally { Console.SetError(errNdPrev); }
+            if (rcNd != 0) throw new Exception($"delta-less ingest must succeed, got exit {rcNd}");
+            if (File.Exists(Path.Combine(outNd, "input", "delta.json"))) throw new Exception("no delta was given — none may be invented");
+            if (!capNd.ToString().Contains("no delta found") || !capNd.ToString().Contains("registry/drift/audit are unaffected")) throw new Exception("the delta-less note must say what works and what doesn't: " + capNd.ToString());
+            var engNd = LoadEngine(outNd); // loads without throwing — the estate views don't need a delta
+            if (engNd.HasDelta) throw new Exception("HasDelta must be false for a delta-less fixture");
+            if (Registry.Run(outNd).Item2 != 0) throw new Exception("registry must work on a delta-less fixture");
+            string? planErrNd = null;
+            try { engNd.BuildPlan(); }
+            catch (UaException exNd) { planErrNd = exNd.Message; }
+            if (planErrNd is null || !planErrNd.Contains("no delta in this fixture") || !planErrNd.Contains("Where the delta comes from") || !planErrNd.Contains("emit-deltas"))
+                throw new Exception($"BuildPlan's refusal must teach the three ways to get a delta: {planErrNd}");
+            Console.WriteLine("ok   delta-optional (ingest note; registry works; plan refuses with instructions)"); pass++;
+            ForceDelete(outNd); ForceDelete(sideNd);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL delta-optional: {ex.Message}"); }
+
         // 15. PR #2 Baz round 1: empty origin URL never becomes the dedupe key; ALL --delta-* flags
         //     warn (not just --delta-package); persisted failure reasons scrub URL userinfo
         try
@@ -2436,11 +2471,12 @@ public static class Program
                 throw new Exception("all-current rerun into the stale dir must exit 3 — no-behind must not skip the destination check");
             File.Delete(feedCur21);
             Directory.Delete(emitDir21, true);
-            // delta = loader precondition: deleted → exit 3 naming it; 2-change → exit 3; dual-fault (fixture+feed) → 3
+            // delta is OPTIONAL now (estate-first flow): a delta-less fixture LOADS and drifts normally;
+            // 2-change delta still exits 3; dual-fault (fixture+feed) → 3
             var scratch21 = Path.Combine(Path.GetTempPath(), "ua-dr21x-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(fd21, scratch21);
             File.Delete(Path.Combine(scratch21, "input", "delta.json"));
-            if (Drift.Run(scratch21, feed21, null, null).Item3 != 3) throw new Exception("delta-less fixture must exit 3");
+            if (Drift.Run(scratch21, feed21, null, null).Item3 != 0) throw new Exception("delta-less fixture must drift normally (estate-first: drift never reads the delta)");
             File.WriteAllText(Path.Combine(scratch21, "input", "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"x\",\"sourceCommitSha\":\"0\",\"changes\":[{\"id\":\"a\",\"packageName\":\"P\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"},{\"id\":\"b\",\"packageName\":\"Q\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"}]}");
             if (Drift.Run(scratch21, feed21, null, null).Item3 != 3) throw new Exception("2-change delta must exit 3");
             if (Drift.Run(scratch21, feed21 + "-absent", null, null).Item3 != 3) throw new Exception("dual fault must resolve fixture-first (exit 3)");
@@ -2749,11 +2785,12 @@ public static class Program
             if (stdoutSanX != stdoutCapX) throw new Exception("--sanitized registry stdout differs from canonical");
             if (Main(new[] { "registry", frX, "--out" }) != 1) throw new Exception("bare trailing --out must exit 1");
             if (Main(new[] { "registry", frX, "-o" }) != 1) throw new Exception("bare trailing -o must exit 1");
-            // delta = loader precondition (same as drift); missing input ⇒ typed 3
+            // delta is OPTIONAL now (estate-first flow): a delta-less fixture LOADS and the registry runs;
+            // missing producer-evidence is still a typed 3
             var sX = Path.Combine(Path.GetTempPath(), "ua-rg-x-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(frX, sX);
             File.Delete(Path.Combine(sX, "input", "delta.json"));
-            if (Registry.Run(sX).Item2 != 3) throw new Exception("delta-less fixture must exit 3");
+            if (Registry.Run(sX).Item2 != 0) throw new Exception("delta-less fixture must registry normally (estate-first: the registry never reads the delta)");
             File.Delete(Path.Combine(sX, "input", "producer-evidence.v0.json"));
             if (Registry.Run(sX).Item2 != 3) throw new Exception("missing producer-evidence must exit 3");
             Directory.Delete(sX, true);

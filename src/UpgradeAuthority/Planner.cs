@@ -10,6 +10,8 @@ public sealed class Engine
 {
     readonly ProducerEvidence _pe; readonly OwnershipFile _ow; readonly PackageEvidence _px;
     readonly DeltaChange _c; readonly List<LockfileRows> _lockRepos = new(); // SPEC-008: 0..n lockfile repos (one entry per repo)
+    readonly bool _hasDelta; // estate-first flow: registry/drift/audit load delta-less fixtures; only BuildPlan demands one
+    public bool HasDelta => _hasDelta;
     readonly EstateScope? _scope; // SPEC-017: optional estate scope echo
     readonly Dictionary<string, string> _depsFreshness = new(); // SPEC-019 §5.3: repo -> fresh|stale|none|fresh-by-build; absent entry = conservative
     HashSet<string>? _affectedPkgsForReasons; // set in BuildPlan before BuildRepo runs (stale-reason scope)
@@ -78,11 +80,13 @@ public sealed class Engine
 
     static readonly List<(string Repo, string Pkg)> _noDeps = new();
 
-    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos, EstateScope? scope = null, BuildFreshnessFile? buildFreshness = null)
+    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos, EstateScope? scope = null, BuildFreshnessFile? buildFreshness = null, bool hasDelta = true)
     {
-        if (delta.Changes.Count != 1)
+        if (hasDelta && delta.Changes.Count != 1)
             throw new UaException($"rejected: package-delta.v1 must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)");
-        _c = delta.Changes[0]; _pe = pe; _ow = ow; _px = px; _scope = scope;
+        _hasDelta = hasDelta;
+        _c = hasDelta ? delta.Changes[0] : new DeltaChange(); // sentinel when absent — BuildPlan refuses before reading it
+        _pe = pe; _ow = ow; _px = px; _scope = scope;
         _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
         // Mirrors load FIRST (PR6 Codex r1): the producer fold below resolves repos through Norm, so an
         // alias+canonical pair claiming one id must already map to one identity — and the STATIC map must
@@ -243,6 +247,8 @@ public sealed class Engine
 
     public Plan BuildPlan()
     {
+        if (!_hasDelta)
+            throw new UaException("no delta in this fixture — ua plans ONE package upgrade at a time. Add input/delta.json (a 6-line file — see README 'Where the delta comes from'), bootstrap it with scan-estate --delta-package <id> --delta-old <v> --delta-new <v>, or generate candidates from feed truth with drift --emit-deltas <dir>. Registry, drift and audit do not need a delta.");
         var producers = ProducersOf(Target);
         bool externalTarget = _external.Contains(Target);
         bool contradiction = producers.Count >= 2;

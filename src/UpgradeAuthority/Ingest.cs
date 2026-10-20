@@ -183,6 +183,15 @@ public static class Ingest
                 if (!repoKeys.ContainsKey(key)) repoKeys[key] = (rn, manifest);
             }
         }
+        // delta is OPTIONAL at fixture-build time (the estate-first flow: "i don't want a delta file,
+        // i want everything" — registry/drift/audit never read it; only the campaign commands need one,
+        // and they refuse with instructions when it's absent)
+        var deltaFile = deltaPath ?? Path.Combine(scanDirs[0], "delta.json");
+        var hasDelta = File.Exists(deltaFile);
+        Console.Error.WriteLine($"ingest: {allFacts.Count} fact(s) across {repoKeys.Count} repo(s) from {scanDirs.Length} scan dir(s){(hasDelta ? "" : " — no delta (see note)")}");
+        Console.Error.WriteLine("ingest: classifying gaps vs compile-health, joining lockfile rows, writing the fixture...");
+        if (!hasDelta)
+            Console.Error.WriteLine($"note: no delta found at {deltaFile} — building the fixture WITHOUT one (registry/drift/audit are unaffected; plan/report/apply/export require input/delta.json — see README 'Where the delta comes from')");
 
         // ---- consumer facts (PackageReferenced, non-lockfile) ----
         var evidence = new Dictionary<string, List<Fact>>(StringComparer.Ordinal);
@@ -441,12 +450,8 @@ public static class Ingest
         }
 
         // ---- validate delta before writing anything (M1) ----
-        var deltaFile = deltaPath ?? Path.Combine(scanDirs[0], "delta.json");
-        if (!File.Exists(deltaFile))
-        {
-            Console.Error.WriteLine($"error: required delta not found at {deltaFile}");
-            return 3;
-        }
+        // (deltaFile/hasDelta declared at the top of the run — the note for the delta-less
+        // estate-first flow prints there, before the work begins)
 
         // B1(b): PackageProduced facts from the scan become producer entries — the scan joins the
         // sidecar as a producer source. Sidecar entries are preserved verbatim; scan entries are
@@ -666,7 +671,7 @@ public static class Ingest
         var oResult = CopyValidated(ownershipPath ?? FindSidecar(scanDirs, "ownership.v0.json"),
             Path.Combine(inputDir, "ownership.v0.json"), "ownership.v0", ingestGaps);
         if (oResult != 0) return oResult;
-        File.Copy(deltaFile, Path.Combine(inputDir, "delta.json"), true);
+        if (hasDelta) File.Copy(deltaFile, Path.Combine(inputDir, "delta.json"), true);
         if (scopePath is not null) File.Copy(scopePath, Path.Combine(inputDir, "scope.v0.json"), true); // SPEC-017: verbatim copy; the flag's bytes win
 
 
