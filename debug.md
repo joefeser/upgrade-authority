@@ -57,15 +57,28 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   2. The scan facts DO contain them → ua join bug (repoKey derivation,
      package casing, or origin form mismatch between reference facts and
      pin facts).
-- Next diagnostic (operator, on the estate machine): `Select-String` the
-  repo's scan `facts.ndjson` for `CentralPackageVersionDeclared` and one
-  pinned package name; paste the result back. No match → hypothesis 1;
-  match → hypothesis 2.
+- Next diagnostic (operator, on the estate machine — copy/paste,
+  PowerShell 5.1-safe; adjust the scans root if yours differs):
+
+  ```powershell
+  $scan = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*Kafka*' | Select-Object -First 1
+  Select-String "$($scan.FullName)\facts.ndjson" -Pattern 'CentralPackageVersionDeclared','Polly'
+  ```
+
+  Paste the result back. No match → hypothesis 1 (tracemap extraction);
+  match → hypothesis 2 (ua join).
+
 - Impact: the fix should collapse the 3-repo residual warning wall and
   flip those repos' classification; until then, registry unknown counts
   carry a known discount for exactly these 3 repos.
 
 ## Open measurement (not a bug)
 
-- Registry unknown count vs the hand-verified baseline: run
-  `ua registry <fixture>` and record the totals here when available.
+- Registry unknown count vs the hand-verified baseline (copy/paste;
+  add `--out C:\ua-estate\registry.md` to keep a file copy):
+
+  ```powershell
+  dotnet $ua registry C:\ua-estate\fixture
+  ```
+
+  Record the totals here when available.
