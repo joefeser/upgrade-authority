@@ -137,10 +137,15 @@ public static class ScanEstate
                 {
                     var n30 = Path.GetFileName(d);
                     if (Push.Git(d, "fetch origin", out _, out var ferr30) != 0)
-                        lock (fetchFailures) fetchFailures[n30] = ferr30;
-                    else lock (fetched) fetched.Add(n30);
+                        lock (fetchFailures) { fetchFailures[n30] = ferr30; Console.Error.WriteLine($"fetch   {n30} FAILED ({TrimReason(ferr30)})"); }
+                    else lock (fetched) { fetched.Add(n30); Console.Error.WriteLine($"fetch   {n30}"); }
                 })).ToArray();
+            // the fetch phase is the quiet stretch on big estates (130 origins × network + auth) —
+            // say it started, so silence reads as progress, not a hang (found on the real work run)
+            Console.Error.WriteLine($"estate: fetching {fetchUnits.Length} origin(s) (parallel {parallel} — raise with --parallel; this phase prints one 'fetch' line per repo as it completes)");
+            var swFetch = System.Diagnostics.Stopwatch.StartNew();
             System.Threading.Tasks.Parallel.Invoke(new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = parallel }, fetchUnits);
+            Console.Error.WriteLine($"estate: fetch phase done in {swFetch.ElapsedMilliseconds / 1000.0:0.#}s — {fetched.Count} fetched, {fetchFailures.Count} failed; next: freshness per repo, then scan-or-reuse (cached scans reuse instantly; movers rescan for real)");
         }
         var rescuedTo = new Dictionary<string, string>(StringComparer.Ordinal); // Baz r2: rescue provenance rides the single canonical entry
         void WriteManifest()
@@ -349,6 +354,7 @@ public static class ScanEstate
         //      above in name-ordinal order; ONLY the work parallelizes, so outputs are N-independent) ----
         var gate = new object();
         var workerFault = false;
+        int scanStarted = 0; // progress counter for the per-repo "scanning name (i/N)" lines
         var workers = plannedScans.Select(unit => (Action)(() =>
         {
             var (entry, repoPath, headSha, staleWaived, worktreePath, freshness, fingerprint, resolvedTrunk) = unit;
@@ -424,6 +430,7 @@ public static class ScanEstate
                 ClearLeftovers(scansDir, entry.Name);
                 var tmp = Path.Combine(scansDir, "." + entry.Name + ".tmp-" + Guid.NewGuid().ToString("N")[..8]);
                 var request = new ScanRequest { RepoPath = scanTarget, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes, RepoName = entry.Name, IndexDepsJson = indexDepsJson };
+                Console.Error.WriteLine($"scanning {entry.Name} ({System.Threading.Interlocked.Increment(ref scanStarted)}/{plannedScans.Count}){(satellite is not null ? " [worktree]" : "")}"); // tracemap runs take real time — a start line per repo keeps an estate-sized run readable
                 var rc = scanner is not null ? scanner(request) : DefaultRunner(request, tracemapDll!);
                 if (satellite is not null)
                 {
