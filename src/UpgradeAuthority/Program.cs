@@ -1750,6 +1750,22 @@ public static class Program
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-remote-fallback: {ex.Message}"); }
         finally { ForceDelete(seRoot1c); if (Directory.Exists(seOut1c)) ForceDelete(seOut1c); if (Directory.Exists(seOut1c + "-2")) ForceDelete(seOut1c + "-2"); }
 
+        // 1d. ownership preflight: missing ownership + no --self must refuse BEFORE any scanning —
+        // a long run may never finish its work and stop at the last step (live 2026-10-21)
+        var seRoot1d = Path.Combine(Path.GetTempPath(), "ua-se1d-" + Guid.NewGuid().ToString("N")[..8]);
+        var seOut1d = Path.Combine(Path.GetTempPath(), "ua-se1d-out-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(seRoot1d);
+            EstateRepo(seRoot1d, "alpha");
+            var rc1d = ScanEstate.Run(Path.Combine(seRoot1d, "repos"), seOut1d, null, null, null, false, Array.Empty<string>(), "P", "1", "2", StubScanner);
+            if (rc1d == 0) throw new Exception("missing ownership + no --self must refuse");
+            if (Directory.Exists(Path.Combine(seOut1d, "scans"))) throw new Exception("preflight must fire BEFORE any scanning (no scans dir may exist)");
+            Console.WriteLine("ok   scan-estate-ownership-preflight (bootstrap precondition checked before any work)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-ownership-preflight: {ex.Message}"); }
+        finally { ForceDelete(seRoot1d); if (Directory.Exists(seOut1d)) ForceDelete(seOut1d); }
+
         // 2. incremental: zero rescans when nothing changed; exactly the bumped repo rescans
         try
         {

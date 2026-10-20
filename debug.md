@@ -29,6 +29,11 @@ dotnet $ua scan-estate --repos-root <repos-root> `
   --scope <repos-root>\repos.txt `
   --out C:\ua-estate --parallel 8 --worktree --self <teamId>
 #    (a rerun after this error costs nothing: all completed scans reuse from cache instantly)
+#    NOTE (shipped 2026-10-21): the ownership precondition is now checked UP FRONT — a
+#    missing ownership + no --self refuses BEFORE any scanning instead of after 124 scans.
+#    An EXISTING ownership.v0.json (pre---scope is fine) needs no --self: scan-estate
+#    validates it and UPDATES it to the scanned set (new-in-scope repos join the file's
+#    self team; entries for trimmed repos linger inertly).
 
 # 4) VINTAGE CENSUS before ingest — every scan must carry the CURRENT dll hash.
 #    (A one-repo spot check only proves the dll; a repo that happened to be in the

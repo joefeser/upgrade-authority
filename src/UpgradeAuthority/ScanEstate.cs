@@ -117,6 +117,14 @@ public static class ScanEstate
         if (tracemapDll is not null)
             dllHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(tracemapDll))).ToLowerInvariant();
 
+        // PREFLIGHT (live 2026-10-21: a full 124-repo worktree pass finished its entire scan phase and
+        // only THEN refused here) — bootstrap preconditions are checked BEFORE any fetch/scan, so a long
+        // run can never do all of its work and stop at the last step. Reuse path is unaffected: an
+        // existing ownership.v0.json needs no --self (scan-estate validates + updates it in place).
+        var ownershipPathPre = Path.Combine(Path.GetFullPath(outDir), "ownership.v0.json");
+        if (!File.Exists(ownershipPathPre) && selfTeam is null)
+        { Console.Error.WriteLine("error: --self <teamId> is required to bootstrap ownership.v0.json (teams are never invented) — checked up front, before any scanning; pass --self once, or place an existing ownership.v0.json in the out dir"); return 1; }
+
         var scansDir = Path.Combine(Path.GetFullPath(outDir), "scans");
         Directory.CreateDirectory(scansDir);
         // ResolvedTrunk is per-repo in principle; the cache records the run's resolution basis per repo
