@@ -124,6 +124,32 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   the public-feed externals; (b) proper fix in tracemap — props-aware
   produced extraction (merge nearest Directory.Build.props).
 
+## 2026-10-21 — PRODUCER SHAPE CONFIRMED: SDK defaults + pack metadata, declared nowhere
+
+- Diagnostic (live): the library repo's csproj carries Authors/Company/
+  Product/Description/PackageTags/Copyright — pack metadata ONLY — and NO
+  PackageId, NO AssemblyName, NO IsPackable; Directory.Build.props does
+  not exist in that repo. Package identity rides SDK defaults: packable
+  by default, id defaults to AssemblyName, which defaults to the csproj
+  FILE NAME.
+- The extractor's "never invent from filenames" rule blocks exactly the
+  MSBuild default contract. Fix tiers (tracemap):
+  1. explicit PackageId (today's behavior),
+  2. AssemblyName with $(MSBuildProjectName) interpolation evaluated
+     (file-derived, deterministic),
+  3. SDK-style + pack-metadata-present and nothing else -> producer with
+     provenance "derived-default" — a DISTINCT label, never presented as
+     declared,
+  4. refuse as today (legacy non-SDK / zero signals),
+  5. ci-defined cross-check: workflows containing the pack step are the
+     authoritative confirmation.
+- Naming reality (operator spec): repo != sln != folder != csproj !=
+  assembly != namespace; app projects interpolate AssemblyName from
+  $(MSBuildProjectName); in-repo ProjectReference consumption is NOT
+  package consumption (call-graph territory, correctly out of ua's
+  boundary). Test estate (ua-xyz) must encode one repo per tier row
+  plus the edge zoo (archived, ssh twin, dirty, CPM-in-props).
+
 ## 2026-10-21 — THE CLEAN PASS (saga complete)
 
 - Final run: `2 scanned, 123 reused, 0 SKIPPED, 14 out-of-scope` — both
