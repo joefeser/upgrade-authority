@@ -421,7 +421,11 @@ public static class ScanEstate
             var (entry, repoPath, headSha, staleWaived, worktreePath, freshness, fingerprint, resolvedTrunk) = unit;
             var scanDir = Path.Combine(scansDir, entry.Name);
             var wtRoot = Path.GetDirectoryName(worktreePath ?? ""); // namespace dir when in worktree mode
-            var satellite = worktreePath is not null ? Path.Combine(wtRoot ?? "", $"{entry.Name}-{Guid.NewGuid().ToString("N")[..8]}") : null;
+            // hex-only satellite leaf (2026-10-21 live finding: "filename too long" — <repo-name>-<hex8>
+            // added ~50 chars to every path inside the checkout and pushed deep repos past Windows
+            // MAX_PATH during materialization). Matches SPEC-019 §3.2's "leaf is a ua hex name, never
+            // an identity"; the canonical name rides the manifest/scan records, not the folder.
+            var satellite = worktreePath is not null ? Path.Combine(wtRoot ?? "", Guid.NewGuid().ToString("N")[..8]) : null;
             try
             {
                 if (worktreePath is not null)
@@ -948,6 +952,15 @@ public static class ScanEstate
     }
 
     // crash-leftover sweep: exact-pattern children for THIS repo under <root>/ua/ only — never beyond the namespace (§3.2)
+    // satellite leaves: hex-only since 2026-10-21 (path budget), but the sweep still recognizes the
+    // older <name>-<hex8> shape so leftovers from earlier runs are cleaned too. Ownership is ALWAYS
+    // verified against `git worktree list` — the pattern is a filter, never the authority.
+    static bool IsSatelliteLeaf(string leaf, string name) =>
+        (leaf.Length == 8 && leaf.All(Uri.IsHexDigit))
+        || (leaf.StartsWith(name + "-", StringComparison.Ordinal)
+            && leaf.Length == name.Length + 1 + 8
+            && leaf[(name.Length + 1)..].All(Uri.IsHexDigit));
+
     static void SweepWorktreeLeftovers(string repoPath, string uaRoot, string name)
     {
         if (!Directory.Exists(uaRoot)) return;
@@ -965,10 +978,8 @@ public static class ScanEstate
         foreach (var d in Directory.EnumerateDirectories(uaRoot).Take(sweepBound + 1)) // +1 lookahead: the boundary entry IS processed; the warning fires only on overflow (Baz r9)
         {
             if (++swept > sweepBound) { Console.Error.WriteLine($"warning: worktree cleanup under {uaRoot} hit its enumeration bound — sweep incomplete this run"); break; }
-            if (!(Path.GetFileName(d).StartsWith(name + "-", StringComparison.Ordinal)
-                && Path.GetFileName(d).Length == name.Length + 1 + 8
-                && Path.GetFileName(d)[(name.Length + 1)..].All(Uri.IsHexDigit)
-                && owned.Contains(Path.GetFullPath(d)))) continue;
+            if (!(owned.Contains(Path.GetFullPath(d))
+                && (IsSatelliteLeaf(Path.GetFileName(d), name)))) continue;
             GitT(repoPath, "worktree remove --force \"" + d + "\"", out _, out _);
             GitT(repoPath, "worktree prune", out _, out _);
             if (Directory.Exists(d)) TryDeleteDir(d); // dir survived an admin-less removal
