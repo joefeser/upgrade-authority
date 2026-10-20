@@ -27,9 +27,14 @@ dotnet $ua scan-estate --repos-root <repos-root> `
   --scope <repos-root>\repos.txt `
   --out C:\ua-estate --parallel 8 --worktree
 
-# 4) vintage check BEFORE ingest — pin facts must exist (count > 0)
-$scan = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*Kafka*' | Select-Object -First 1
-Select-String "$($scan.FullName)\facts.ndjson" -Pattern 'CentralPackageVersionDeclared' | Measure-Object | ForEach-Object Count
+# 4) VINTAGE CENSUS before ingest — every scan must carry the CURRENT dll hash.
+#    (A one-repo spot check only proves the dll; a repo that happened to be in the
+#    last partial run passes while the rest of the estate stays stale.)
+$dll = (Get-FileHash C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll -Algorithm SHA256).Hash
+Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
+  $m = Get-Content "$($_.FullName)\scan-estate.json" -Raw | ConvertFrom-Json
+  if ($m.tracemapSha256 -ne $dll) { $_.Name }
+} | Measure-Object | ForEach-Object Count
 
 # 5) ingest + registry (paste the totals + unknown count back)
 dotnet $ua ingest --scans-root C:\ua-estate\scans `
@@ -38,7 +43,10 @@ dotnet $ua ingest --scans-root C:\ua-estate\scans `
 dotnet $ua registry C:\ua-estate\fixture
 ```
 
-Step 4 returning 0 = the dll is still stale — stop and report; do not ingest.
+Step 4 prints the count of STALE-evidence repos: 0 = the whole estate is
+one vintage, proceed to step 5. Anything > 0 = rerun step 3 (the worktree
+pass rescans them) — do not ingest a mixed-vintage estate.
+For a stale-repo NAME list, drop the `| Measure-Object | ForEach-Object Count`.
 Expected in step 3: narrated fetch (no hangs — git kill-timer), worktree
 scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
 
