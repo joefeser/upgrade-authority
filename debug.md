@@ -32,41 +32,62 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
 - Context: pins correlate only within the same repo (each
   Directory.Packages.props governs its own tree — NuGet semantics).
 
-## 2026-10-21 — pins EXIST but warnings claim "no central pin" (OPEN — evidence-pipeline bug)
+## 2026-10-21 — pins EXIST but warnings claim "no central pin" (ROOT CAUSE FOUND — stale tracemap dll; fix staged below)
 
 - Symptom: residual warnings say "no central pin for it" for packages
   (Polly, Confluent.Kafka, StyleCop.Analyzers, Microsoft.Extensions.*,
   internal shared packages) in the 3 shared repos.
 - Evidence (local photo OCR of one repo's `Directory.Packages.props`):
-  - The file EXISTS at the repo root; CPM is enabled.
+  - The file EXISTS at the repo root; CPM is enabled
+    (`ManagePackageVersionsCentrally` declared inside the props file).
   - The warned packages ARE pinned there (Polly 8.6.6, Confluent.Kafka
-    2.14.0, StyleCop.Analyzers 1.2.0-beta.556, MsExt
-    Configuration/DI/Hosting 10.0.5, plus internal shared packages).
-  - Notable shape: `ManagePackageVersionsCentrally` is declared INSIDE
-    `Directory.Packages.props` itself (a valid NuGet pattern; many repos
-    put it in Directory.Build.props instead).
-- ua contract: pin evidence arrives as facts of type
-  `CentralPackageVersionDeclared` (Ingest.cs, CPM section), joined on
-  repo + package. Other repos' pins demonstrably flow (unused-pin notes +
-  the flood collapse prove the general path works).
-- Hypotheses, as a decision table:
-  1. The repo's scan facts contain NO `CentralPackageVersionDeclared`
-     rows → tracemap extraction gap. Top suspect: the extractor conditions
-     on where the CPM flag lives (e.g. expects Directory.Build.props) and
-     misses the flag-inside-Directory.Packages.props shape.
-  2. The scan facts DO contain them → ua join bug (repoKey derivation,
-     package casing, or origin form mismatch between reference facts and
-     pin facts).
-- Next diagnostic (operator, on the estate machine — copy/paste,
-  PowerShell 5.1-safe; adjust the scans root if yours differs):
+    2.14.0, StyleCop.Analyzers 1.2.0-beta.556, MsExt Configuration/DI/
+    Hosting 10.0.5, plus internal shared packages).
+- Diagnostic result (operator ran the Select-String below): the repo's
+  scan facts contain MANY "Polly" rows and ZERO
+  `CentralPackageVersionDeclared` rows.
+- Root cause: tracemap's CPM pin extraction landed 2026-10-03
+  (commit 3d9c87498, "index central package management pins and
+  VersionOverride"). Scans made by an older dll emit no pin facts for ANY
+  repo. The estate's scans folder is mixed-vintage: repos scanned or
+  refreshed after that date carry pins (the unused-pin notes and the
+  flood collapse prove it); the 3 shared repos' scan entries predate the
+  feature. The current extractor parses every MSBuild props file in the
+  inventory unconditionally (no CPM-flag gate), so a fresh scan emits
+  these pins. Not a ua bug; not a repo-shape gap.
+- Fix (operator, estate machine — substitute the 3 repo folder names
+  exactly as they appear in the warnings, and your repos root):
 
   ```powershell
+  # 0) refresh the evidence provider
+  cd C:\tracemap
+  git pull
+  dotnet build -c Release
+
+  # 1) rescan ONLY the 3 affected repos into the existing estate out dir
+  #    (plain-list scope file; one repo folder name per line)
+  @'
+  <repo-folder-1>
+  <repo-folder-2>
+  <repo-folder-3>
+  '@ | Set-Content C:\ua-estate\rescan-scope.txt -Encoding ASCII
+
+  dotnet $ua scan-estate --repos-root <repos-root> `
+    --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
+    --out C:\ua-estate --scope C:\ua-estate\rescan-scope.txt
+
+  # 2) confirm pin facts now exist
   $scan = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*Kafka*' | Select-Object -First 1
-  Select-String "$($scan.FullName)\facts.ndjson" -Pattern 'CentralPackageVersionDeclared','Polly'
+  Select-String "$($scan.FullName)\facts.ndjson" -Pattern 'CentralPackageVersionDeclared' | Measure-Object | ForEach-Object Count
+
+  # 3) re-run the ingest exactly as before (up-arrow history is fine),
+  #    then the registry measurement below
   ```
 
-  Paste the result back. No match → hypothesis 1 (tracemap extraction);
-  match → hypothesis 2 (ua join).
+  Expected: step 2 reports > 0 and the 3-repo warning wall collapses on
+  re-ingest. If step 2 still reports 0 after a fresh scan, the extractor
+  investigation reopens (inventory classification of the props file) —
+  record it here and stop.
 
 - Impact: the fix should collapse the 3-repo residual warning wall and
   flip those repos' classification; until then, registry unknown counts
