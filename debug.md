@@ -140,6 +140,37 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   a valid shortcut if a number is needed before the full pass fits the
   calendar.
 
+## 2026-10-21 — long silent stretch after the fetch summary (observed live; alive-vs-hung check)
+
+- Observed: after the "estate: fetch phase done" line, 10+ minutes of
+  blinking cursor, no output, no folders in the scans dir. EXPECTED on
+  big estates: the next phase is freshness-per-repo (a local
+  `git status`/rev-parse on every checkout — no network, but under
+  real-time AV that is seconds per repo, so ~130 repos is a legitimate
+  6–15 minute silent stretch on EVERY build). Scan folders appear only
+  as each repo's scan completes and swaps in — an empty scans dir until
+  the first "scanning <repo> (1/N)" line is normal.
+- Alive-vs-hung check (run twice, 30s apart — CPU seconds rising =
+  working; frozen = hung):
+
+  ```powershell
+  Get-Process dotnet,git -ErrorAction SilentlyContinue | Select-Object Name,Id,@{n='CPUsec';e={[int]$_.CPU}}
+  Start-Sleep 30
+  Get-Process dotnet,git -ErrorAction SilentlyContinue | Select-Object Name,Id,@{n='CPUsec';e={[int]$_.CPU}}
+  ```
+
+- If one `git` PID sits with frozen CPU: prime suspect is a hidden git
+  CREDENTIAL PROMPT (Git Credential Manager window behind the terminal
+  or on another monitor — the run waits forever). Check the taskbar
+  before killing anything.
+- Ctrl+C is safe at any point (per-repo atomic swaps; completed repos
+  stay cached; a re-run continues). Fallback strategy that fits a day:
+  Ctrl+C → run the 3-repo scoped rescan higher up (about a minute) →
+  confirm pin facts → re-ingest → registry number; schedule the full
+  harmonization pass for a window when you can watch it.
+- Backlog linkage: this stretch is silent spot (c) in the activity-output
+  candidate — banner + per-repo counter + elapsed for EVERY long phase.
+
 ## Open measurement (not a bug)
 
 - Registry unknown count vs the hand-verified baseline (copy/paste;
