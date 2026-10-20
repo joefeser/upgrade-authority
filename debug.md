@@ -181,6 +181,14 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
      `.scans.tmp-*`), the hung run moved the cache aside — restore it
      by moving that sibling back to `scans` before anything else, and
      record the sibling name here.
+- Blame boundary (how to tell ua-side vs tracemap-side without guessing):
+  the "scanning <repo> (i/N)" line prints immediately BEFORE each tracemap
+  subprocess launch. NO scanning lines = tracemap never started = the hang
+  is in ua's freshness stretch or the environment (blocked git credential
+  prompt). Hang AFTER scanning lines = tracemap side — and with a freshly
+  built dll carrying the past week of tracemap promotions, the bisect is:
+  build tracemap at a known-good older tag and rerun the same 3-repo
+  scope; one variable, about a minute.
 - Ctrl+C is safe at any point (per-repo atomic swaps; completed repos
   stay cached; a re-run continues). Fallback strategy that fits a day:
   Ctrl+C → run the 3-repo scoped rescan higher up (about a minute) →
