@@ -95,6 +95,23 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
 - Post-fix state: both repos scan under worktree mode; ownership update
   reports honestly (123 scanned / 131 total / absent assignments named).
 
+## 2026-10-21 — THE CLEAN PASS (saga complete)
+
+- Final run: `2 scanned, 123 reused, 0 SKIPPED, 14 out-of-scope` — both
+  MAX_PATH repos scanned under worktree mode with longpaths enabled;
+  chain completed delta-less to a clean prompt.
+- `ingested: 4759 consumer facts, 0 lockfile rows, 125 repos`; ownership
+  updated (125 scanned / 131 total, absent assignments named).
+- The original residual wall is GONE: the 3 shared repos that started
+  this saga no longer warn — their pins correlated once their scans were
+  fresh-vintage. Full-estate verification of the CPM fix.
+- Remaining constraint residuals: exactly 3 facts in 2 repos (2x one
+  OnPrem repo, 1x a PTT repo referencing AWSSDK.DynamoDBv2 — notable
+  because that pin previously reported UNUSED in the stale-scan era;
+  worth one look next session, possibly a pin/reference shape nuance).
+- Owed next: `ua registry` — the unknown count vs the hand-verified
+  baseline.
+
 ## 2026-10-19 — swap-retry warnings during a large real ingest (RESOLVED, as designed)
 
 - Symptom: three IOException retry warnings during the fixture swap on a
