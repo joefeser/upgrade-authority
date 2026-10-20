@@ -426,17 +426,19 @@ public static class ScanEstate
             {
                 if (worktreePath is not null)
                 {
-                    // bounded retry (live 2026-10-21, a machine running FOUR real-time scanners: 2 of 126
-                    // worktree materializations failed transiently — thousands of fresh files is prime
-                    // scanner-bait, the same race class as the swap IOException armor)
+                    // bounded retry (live 2026-10-21, a machine running FOUR real-time scanners: worktree
+                    // materializations failed with "fatal: Could not reset index file to revision 'HEAD'"
+                    // — index locked while scanners comb fresh files; 2 short attempts lost the race on
+                    // big repos, so the budget matches the FsSwap armor: 4 attempts, 0.5/1/2/4s)
                     var wtAttempts = 0; string wtErr = "";
-                    while (wtAttempts < 3)
+                    var wtDelays = new[] { 500, 1000, 2000, 4000 };
+                    while (wtAttempts < wtDelays.Length)
                     {
                         if (GitT(repoPath, $"worktree add --detach \"{satellite}\" {resolvedTrunk}", out _, out wtErr) == 0) break;
                         wtAttempts++;
-                        if (wtAttempts < 3) { Console.Error.WriteLine($"warning: {entry.Name}: worktree add blocked ({TrimReason(wtErr)}) — retry {wtAttempts}/2 (scanners commonly hold fresh files)"); System.Threading.Thread.Sleep(500 * wtAttempts); }
+                        if (wtAttempts < wtDelays.Length) { Console.Error.WriteLine($"warning: {entry.Name}: worktree add blocked ({TrimReason(wtErr)}) — retrying in {wtDelays[wtAttempts]}ms (scanners commonly hold fresh index files)"); System.Threading.Thread.Sleep(wtDelays[wtAttempts]); }
                     }
-                    if (wtAttempts >= 3)
+                    if (wtAttempts >= wtDelays.Length)
                     {
                         // the failed satellite dir may be half-materialized — prune so a rerun starts clean
                         FsSwap.TryDeleteDirQuiet(satellite);
