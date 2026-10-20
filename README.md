@@ -146,6 +146,36 @@ out-of-scope names when you used exclude-mode) — so the filter travels with th
 of living in your head. The two modes cannot be combined, and a list or `include: []` that names
 nothing is rejected — a scope that names nothing is a mistake, not an empty estate.
 
+### Iterating without re-scanning (the cheap test loop)
+
+`scan-estate` re-verifies freshness on every run — it fetches every origin to prove each repo
+is still at trunk tip before reusing anything. That is the right behavior for a *real* estate
+run (stale evidence is wrong twice over), and the wrong cost for *testing* against scans you
+already have. Don't pay it twice: the whole chain after scanning reads one folder — the fixture —
+and re-runs in seconds, offline, as many times as you like:
+
+```powershell
+# ONE-TIME: turn your existing scans into the fixture (seconds; no network):
+#   copy your sidecars next to the scans folder (ownership.v0.json, producer-evidence.v0.json, delta.json)
+dotnet $ua ingest --scans-root C:\ua-estate\scans `
+  --producer C:\ua-estate\producer-evidence.v0.json `
+  --ownership C:\ua-estate\ownership.v0.json `
+  --delta C:\ua-estate\delta.json `
+  --out C:\ua-estate\fixture
+
+# THEN iterate freely — every command below reads only the fixture (instant, re-runnable):
+dotnet $ua plan C:\ua-estate\fixture
+dotnet $ua report C:\ua-estate\fixture
+dotnet $ua registry C:\ua-estate\fixture
+dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json
+dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json
+dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign
+```
+
+Changed a sidecar (edited ownership teams, declared more externals, swapped the delta)? Re-run
+the one `ingest` — still seconds. Re-scan only ever happens when you run `scan-estate` again,
+and then only for repos that actually moved. The fetch phase can be widened with `--parallel <N>`.
+
 ## The commands
 
 | Command | What it does |
