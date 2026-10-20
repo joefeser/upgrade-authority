@@ -62,7 +62,7 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   # 0) refresh the evidence provider
   cd C:\tracemap
   git pull
-  dotnet build -c Release
+  dotnet build src/dotnet/TraceMap.sln -c Release
 
   # 1) rescan ONLY the 3 affected repos into the existing estate out dir
   #    (plain-list scope file; one repo folder name per line)
@@ -73,7 +73,7 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   '@ | Set-Content C:\ua-estate\rescan-scope.txt -Encoding ASCII
 
   dotnet $ua scan-estate --repos-root <repos-root> `
-    --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
+    --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
     --out C:\ua-estate --scope C:\ua-estate\rescan-scope.txt
 
   # 2) confirm pin facts now exist
@@ -119,12 +119,12 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   ```powershell
   cd C:\tracemap
   git pull
-  dotnet build -c Release
+  dotnet build src/dotnet/TraceMap.sln -c Release
   # confirm the artifact is FRESH — pull without rebuild is the exact trap above
-  Get-Item C:\tracemap\bin\Release\net10.0\tracemap.dll | Select-Object LastWriteTime
+  Get-Item C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll | Select-Object LastWriteTime
 
   dotnet $ua scan-estate --repos-root <repos-root> `
-    --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
+    --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
     --scope <repos-root>\repos.txt `
     --out C:\ua-estate --parallel 8
   ```
@@ -196,6 +196,43 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   harmonization pass for a window when you can watch it.
 - Backlog linkage: this stretch is silent spot (c) in the activity-output
   candidate — banner + per-repo counter + elapsed for EVERY long phase.
+
+## 2026-10-21 — LOCAL E2E PASS: the whole chain verified off the estate machine
+
+- Setup: two tiny local git repos with LOCAL bare origins (fetch runs
+  offline against a real remote); one repo reproduces the estate's exact
+  CPM shape — `ManagePackageVersionsCentrally` declared INSIDE
+  `Directory.Packages.props`, PackageVersion pins (Polly, Confluent.Kafka,
+  StyleCop.Analyzers), versionless PackageReferences in the csproj.
+- Run: current tracemap (post-10-03 CPM extraction, incl. the past week
+  of promotions) + this branch's ua build, `scan-estate --scope` over
+  both repos.
+- Results:
+  - Fetch banner, per-repo fetch lines, elapsed summary, freshness
+    instant, `scanning <repo> (i/N)` lines, both scans installed —
+    the hang did NOT reproduce locally (environmental on the estate
+    machine: still pointing at a blocked git/credential).
+  - `CentralPackageVersionDeclared` facts emitted for every pin
+    (manifestKind Directory.Packages.props, extractor project-file/0.3.0)
+    alongside versionless PackageReferenced facts.
+  - Ingest over those scans: ZERO "constraint not evidenced" warnings —
+    the versionless refs correlated with their pins; the unreferenced
+    StyleCop pin correctly reported as unused (honest, not a gap).
+- Conclusion: a rescan of the 3 shared repos with a freshly built dll
+  WILL collapse the warning wall. No ua fix needed; no tracemap
+  regression from the past week.
+- Build-command correction (applies to BOTH rescan blocks above): the
+  tracked solution is `src/dotnet/TraceMap.sln` — a fresh clone has NO
+  root solution, so bare `dotnet build -c Release` at the clone root
+  fails (MSB1003, reproduced). Correct dll path:
+  `C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll`.
+  (The README's root-build instruction needs the same fix — logged.)
+- Gap found (does NOT affect the rescan into an existing out dir):
+  scan-estate into a FRESH out dir still requires the
+  `--delta-package/--delta-old/--delta-new` trio to template delta.json
+  and exits 1 at bootstrap AFTER the scans are installed (scans and
+  snapshot remain usable via --scans-root). Estate-first gap: fresh-out
+  bootstrap should be delta-less like ingest. Logged as a candidate.
 
 ## Open measurement (not a bug)
 
