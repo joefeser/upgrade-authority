@@ -103,17 +103,29 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   movers-only cache refresh on later runs, the scans folder now mixes
   vintages: some repos' scans carry pin facts, quiet repos (the 3 shared
   ones) kept their pre-CPM entries.
-- Should you rescan everything? YES — one full pass harmonizes every
-  repo's evidence at one vintage (also picks up the 10-10 CI-producer
-  indexing and 10-18 regex hardening). The current cache rule keys reuse
-  on HEAD + dll hash + flags, so after this pass stale-vintage mixing
-  cannot silently recur: entries not matching the new dll are rescanned,
-  matching ones reused.
+- SHOULD YOU RESCAN EVERYTHING? YES — and in WORKTREE MODE (see the
+  corrected command). What happened to the first full pass (37 of 126
+  scanned, the rest skipped): in-place mode requires every checkout's
+  HEAD to equal the freshly-fetched trunk tip AND a clean working tree.
+  An actively-developed estate fails both at scale — today's fetch moved
+  the tips (every not-yet-rebased checkout reads "behind tip" → skip),
+  and earlier in-place scans left obj/ output inside checkouts (any repo
+  not ignoring bin/obj reads "working tree not clean" → skip forever).
+  `--worktree` materializes an isolated worktree per repo AT the fetched
+  tip, so behind-ness and checkout dirt are both irrelevant. That is the
+  mode an estate rescan should always use.
+- The run now also self-reports coverage honestly (shipped with this
+  branch): skip reasons are tallied ("skip reasons: 85x working tree not
+  clean; 4x fetch failed") and a poor-coverage run prints
+  "warning: only N/M repos have fresh evidence — the fixture is
+  INCOMPLETE" instead of reading like success.
 - Cost expectations: this is the "real run" price — the fetch phase
-  (network, per-repo) plus a tracemap scan for every stale entry (likely
-  most of the estate). It narrates progress per repo; Ctrl+C is safe
-  mid-run and a re-run continues from the cache. `--parallel 8` speeds
-  the fetch phase.
+  (network, per-repo) plus a tracemap scan for every stale entry. It
+  narrates progress per repo; Ctrl+C is safe mid-run and a re-run
+  continues from the cache. `--parallel 8` speeds the fetch phase.
+  Worktrees land under `C:\ua-estate\.worktrees\ua\` (override with
+  --worktree-root). Note: switching to worktree mode changes the cache
+  key (scanMode), so the pass rescans the estate — which is the point.
 - Command (estate machine; substitute your repos root):
 
   ```powershell
@@ -126,7 +138,7 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   dotnet $ua scan-estate --repos-root <repos-root> `
     --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
     --scope <repos-root>\repos.txt `
-    --out C:\ua-estate --parallel 8
+    --out C:\ua-estate --parallel 8 --worktree
   ```
 
   `--scope` matters: without it the run scans EVERYTHING under the repos

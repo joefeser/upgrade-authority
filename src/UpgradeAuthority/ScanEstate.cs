@@ -702,7 +702,18 @@ public static class ScanEstate
         var nIgn2 = entries.Count(e => e.Status == "ignored");
         var tail = hasDelta ? Path.Combine(Path.GetFullPath(outDir), "report.md") : fixtureDir;
         Console.Error.WriteLine($"estate: {nScan} scanned, {nReuse} reused, {nSkip} skipped, {nOos2} out-of-scope, {nIgn2} ignored → {tail}");
-        if (nSkip > 0) Console.Error.WriteLine($"note: skipped repos are listed in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
+        if (nSkip > 0)
+        {
+            // a skip tally, not a list: 89 scattered one-liners hide the shape that "37/126 scanned" makes obvious
+            // (live 2026-10-21: an active estate fetched fresh tips, in-place mode skipped every behind-tip/dirty checkout)
+            var reasons = entries.Where(e => e.Status == "skipped")
+                .GroupBy(e => (e.Reason ?? "unknown").Split('(')[0].Trim())
+                .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal);
+            Console.Error.WriteLine("skip reasons: " + string.Join("; ", reasons.Select(g => $"{g.Count()}x {g.Key}")));
+            Console.Error.WriteLine($"note: skipped repos are listed in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
+        }
+        if (nScan + nReuse < nSkip + nOos2 + nIgn2) // most of the estate did NOT make it in — an incomplete fixture must never read as success
+            Console.Error.WriteLine($"warning: only {nScan + nReuse}/{entries.Count} repos have fresh evidence — the fixture is INCOMPLETE; fix the skip reasons above (behind-tip or dirty checkouts rescan cleanly under --worktree)");
         return 0;
     }
 
