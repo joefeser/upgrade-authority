@@ -1850,6 +1850,55 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-scope: {ex.Message}"); }
 
+        // 7c. scope as a PLAIN LIST (the onboarding pre-work carrier): one name per line, '#' comments,
+        // blank lines, CRLF tolerated; means include-mode; the snapshot + fixture copy stay canonical
+        // estate-scope.v0 JSON no matter which form was authored; an effectively-empty list is a typed error
+        try
+        {
+            var root7c = Path.Combine(Path.GetTempPath(), "ua-se7c-" + Guid.NewGuid().ToString("N")[..8]);
+            var out7c = Path.Combine(Path.GetTempPath(), "ua-se7c-out-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(root7c);
+            EstateRepo(root7c, "alpha");
+            EstateRepo(root7c, "beta");
+            EstateRepo(root7c, "gamma");
+            var listPath = Path.Combine(Path.GetTempPath(), "ua-se7c-list-" + Guid.NewGuid().ToString("N")[..8] + ".txt");
+            File.WriteAllText(listPath, "# the estate I actually care about\r\nalpha\r\n\r\nbeta\r\n# gamma deliberately left out\r\n");
+            if (ScanEstate.Run(Path.Combine(root7c, "repos"), out7c, null, listPath, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner) != 0)
+                throw new Exception("list-scope run failed");
+            using (var m7c = SEManifest(out7c))
+            {
+                var st7c = m7c.RootElement.GetProperty("repos").EnumerateArray().ToDictionary(e => e.GetProperty("name").GetString(), e => e.GetProperty("status").GetString());
+                if (st7c["alpha"] != "scanned" || st7c["beta"] != "scanned" || st7c["gamma"] != "out-of-scope") throw new Exception($"list-scope statuses: {string.Join(",", st7c.Select(kv => kv.Key + "=" + kv.Value))}");
+            }
+            var rep7c = File.ReadAllText(Path.Combine(out7c, "report.md"));
+            if (!rep7c.Contains("- Scope: include-mode — 2 repos in scope by config")) throw new Exception("list-scope report statement missing");
+            if (rep7c.Contains("out of scope by config: gamma")) throw new Exception("a pure include list has no exclude entries to echo — unlisted repos live in the manifest, not the plan");
+            // the fixture copy is canonical JSON (schema'd bytes downstream), and the snapshot equals it
+            var fixtureScope7c = File.ReadAllText(Path.Combine(out7c, "fixture", "input", "scope.v0.json"));
+            var (parsed7c, parseErr7c) = Scope.ParseAndValidate(fixtureScope7c, "scope.v0.json");
+            if (parseErr7c is not null || parsed7c?.EffectiveInclude is not { Count: 2 } || !parsed7c.EffectiveInclude.Contains("alpha") || !parsed7c.EffectiveInclude.Contains("beta"))
+                throw new Exception($"fixture scope must be canonical include-JSON for the list: {parseErr7c}");
+            if (fixtureScope7c != File.ReadAllText(Path.Combine(out7c, "scope.snapshot.json"))) throw new Exception("scope snapshot differs from the fixture copy");
+            // a name with spaces survives verbatim; duplicates collapse with the same warning as JSON; empty = typed error
+            var spPath = listPath + ".sp";
+            File.WriteAllText(spPath, "repo with spaces\r\nrepo with spaces\r\n");
+            var (spCanon, spErr) = Scope.ReadCanonicalText(spPath);
+            if (spErr is not null) throw new Exception("space-name list must load");
+            var (spScope, spVErr) = Scope.ParseAndValidate(spCanon, "sp.txt");
+            if (spVErr is not null || spScope!.EffectiveInclude is not { Count: 1 } || spScope.EffectiveInclude[0] != "repo with spaces") throw new Exception("space-name + duplicate list handling wrong");
+            File.WriteAllText(spPath, "# nothing but comments\r\n\r\n");
+            var (_, emptyErr) = Scope.ReadCanonicalText(spPath);
+            if (emptyErr is null || !emptyErr.Contains("names nothing")) throw new Exception("effectively-empty list must be a typed error");
+            var savedErr7c = Console.Error; var cap7c = new System.IO.StringWriter();
+            Console.SetError(cap7c);
+            var rcEmpty = ScanEstate.Run(Path.Combine(root7c, "repos"), out7c, null, spPath, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner);
+            Console.SetError(savedErr7c);
+            if (rcEmpty != 1 || !cap7c.ToString().Contains("names nothing")) throw new Exception($"empty list must refuse before scanning (rc {rcEmpty})");
+            Console.WriteLine("ok   scan-estate-scope-list (plain-list carrier: comments/CRLF/spaces; canonical-JSON snapshot; empty = typed error)"); pass++;
+            ForceDelete(root7c); ForceDelete(out7c); File.Delete(listPath); File.Delete(spPath);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-scope-list: {ex.Message}"); }
+
         // 8. alternates: two checkouts of one origin -> the later is visibly skipped; no-origin always skipped
         try
         {

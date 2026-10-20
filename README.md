@@ -104,9 +104,47 @@ trunk tip first — a behind checkout makes evidence stale twice over), `--index
 (closure evidence from build-output `deps.json` — converts "unknown" repos into answers; `--build`
 compiles each checkout, which restores from your configured NuGet feeds and **executes the repo's
 build scripts with your privileges — only point it at repos you trust**), `--worktree` (scan
-isolated worktrees, never touching your checkout), `--scope <file>` (declare repos out of scope,
-visible in the report), `--parallel <N>` (parallel fetches). Repos must be clean and at their
-origin trunk tip, or they are visibly skipped — that precondition is the point.
+isolated worktrees, never touching your checkout), `--parallel <N>` (parallel fetches). Repos
+must be clean and at their origin trunk tip, or they are visibly skipped — that precondition is
+the point.
+
+### Scoping a repos root you don't fully control
+
+If the checkouts folder contains repos you don't want in the estate — work repos next to
+experiments, or you've already curated a subset for this campaign — don't reorganize the folder.
+This is **pre-work**: you know your subset up front, before the first run, so write it down first
+and pass `--scope`. The friendly format is a plain text list — one repo folder name per line,
+`#` comments and blank lines allowed:
+
+```powershell
+# C:\ua-estate\repos.txt — the estate you actually care about
+billing-api
+checkout-web
+# experiments-repo   (left out on purpose)
+
+dotnet $ua scan-estate --repos-root C:\repos --out C:\ua-estate --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
+  --self my-team --scope C:\ua-estate\repos.txt
+```
+
+A list means *include exactly these*. Already have scans you trust and want the list generated
+from them? `Get-ChildItem C:\ua-estate\scans -Directory | Select-Object -ExpandProperty Name | Set-Content C:\ua-estate\repos.txt`.
+For *exclude-mode* (easier when the few you removed are simpler to name than the many you kept),
+author the JSON form instead:
+
+```json
+{ "schemaVersion": "estate-scope.v0", "exclude": [ "repo-x", "repo-y" ] }
+```
+
+Either way the run normalizes what you wrote into canonical `scope.v0.json` inside the fixture,
+so the evidence stays schema'd no matter which form you authored.
+
+Names are repo **folder names** under `--repos-root`. Out-of-scope repos are never scanned, never
+fetched, never added to ownership — they appear in the run manifest (`scan-estate.v1.json`) as
+`out-of-scope`, named and counted, never silently dropped, and the scope is copied into the
+fixture and echoed in the plan ("Scope: include-mode — 130 repos in scope by config", plus the
+out-of-scope names when you used exclude-mode) — so the filter travels with the evidence instead
+of living in your head. The two modes cannot be combined, and a list or `include: []` that names
+nothing is rejected — a scope that names nothing is a mistake, not an empty estate.
 
 ## The commands
 

@@ -95,7 +95,9 @@ public static class ScanEstate
         if (scopePath is not null)
         {
             if (!File.Exists(scopePath)) { Console.Error.WriteLine($"error: --scope file not found: {scopePath}"); return 1; }
-            scopeText = File.ReadAllText(scopePath);
+            var (canonicalScope, listErr) = Scope.ReadCanonicalText(scopePath); // plain-list carriers normalize HERE — the snapshot + fixture copy stay schema'd JSON
+            if (listErr is not null) { Console.Error.WriteLine($"error: {listErr}"); return 1; }
+            scopeText = canonicalScope;
             var (parsedScope, scopeErr) = Scope.ParseAndValidate(scopeText, Path.GetFileName(scopePath));
             if (scopeErr is not null) { Console.Error.WriteLine($"error: {scopeErr}"); return 5; }
             scope = parsedScope;
