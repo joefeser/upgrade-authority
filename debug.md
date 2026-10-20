@@ -93,6 +93,46 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   flip those repos' classification; until then, registry unknown counts
   carry a known discount for exactly these 3 repos.
 
+## 2026-10-21 — full-estate rescan (the durable fix for mixed-vintage scans)
+
+- Operator timeline: the scans were taken 10-07 from the then-current
+  tracemap head, and source WAS pulled. The CPM feature reached tracemap
+  main on 2026-10-03 (33fe647cf, #804 promotion), so 10-07 SOURCE had it
+  — the dll that actually produced the 10-07 scans was almost certainly
+  a stale build artifact (pull without rebuild). Combined with
+  movers-only cache refresh on later runs, the scans folder now mixes
+  vintages: some repos' scans carry pin facts, quiet repos (the 3 shared
+  ones) kept their pre-CPM entries.
+- Should you rescan everything? YES — one full pass harmonizes every
+  repo's evidence at one vintage (also picks up the 10-10 CI-producer
+  indexing and 10-18 regex hardening). The current cache rule keys reuse
+  on HEAD + dll hash + flags, so after this pass stale-vintage mixing
+  cannot silently recur: entries not matching the new dll are rescanned,
+  matching ones reused.
+- Cost expectations: this is the "real run" price — the fetch phase
+  (network, per-repo) plus a tracemap scan for every stale entry (likely
+  most of the estate). It narrates progress per repo; Ctrl+C is safe
+  mid-run and a re-run continues from the cache. `--parallel 8` speeds
+  the fetch phase.
+- Command (estate machine; substitute your repos root):
+
+  ```powershell
+  cd C:\tracemap
+  git pull
+  dotnet build -c Release
+  # confirm the artifact is FRESH — pull without rebuild is the exact trap above
+  Get-Item C:\tracemap\bin\Release\net10.0\tracemap.dll | Select-Object LastWriteTime
+
+  dotnet $ua scan-estate --repos-root <repos-root> `
+    --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
+    --out C:\ua-estate --parallel 8
+  ```
+
+  Then re-run the ingest exactly as before (up-arrow history), then the
+  registry measurement below. The 3-repo scoped rescan higher up remains
+  a valid shortcut if a number is needed before the full pass fits the
+  calendar.
+
 ## Open measurement (not a bug)
 
 - Registry unknown count vs the hand-verified baseline (copy/paste;
