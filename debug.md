@@ -125,8 +125,15 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
 
   dotnet $ua scan-estate --repos-root <repos-root> `
     --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
+    --scope <repos-root>\repos.txt `
     --out C:\ua-estate --parallel 8
   ```
+
+  `--scope` matters: without it the run scans EVERYTHING under the repos
+  root (all repos, including any deliberately trimmed ones). The plain
+  list (one repo folder name per line, `#` comments allowed) is
+  include-mode — exactly the curated set. Adjust the path if your list
+  lives elsewhere.
 
   Then re-run the ingest exactly as before (up-arrow history), then the
   registry measurement below. The 3-repo scoped rescan higher up remains
