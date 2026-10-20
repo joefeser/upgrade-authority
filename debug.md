@@ -7,6 +7,41 @@ labels only ("the 3 shared repos", "the estate machine").
 
 Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
 
+## RUN ORDER — current (supersedes older command blocks below)
+
+```powershell
+# 1) update THIS tool (pull without rebuild = stale code, the 10-07 trap)
+cd <your upgrade-authority clone>    # on trial/scope-prework
+git pull
+dotnet build src/UpgradeAuthority -c Release
+
+# 2) refresh tracemap + PROVE the dll is fresh
+cd C:\tracemap
+git pull
+dotnet build src/dotnet/TraceMap.sln -c Release
+Get-Item C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll | Select-Object LastWriteTime
+
+# 3) full estate rescan — WORKTREE mode (behind-tip/dirty checkouts are irrelevant there)
+dotnet $ua scan-estate --repos-root <repos-root> `
+  --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
+  --scope <repos-root>\repos.txt `
+  --out C:\ua-estate --parallel 8 --worktree
+
+# 4) vintage check BEFORE ingest — pin facts must exist (count > 0)
+$scan = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*Kafka*' | Select-Object -First 1
+Select-String "$($scan.FullName)\facts.ndjson" -Pattern 'CentralPackageVersionDeclared' | Measure-Object | ForEach-Object Count
+
+# 5) ingest + registry (paste the totals + unknown count back)
+dotnet $ua ingest --scans-root C:\ua-estate\scans `
+  --producer C:\ua-estate\producer-evidence.v0.json `
+  --ownership C:\ua-estate\ownership.v0.json --out C:\ua-estate\fixture
+dotnet $ua registry C:\ua-estate\fixture
+```
+
+Step 4 returning 0 = the dll is still stale — stop and report; do not ingest.
+Expected in step 3: narrated fetch (no hangs — git kill-timer), worktree
+scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
+
 ## 2026-10-19 — swap-retry warnings during a large real ingest (RESOLVED, as designed)
 
 - Symptom: three IOException retry warnings during the fixture swap on a
