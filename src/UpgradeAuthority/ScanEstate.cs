@@ -132,22 +132,50 @@ public static class ScanEstate
         // below stays sequential in name-ordinal order and reads only the fetched state.
         var fetched = new HashSet<string>(StringComparer.Ordinal);
         var fetchFailures = new Dictionary<string, string>(StringComparer.Ordinal);
+        var fetchedVia = new Dictionary<string, string>(StringComparer.Ordinal); // repo -> the remote that actually fed this run ("origin", or a same-repository fallback twin)
+        // Fetch with transport fallback: origin first; on failure, alternates that fold to the SAME
+        // repository identity (live case: SSH blocked at work, an https twin remote on the same repo).
+        // A repo without origin uses its single remote (warned); multiple remotes without origin stays
+        // the eligibility refusal — guessing which remote is authoritative is not ours to do.
+        bool FetchRepo(string repoPath, string repoName, out string err, out string via)
+        {
+            err = ""; via = "origin";
+            if (GitT(repoPath, "config --get remote.origin.url", out var oUrl, out _) != 0)
+            {
+                var rs = RemotesOf(repoPath);
+                if (rs.Length != 1) { err = "no origin remote"; return false; }
+                via = rs[0];
+                if (GitT(repoPath, $"fetch {via}", out _, out err) == 0)
+                { Console.Error.WriteLine($"warning: {repoName}: no origin remote — fetched via the only remote '{via}'"); return true; }
+                return false;
+            }
+            if (GitT(repoPath, "fetch origin", out _, out err) == 0) return true;
+            foreach (var alt in RemotesOf(repoPath).Where(r => r != "origin").OrderBy(r => r, StringComparer.Ordinal))
+            {
+                if (GitT(repoPath, $"config --get remote.{alt}.url", out var aUrl, out _) != 0
+                    || !SameRepository(oUrl, aUrl)) continue; // never cross repositories
+                if (GitT(repoPath, $"fetch {alt}", out _, out var altErr) == 0)
+                { err = ""; via = alt; Console.Error.WriteLine($"warning: {repoName}: origin fetch failed — fetched via '{alt}' (same repository, alternate transport)"); return true; }
+                err = altErr;
+            }
+            return false;
+        }
         if (!updateCheckouts && !worktreeMode && parallel > 1)
         {
             var fetchUnits = Directory.GetDirectories(Path.GetFullPath(reposRoot))
                 .Where(d => !Path.GetFileName(d).StartsWith('.'))
                 .Where(d => new DirectoryInfo(d).LinkTarget is null) // C31 r10: a symlinked child is never fetched (the eligibility loop rejects it for the same reason)
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
-                .Where(d => GitT(d, "rev-parse HEAD", out _, out _) == 0 && IsGitRepoWithOrigin(d))
-                .Where(d => UsableOriginUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
+                .Where(d => GitT(d, "rev-parse HEAD", out _, out _) == 0 && RemotesOf(d).Length > 0)
+                .Where(d => UsableRemoteUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
                 .GroupBy(d => GitT(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.Ordinal) // case-EXACT like seenOrigins (fetch-optimization only — the sequential loop fetches inline anyone this phase skipped, so grouping differences can never drop a scan)
                 .Select(g => g.OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).First()) // name-ordinal first-wins over one origin — SAME rule as the sequential loop (C34 r11: alternates are not fetched)
                 .Select(d => (Action)(() =>
                 {
                     var n30 = Path.GetFileName(d);
-                    if (GitT(d, "fetch origin", out _, out var ferr30) != 0)
+                    if (!FetchRepo(d, n30, out var ferr30, out var via30))
                         lock (fetchFailures) { fetchFailures[n30] = ferr30; Console.Error.WriteLine($"fetch   {n30} FAILED ({TrimReason(ferr30)})"); }
-                    else lock (fetched) { fetched.Add(n30); Console.Error.WriteLine($"fetch   {n30}"); }
+                    else lock (fetched) { fetched.Add(n30); fetchedVia[n30] = via30; Console.Error.WriteLine($"fetch   {n30}"); }
                 })).ToArray();
             // the fetch phase is the quiet stretch on big estates (130 origins × network + auth) —
             // say it started, so silence reads as progress, not a hang (found on the real work run)
@@ -186,17 +214,26 @@ public static class ScanEstate
             if (GitT(repoPath, "rev-parse HEAD", out var headOut, out _) != 0)
             { entries.Add(Skip("not a git repository or no commits")); continue; }
             var headSha = headOut.Trim();
-            if (GitT(repoPath, "remote", out var remotesOut, out _) != 0
-                || !remotesOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Contains("origin"))
-            { entries.Add(Skip("no origin remote")); continue; } // never bypassable (SPEC-017 §4.1 F2)
+            var remotesList = RemotesOf(repoPath);
+            string effRemote;
+            if (remotesList.Contains("origin")) effRemote = "origin";
+            else if (remotesList.Length == 0)
+            { entries.Add(Skip("no git remotes configured")); continue; }
+            else if (remotesList.Length > 1)
+            { entries.Add(Skip($"no origin remote and {remotesList.Length} remotes ({string.Join(", ", remotesList)}) — ambiguous, refusing to guess; rename the authoritative remote to origin")); continue; } // SPEC-017 §4.1 F2, still never bypassed when ambiguous
+            else
+            {
+                effRemote = remotesList[0];
+                Console.Error.WriteLine($"warning: {name}: no origin remote — treating the only remote '{effRemote}' as origin");
+            }
             // alternate-checkout dedupe: name-ordinal first checkout of an origin wins (ingest's
             // deliberate-combination rule, enforced before a scan is wasted). The URL comes from
             // config --get (the raw truth): `remote get-url` ECHOES THE REMOTE NAME when the URL is
             // unset/empty, which would silently dedupe every URL-less repo onto the key "origin"
             // (PR #2 Baz round 1 — proven by the selftest's empty-URL case).
-            if (GitT(repoPath, "config --get remote.origin.url", out var urlOut, out _) != 0
+            if (GitT(repoPath, $"config --get remote.{effRemote}.url", out var urlOut, out _) != 0
                 || NormalizeOriginUrl(urlOut).Length == 0)
-            { entries.Add(Skip("origin remote has no usable URL (alternate-checkout identity unavailable — check git remote set-url origin")); continue; }
+            { entries.Add(Skip($"remote '{effRemote}' has no usable URL (alternate-checkout identity unavailable — check git remote set-url {effRemote}")); continue; }
             var normOrigin = NormalizeOriginUrl(urlOut);
             if (seenOrigins.TryGetValue(normOrigin, out var firstName))
             { entries.Add(Skip($"alternate checkout of {firstName} (same origin) — one scan per repo; pass scan dirs to ingest explicitly to combine deliberately")); continue; }
@@ -211,18 +248,25 @@ public static class ScanEstate
             { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree (checked before fetch)")); continue; } // Baz r13: before ANY mutation, fetch included
             if (fetchFailures.TryGetValue(name, out var fetchErr))
             { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
-            if (!fetched.Contains(name) && GitT(repoPath, "fetch origin", out _, out fetchErr) != 0) // sequential fallback (parallel=1 or refresh modes fetch inline)
-            { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
-            // trunk resolution: --trunk override (validated), else origin/main -> origin/dev; recorded RESOLVED
+            if (!fetched.Contains(name))
+            {
+                if (!FetchRepo(repoPath, name, out var ferrS, out var viaS))
+                { entries.Add(Skip($"fetch failed: {TrimReason(ferrS)}")); continue; }
+                fetchedVia[name] = viaS;
+            }
+            // trunk resolution: --trunk override (validated), else <remote>/main -> <remote>/dev; recorded RESOLVED.
+            // The remote is whichever one actually fed this run — an origin-transport fallback fetches
+            // ITS refs, so trunk must follow the transport or the tip would read from a stale ref.
+            var remoteRef = fetchedVia.TryGetValue(name, out var fr) ? fr : effRemote;
             if (trunkOverride is not null)
             {
-                if (GitT(repoPath, $"rev-parse --verify origin/{trunkOverride}", out _, out _) != 0)
-                { entries.Add(Skip($"--trunk origin/{trunkOverride} does not exist on this repo")); continue; }
-                trunk = $"origin/{trunkOverride}";
+                if (GitT(repoPath, $"rev-parse --verify {remoteRef}/{trunkOverride}", out _, out _) != 0)
+                { entries.Add(Skip($"--trunk {remoteRef}/{trunkOverride} does not exist on this repo")); continue; }
+                trunk = $"{remoteRef}/{trunkOverride}";
             }
-            else if (GitT(repoPath, "rev-parse --verify origin/main", out _, out _) == 0) trunk = "origin/main";
-            else if (GitT(repoPath, "rev-parse --verify origin/dev", out _, out _) == 0) trunk = "origin/dev";
-            else { entries.Add(Skip("no origin/main or origin/dev branch (pass --trunk <branch> to override)")); continue; }
+            else if (GitT(repoPath, $"rev-parse --verify {remoteRef}/main", out _, out _) == 0) trunk = $"{remoteRef}/main";
+            else if (GitT(repoPath, $"rev-parse --verify {remoteRef}/dev", out _, out _) == 0) trunk = $"{remoteRef}/dev";
+            else { entries.Add(Skip($"no {remoteRef}/main or {remoteRef}/dev branch (pass --trunk <branch> to override)")); continue; }
 
             if (worktreeMode)
             {
@@ -264,7 +308,7 @@ public static class ScanEstate
                         rescuedTo[name] = rescueBranch; // ONE canonical entry per repo (Baz r2): the pending entry below carries the rescue provenance
                     }
                 }
-                var localTrunk = trunk["origin/".Length..];
+                var localTrunk = trunk[(remoteRef.Length + 1)..];
                 if (GitT(repoPath, $"rev-parse --verify {localTrunk}", out _, out _) != 0)
                 {
                     if (GitT(repoPath, $"checkout -b {localTrunk} --track {trunk}", out _, out var coErr) != 0)
@@ -717,9 +761,54 @@ public static class ScanEstate
         return 0;
     }
 
-    static bool UsableOriginUrl(string repoPath) =>
-        GitT(repoPath, "config --get remote.origin.url", out var u, out _) == 0
-        && NormalizeOriginUrl(u).Length > 0;
+    static bool UsableRemoteUrl(string repoPath)
+    {
+        if (GitT(repoPath, "config --get remote.origin.url", out var u, out _) == 0) return NormalizeOriginUrl(u).Length > 0;
+        var rs = RemotesOf(repoPath); // the no-origin single-remote fallback is eligible too (warned at fetch)
+        return rs.Length == 1 && GitT(repoPath, $"config --get remote.{rs[0]}.url", out u, out _) == 0 && NormalizeOriginUrl(u).Length > 0;
+    }
+
+    static string[] RemotesOf(string repoPath)
+    {
+        if (GitT(repoPath, "remote", out var list, out _) != 0) return Array.Empty<string>();
+        return list.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    // Transport-folding identity: git@host:org/repo.git, ssh://git@host/org/repo.git and
+    // https://host/org/repo.git are ONE repository (live case 2026-10-21: SSH blocked at work,
+    // operator carries an https twin remote just to function — origin's transport can be dead
+    // while the repository is reachable). Fallback NEVER crosses identities: a different
+    // host/path is a different repo, and guessing repos is not ours to do.
+    internal static (string Host, string Path) RemoteIdentityOf(string url)
+    {
+        var t = url.Trim();
+        string host, path;
+        if (t.StartsWith("http://") || t.StartsWith("https://") || t.StartsWith("ssh://") || t.StartsWith("git://"))
+        {
+            var noScheme = t[(t.IndexOf("://", StringComparison.Ordinal) + 3)..];
+            var slash = noScheme.IndexOf('/');
+            if (slash < 0) return ("", "");
+            host = noScheme[..slash]; path = noScheme[(slash + 1)..];
+        }
+        else if (t.Contains('@') && t.Contains(':')) // scp shorthand: git@host:org/repo.git
+        {
+            var at = t.IndexOf('@');
+            var colon = t.IndexOf(':', at);
+            if (colon < 0) return ("", "");
+            host = t[(at + 1)..colon]; path = t[(colon + 1)..];
+        }
+        else return ("", "");
+        host = host.TrimEnd('/');
+        path = path.TrimEnd('/');
+        if (path.EndsWith(".git", StringComparison.Ordinal)) path = path[..^4];
+        return (host.ToLowerInvariant(), path); // hosts case-insensitive; paths stay case-exact (GitHub hosts distinct repos at case-variant paths)
+    }
+
+    internal static bool SameRepository(string urlA, string urlB)
+    {
+        var a = RemoteIdentityOf(urlA); var b = RemoteIdentityOf(urlB);
+        return a.Host.Length > 0 && a.Host == b.Host && string.Equals(a.Path, b.Path, StringComparison.Ordinal);
+    }
 
     // Windows checkout reality (first real Windows run, 2026-10-19): `git remote add` stores a
     // local origin URL verbatim (backslash separators) while `git clone` canonicalizes its local
@@ -735,11 +824,8 @@ public static class ScanEstate
         return Ingest.NormalizeRepoBasic(t);
     }
 
-    static bool IsGitRepoWithOrigin(string repoPath)
-    {
-        if (GitT(repoPath, "remote", out var remotes, out _) != 0) return false;
-        return remotes.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Contains("origin");
-    }
+    // (retired 2026-10-21: eligibility now resolves an effective remote — origin, or the single
+    //  remote with a warning; multi-remote-without-origin still refuses — see the eligibility loop)
 
     static string Sha7(string sha) => sha.Length <= 7 ? sha : sha[..7];
     static string Ord(string? s) => s ?? "";

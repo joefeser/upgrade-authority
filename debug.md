@@ -50,6 +50,27 @@ For a stale-repo NAME list, drop the `| Measure-Object | ForEach-Object Count`.
 Expected in step 3: narrated fetch (no hangs — git kill-timer), worktree
 scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
 
+## 2026-10-21 — REMOTE FALLBACK shipped: origin is the default, no longer a hard wall
+
+- Live case: at the operator's workplace SSH is blocked; two repos carry an
+  extra https remote just to remain workable, and the hard origin-only
+  assumption skipped them.
+- Shipped on this branch (selftest 165):
+  1. No origin + exactly ONE remote → that remote is used as origin, with
+     a per-repo warning ("no origin remote — treating the only remote
+     '<name>' as origin").
+  2. Origin present but its transport dead → fetch falls back to an
+     alternate remote ONLY when its URL folds to the same repository
+     identity (git@host:org/repo.git ≡ ssh://git@host/org/repo.git ≡
+     https://host/org/repo.git — case-variant paths stay distinct), with a
+     warning; the trunk follows the remote that actually fed the run.
+  3. No origin + MULTIPLE remotes → still refused (never guess which
+     remote is authoritative), reason now says to rename the authoritative
+     one to origin. Zero remotes → its own typed reason.
+- No flag needed; the fallback is automatic and warned in the fetch lines.
+  After re-pulling this branch + rebuilding ua, the two repos scan in the
+  worktree pass like every other repo.
+
 ## 2026-10-19 — swap-retry warnings during a large real ingest (RESOLVED, as designed)
 
 - Symptom: three IOException retry warnings during the fixture swap on a

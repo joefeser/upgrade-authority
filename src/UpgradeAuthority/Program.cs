@@ -1716,6 +1716,40 @@ public static class Program
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-delta-less: {ex.Message}"); }
         finally { ForceDelete(seRoot1b); if (Directory.Exists(seOut1b)) ForceDelete(seOut1b); if (Directory.Exists(seOut1b + "-c")) ForceDelete(seOut1b + "-c"); }
 
+        // 1c. remote fallback (live 2026-10-21: SSH blocked at work, operator carries an https twin remote):
+        // a single non-origin remote scans with a warning; ssh/https forms of the SAME repo fold to one
+        // identity; multiple remotes without origin still refuses (never guess which is authoritative)
+        var seRoot1c = Path.Combine(Path.GetTempPath(), "ua-se1c-" + Guid.NewGuid().ToString("N")[..8]);
+        var seOut1c = Path.Combine(Path.GetTempPath(), "ua-se1c-out-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(seRoot1c);
+            var repo1c = EstateRepo(seRoot1c, "norepo-origin");
+            Push.Git(repo1c, "remote rename origin work", out _, out _); // exactly one remote, not named origin
+            if (!ScanEstate.SameRepository("git@github.com:org/rep.git", "https://github.com/org/rep.git")) throw new Exception("ssh/https transport folding failed");
+            if (ScanEstate.SameRepository("https://github.com/org/rep.git", "https://github.com/org/rep2.git")) throw new Exception("different repos must never fold");
+            if (ScanEstate.SameRepository("https://github.com/org/Rep.git", "https://github.com/org/rep.git")) throw new Exception("case-variant paths are distinct repos and must not fold");
+            var origErr1c = Console.Error; var sw1c = new StringWriter(); Console.SetError(sw1c);
+            int rc1c;
+            try { rc1c = ScanEstate.Run(Path.Combine(seRoot1c, "repos"), seOut1c, null, null, "team-a", false, Array.Empty<string>(), null, null, null, StubScanner); }
+            finally { Console.SetError(origErr1c); }
+            if (rc1c != 0) throw new Exception($"single non-origin remote must scan (exit {rc1c})");
+            if (!sw1c.ToString().Contains("no origin remote")) throw new Exception("fallback warning missing from output");
+            using (var m1c = SEManifest(seOut1c))
+                if (!m1c.RootElement.GetProperty("repos").EnumerateArray().Any(e => e.GetProperty("status").GetString() == "scanned"))
+                    throw new Exception("repo must be scanned via the only remote");
+            Push.Git(repo1c, "remote add other https://example.invalid/x.git", out _, out _); // now ambiguous
+            var seOut1c2 = seOut1c + "-2";
+            var rc1c2 = ScanEstate.Run(Path.Combine(seRoot1c, "repos"), seOut1c2, null, null, "team-a", false, Array.Empty<string>(), "Polly", "8.0.0", "8.6.6", StubScanner);
+            if (rc1c2 == 0) throw new Exception("multi-remote without origin must refuse");
+            using (var m1c2 = SEManifest(seOut1c2))
+                if (!m1c2.RootElement.GetProperty("repos").EnumerateArray().Any(e => e.GetProperty("status").GetString() == "skipped" && (e.GetProperty("reason").GetString() ?? "").Contains("ambiguous")))
+                    throw new Exception("ambiguity skip reason missing");
+            Console.WriteLine("ok   scan-estate-remote-fallback (single non-origin remote scans with warning; transports fold per repo; ambiguous multi-remote refuses)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-remote-fallback: {ex.Message}"); }
+        finally { ForceDelete(seRoot1c); if (Directory.Exists(seOut1c)) ForceDelete(seOut1c); if (Directory.Exists(seOut1c + "-2")) ForceDelete(seOut1c + "-2"); }
+
         // 2. incremental: zero rescans when nothing changed; exactly the bumped repo rescans
         try
         {
@@ -1982,7 +2016,7 @@ public static class Program
             {
                 var st8 = m8.RootElement.GetProperty("repos").EnumerateArray().ToDictionary(e => e.GetProperty("name").GetString(), e => (status: e.GetProperty("status").GetString(), reason: e.TryGetProperty("reason", out var rr) ? rr.GetString() : null));
                 if (st8["alpha-clone"].status != "skipped" || !st8["alpha-clone"].reason!.Contains("alternate checkout of alpha")) throw new Exception($"alternate skip wrong: {st8["alpha-clone"]}");
-                if (st8["theta"].status != "skipped" || st8["theta"].reason != "no origin remote") throw new Exception($"no-origin skip wrong: {st8["theta"]}");
+                if (st8["theta"].status != "skipped" || st8["theta"].reason != "no git remotes configured") throw new Exception($"no-remote skip wrong (zero remotes is its own reason since the single-remote fallback): {st8["theta"]}");
             }
             if (ScanEstate.Run(Path.Combine(root8, "repos"), out8, null, null, "team-a", true, Array.Empty<string>(), "P", "1", "2", StubScanner) != 0) throw new Exception("allow-stale run failed");
             using (var m8b = SEManifest(out8))
