@@ -426,8 +426,21 @@ public static class ScanEstate
             {
                 if (worktreePath is not null)
                 {
-                    if (GitT(repoPath, $"worktree add --detach \"{satellite}\" {resolvedTrunk}", out _, out var wtErr) != 0)
+                    // bounded retry (live 2026-10-21, a machine running FOUR real-time scanners: 2 of 126
+                    // worktree materializations failed transiently — thousands of fresh files is prime
+                    // scanner-bait, the same race class as the swap IOException armor)
+                    var wtAttempts = 0; string wtErr = "";
+                    while (wtAttempts < 3)
                     {
+                        if (GitT(repoPath, $"worktree add --detach \"{satellite}\" {resolvedTrunk}", out _, out wtErr) == 0) break;
+                        wtAttempts++;
+                        if (wtAttempts < 3) { Console.Error.WriteLine($"warning: {entry.Name}: worktree add blocked ({TrimReason(wtErr)}) — retry {wtAttempts}/2 (scanners commonly hold fresh files)"); System.Threading.Thread.Sleep(500 * wtAttempts); }
+                    }
+                    if (wtAttempts >= 3)
+                    {
+                        // the failed satellite dir may be half-materialized — prune so a rerun starts clean
+                        FsSwap.TryDeleteDirQuiet(satellite);
+                        GitT(repoPath, "worktree prune", out _, out _);
                         lock (gate)
                         {
                             entry.Status = "skipped";
@@ -968,8 +981,13 @@ public static class ScanEstate
     // echoes the remote URL, and PATs ride as USERNAME-ONLY userinfo — https://PAT@host — no colon).
     internal static string TrimReason(string text)
     {
-        var firstLine = (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "";
-        var scrubbed = System.Text.RegularExpressions.Regex.Replace(firstLine,
+        var lines = (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        // git prints PROGRESS first and the failure LAST ("Preparing worktree..." then "fatal: ..." —
+        // live 2026-10-21: a skip reason read "worktree add failed: Preparing worktree", useless).
+        // Prefer the fatal/error line; fall back to the first line for non-git errors.
+        var chosen = lines.FirstOrDefault(l => l.StartsWith("fatal:", StringComparison.Ordinal) || l.StartsWith("error:", StringComparison.Ordinal))
+            ?? lines.FirstOrDefault() ?? "";
+        var scrubbed = System.Text.RegularExpressions.Regex.Replace(chosen,
             @"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^\s/@]+@", "$1***@"); // scheme://ANY-userinfo@ (token or user:pass)
         scrubbed = System.Text.RegularExpressions.Regex.Replace(scrubbed,
             @"\b[^\s/@]+@(?=[a-zA-Z0-9._\-]+[.:])", "***@"); // scheme-less userinfo@host — dotted OR scp-style `host:`; `_` included (Redact.cs accepts it in hosts — PR #2 Codex r4)
