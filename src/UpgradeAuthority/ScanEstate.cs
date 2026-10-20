@@ -583,13 +583,13 @@ public static class ScanEstate
                 .Where(t => t.Item2 is null).Select(t => t.Item1).ToList();
             if (missing.Count > 0)
             { Console.Error.WriteLine($"error: missing {string.Join(" ", missing)} — required to template delta.json (or place your own delta.json in the out dir)"); return 1; }
-            File.WriteAllText(deltaPath, JsonSerializer.Serialize(new DeltaFile
+            Program.WriteArtifactFile(deltaPath, JsonSerializer.Serialize(new DeltaFile
             {
                 Version = "package-delta.v1",
                 SourceRepo = "https://example.invalid/x.git",
                 SourceCommitSha = new string('0', 40),
                 Changes = new List<DeltaChange> { new() { Id = "bootstrap", PackageName = deltaPackage!, Ecosystem = "nuget", ChangeType = "updated", OldVersion = deltaOld!, NewVersion = deltaNew! } },
-            }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+            }, WriteOpts).ReplaceLineEndings("\n") + "\n"); // atomic: a truncated bootstrap sidecar would be sacred-but-unparseable forever
             Console.Error.WriteLine($"note: templated delta.json ({deltaPackage} {deltaOld} → {deltaNew}) — swap in your real delta when ready");
         }
         DeltaFile delta;
@@ -606,7 +606,7 @@ public static class ScanEstate
         var producerPath = Path.Combine(Path.GetFullPath(outDir), "producer-evidence.v0.json");
         if (!File.Exists(producerPath))
         {
-            File.WriteAllText(producerPath, JsonSerializer.Serialize(new ProducerEvidence
+            Program.WriteArtifactFile(producerPath, JsonSerializer.Serialize(new ProducerEvidence // atomic — same truncated-bootstrap reasoning as delta.json
             {
                 SchemaVersion = "producer-evidence.v0",
                 ExternalPackages = new List<ExternalPackage> { new() { PackageId = deltaPkgName } },

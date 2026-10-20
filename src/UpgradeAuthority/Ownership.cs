@@ -204,7 +204,7 @@ public static class Ownership
         var outParent = Path.GetDirectoryName(Path.GetFullPath(outFile)) ?? ".";
         Directory.CreateDirectory(outParent);
         var json = JsonSerializer.Serialize(file, WriteOpts);
-        File.WriteAllText(outFile, json.ReplaceLineEndings("\n") + "\n");
+        Program.WriteArtifactFile(outFile, json.ReplaceLineEndings("\n") + "\n"); // atomic: scan-estate treats an existing sidecar as sacred — a truncated one would be unparseable forever
     }
 
     // pinned escaping (StableJsonEncoder): ownership.v0.json bytes feed campaign inputSha256 —
