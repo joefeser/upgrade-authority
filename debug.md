@@ -79,6 +79,22 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   After re-pulling this branch + rebuilding ua, the two repos scan in the
   worktree pass like every other repo.
 
+## 2026-10-21 — "filename too long" RESOLVED (the two-repo saga closes)
+
+- The two persistently failing worktree repos were Windows MAX_PATH victims:
+  one repo contains a ~140-character auto-generated TEST FILENAME
+  (Method_Scenario_Expectation x3 concatenated), and the satellite prefix
+  pushed its checkout path past 260. The second repo's "Could not reset
+  index file" was the same failure one step later.
+- Fixes: (operator) `git config --global core.longpaths true` — confirmed
+  working live; (branch, 5f77838) hex-only satellite leaves (~47 chars of
+  path budget back, spec §3.2 alignment; sweep recognizes both shapes).
+- Ladder for the record: "Preparing worktree" (progress preamble, useless)
+  -> "Could not reset index file" (real error, wrong depth) -> "unable to
+  create file <monster.cs>" -> root cause. Each layer shipped a fix.
+- Post-fix state: both repos scan under worktree mode; ownership update
+  reports honestly (123 scanned / 131 total / absent assignments named).
+
 ## 2026-10-19 — swap-retry warnings during a large real ingest (RESOLVED, as designed)
 
 - Symptom: three IOException retry warnings during the fixture swap on a
