@@ -196,6 +196,7 @@ public static class Ingest
 
         // ---- consumer facts (PackageReferenced, non-lockfile) ----
         var evidence = new Dictionary<string, List<Fact>>(StringComparer.Ordinal);
+        var deferredUnevidenced = new List<(string Repo, string Pkg, string FactId)>(); // resolved after the CPM pin correlation — see the gap-deferral note in the loop
         foreach (var (f, manifest, dir) in allFacts)
         {
             if (f.FactType != "PackageReferenced") continue;
@@ -221,10 +222,16 @@ public static class Ingest
             }
             else if (version is null || version == "")
             {
-                // CPM central version or redacted — constraint not evidenced
+                // CPM central version or redacted — constraint not evidenced AT THE REFERENCE SITE.
+                // Under CPM this is the NORMAL shape (version lives in Directory.Packages.props); the
+                // central-pin correlation below decides whether the constraint is evidenced after all,
+                // so the gap decision is DEFERRED — emitting it here kept every CPM repo in "gaps"
+                // coverage forever, which blocks not-affected classification and inflates unknowns
+                // (found on the real 130-repo estate run, 2026-10-20: "lots of warnings... for
+                // probably all of the repos"). Redacted (hashed) versions carry their own marker.
                 var vh = Prop(f, "versionHash");
                 constraint = vh is not null ? $"redacted:{vh.Replace("version-hash:", "")}" : "";
-                if (constraint == "") { ingestGaps.Add($"fact {f.FactId}: constraint not evidenced (CPM/central version or redacted) — {pkg}"); repoIngestGaps.Add((key, $"constraint not evidenced: {pkg}")); }
+                if (constraint == "") deferredUnevidenced.Add((key, pkg!, f.FactId!));
             }
             else constraint = version;
 
@@ -270,6 +277,7 @@ public static class Ingest
         // the same package — lockfile rows are resolutions, not consumer declarations, and an unused pin
         // must never fabricate a consumer edge (rule b) or an unnecessary edit.
         var unusedPins = 0;
+        var pinEvidenced = new HashSet<(string Repo, string Pkg)>(); // (repoKey, lowercased pkg) — a central pin evidences this reference's constraint
         foreach (var (f, manifest, dir) in allFacts)
         {
             if (f.FactType != "CentralPackageVersionDeclared") continue;
@@ -290,6 +298,7 @@ public static class Ingest
             var endLine = f.Evidence?.EndLine;
             if (startLine is not null && endLine is not null && endLine == startLine) endLine = null;
             var referencing = evidence[key].Where(x => x.PackageId == pkg && x.ConstraintSource != "Directory.Packages.props").Select(x => x.Path).Distinct().OrderBy(p2 => p2, StringComparer.Ordinal).ToList();
+            pinEvidenced.Add((key, pkg.ToLowerInvariant())); // the pin IS the constraint for these references (NuGet CPM semantics)
             var fact = new Fact
             {
                 Repo = key, PackageId = pkg!, DeclaredConstraint = version,
@@ -303,6 +312,16 @@ public static class Ingest
         }
         foreach (var kv in evidence) kv.Value.Sort((a, b) => string.CompareOrdinal(a.PackageId + "\0" + a.Path + "\0" + Ord2(a.Line) + "\0" + Ord2(a.EndLine), b.PackageId + "\0" + b.Path + "\0" + Ord2(b.Line) + "\0" + Ord2(b.EndLine)));
         if (unusedPins > 0) Console.Error.WriteLine($"note: {unusedPins} central pin(s) skipped — no non-lockfile reference consumes them (not consumer evidence; no edit needed for the delta)");
+
+        // resolve the deferred constraint gaps: a reference with no inline version whose (repo, package)
+        // carries a central pin IS evidenced (the pin is the constraint — NuGet CPM semantics); only the
+        // references with NO correlating pin stay honest gaps (truly unevidenced or redacted-without-hash)
+        foreach (var (rKey, rPkg, rFid) in deferredUnevidenced)
+            if (!pinEvidenced.Contains((rKey, rPkg.ToLowerInvariant())))
+            {
+                ingestGaps.Add($"fact {rFid}: constraint not evidenced (no version on the reference and no central pin for it) — {rPkg}");
+                repoIngestGaps.Add((rKey, $"constraint not evidenced: {rPkg}"));
+            }
 
         // ---- lockfile rows (SPEC-007: keyed by (lockfile, tfm, packageId), emitted as v1) ----
         var lockfiles = new Dictionary<string, List<LockRow>>(StringComparer.Ordinal);

@@ -1443,11 +1443,26 @@ public static class Program
             var covSv = JsonDocument.Parse(File.ReadAllText(Path.Combine(sv, "input", "package-evidence.v0.json"))).RootElement.GetProperty("scanCoverage")[0];
             if (covSv.GetProperty("status").GetString() != "gaps") throw new Exception("svc must stay gaps (real package problems)");
             var gapTexts = string.Join("\n", covSv.GetProperty("gaps").EnumerateArray().Select(g2 => g2.GetString()));
-            if (!gapTexts.Contains("packages-lock-group-unsupported") || !gapTexts.Contains("constraint not evidenced")) throw new Exception("package-relevant gaps missing");
+            if (!gapTexts.Contains("packages-lock-group-unsupported")) throw new Exception("package-relevant gaps missing");
+            if (gapTexts.Contains("constraint not evidenced")) throw new Exception("CPM-correlated references must NOT stay gaps — the central pin IS the constraint (svc's Contoso.Core/Serilog references all correlate; the old behavior double-counted them as gaps while also emitting the pin facts, blocking not-affected forever)");
             if (gapTexts.Contains("CompilerDiagnostic")) throw new Exception("compile noise leaked into gaps");
             var noteTexts = string.Join("\n", covSv.GetProperty("notes").EnumerateArray().Select(g2 => g2.GetString()));
             if (!noteTexts.Contains("Compiler diagnostic") || !noteTexts.Contains("buildStatus")) throw new Exception("compile health not in notes");
-            Console.WriteLine("ok   gap-scope-package-relevant (svc keeps real gaps; compile health noted)"); pass++;
+            Console.WriteLine("ok   gap-scope-package-relevant (svc keeps real gaps; CPM-correlated constraints withdrawn; compile health noted)"); pass++;
+            // the honest residual: a versionless reference with NO correlating central pin STAYS a gap
+            {
+                var scratchG = Path.Combine(Path.GetTempPath(), "ua-g15c-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(Path.Combine(richG, "scans", "svc"), scratchG);
+                File.AppendAllText(Path.Combine(scratchG, "facts.ndjson"),
+                    "{\"factId\":\"fact-nopin0001\",\"scanId\":\"scan-svc\",\"repo\":\"svc\",\"commitSha\":\"c1\",\"factType\":\"PackageReferenced\",\"ruleId\":\"project.file.v1\",\"evidenceTier\":\"Tier2Structural\",\"evidence\":{\"filePath\":\"src/App.csproj\",\"startLine\":9,\"endLine\":9},\"properties\":{\"ecosystem\":\"nuget\",\"manifestKind\":\"csproj\",\"packageName\":\"NoPin.Package\",\"version\":\"\"}}\n");
+                var outG = Path.Combine(Path.GetTempPath(), "ua-g15c-out-" + Guid.NewGuid().ToString("N")[..8]);
+                if (Ingest.Run(new[] { scratchG }, outG, Path.Combine(richG, "sidecars", "producer-evidence.v0.json"), Path.Combine(richG, "sidecars", "ownership.v0.json"), Path.Combine(richG, "sidecars", "delta.json")) != 0) throw new Exception("nopin ingest failed");
+                var covG = JsonDocument.Parse(File.ReadAllText(Path.Combine(outG, "input", "package-evidence.v0.json"))).RootElement.GetProperty("scanCoverage")[0];
+                var gapsG = string.Join("\n", covG.GetProperty("gaps").EnumerateArray().Select(g2 => g2.GetString()));
+                if (!gapsG.Contains("constraint not evidenced: NoPin.Package")) throw new Exception("a versionless reference with no central pin must stay an honest gap: " + gapsG);
+                ForceDelete(scratchG); ForceDelete(outG);
+                Console.WriteLine("ok   gap-scope-nopin-residual (versionless + no pin = honest gap)"); pass++;
+            }
             Directory.Delete(sv, true);
 
             // classifier rows: MSBuildRegistrationFailed (diagnosticKind join) + csharp.syntax (broken .cs) => notes; unknown shape stays gap
