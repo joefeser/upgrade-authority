@@ -588,12 +588,20 @@ public static class ScanEstate
 
         // ---- sidecar bootstrap (§4.3): existing files are operator data, never overwritten ----
         var deltaPath = Path.Combine(Path.GetFullPath(outDir), "delta.json");
-        if (File.Exists(deltaPath))
+        var hasDelta = File.Exists(deltaPath);
+        if (hasDelta)
         {
             var ignoredDeltaFlags = new[] { ("--delta-package", deltaPackage), ("--delta-old", deltaOld), ("--delta-new", deltaNew) }
                 .Where(t => t.Item2 is not null).Select(t => t.Item1).ToList();
             if (ignoredDeltaFlags.Count > 0) // SPEC-017 §4.3: EVERY --delta-* flag warns and loses, never silently
                 Console.Error.WriteLine($"warning: existing delta.json wins ({string.Join(" ", ignoredDeltaFlags)} ignored) — the real delta IS the real use case");
+        }
+        else if (deltaPackage is null && deltaOld is null && deltaNew is null)
+        {
+            // estate-first (live finding 2026-10-21: a full 130-repo rescan completed and THEN errored here
+            // because the estate never had a delta.json): a delta-less run must finish its scans, sidecars
+            // and ingest — plan/report teach their inputs on refusal, same as the piecewise commands
+            Console.Error.WriteLine("note: no delta.json and no --delta-* flags — continuing delta-less (scans, sidecars and ingest complete; plan/report/apply need a delta later — see README 'Where the delta comes from')");
         }
         else
         {
@@ -609,17 +617,22 @@ public static class ScanEstate
                 Changes = new List<DeltaChange> { new() { Id = "bootstrap", PackageName = deltaPackage!, Ecosystem = "nuget", ChangeType = "updated", OldVersion = deltaOld!, NewVersion = deltaNew! } },
             }, WriteOpts).ReplaceLineEndings("\n") + "\n"); // atomic: a truncated bootstrap sidecar would be sacred-but-unparseable forever
             Console.Error.WriteLine($"note: templated delta.json ({deltaPackage} {deltaOld} → {deltaNew}) — swap in your real delta when ready");
+            hasDelta = true;
         }
-        DeltaFile delta;
-        try { delta = JsonSerializer.Deserialize<DeltaFile>(File.ReadAllText(deltaPath), JsonOpts) ?? throw new JsonException(); }
-        catch (JsonException ex) { Console.Error.WriteLine($"error: malformed delta file {deltaPath}: {ex.Message}"); return 1; }
-        if (delta.Changes is null)
-        { Console.Error.WriteLine($"error: malformed delta file {deltaPath}: changes is null — a delta with no changes must not exist at all"); return 1; } // valid JSON, null list (PR #2 Baz round 2): typed error, never an uncaught NRE
-        if (delta.Changes.Count != 1)
-        { Console.Error.WriteLine($"error: delta.json must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)"); return 1; }
-        var deltaPkgName = delta.Changes[0].PackageName;
-        if (deltaPackage is not null && deltaPackage != deltaPkgName)
-        { Console.Error.WriteLine($"error: --delta-package {deltaPackage} differs from the existing delta.json target {deltaPkgName}"); return 1; }
+        string? deltaPkgName = null;
+        if (hasDelta)
+        {
+            DeltaFile delta;
+            try { delta = JsonSerializer.Deserialize<DeltaFile>(File.ReadAllText(deltaPath), JsonOpts) ?? throw new JsonException(); }
+            catch (JsonException ex) { Console.Error.WriteLine($"error: malformed delta file {deltaPath}: {ex.Message}"); return 1; }
+            if (delta.Changes is null)
+            { Console.Error.WriteLine($"error: malformed delta file {deltaPath}: changes is null — a delta with no changes must not exist at all"); return 1; } // valid JSON, null list (PR #2 Baz round 2): typed error, never an uncaught NRE
+            if (delta.Changes.Count != 1)
+            { Console.Error.WriteLine($"error: delta.json must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)"); return 1; }
+            deltaPkgName = delta.Changes[0].PackageName;
+            if (deltaPackage is not null && deltaPackage != deltaPkgName)
+            { Console.Error.WriteLine($"error: --delta-package {deltaPackage} differs from the existing delta.json target {deltaPkgName}"); return 1; }
+        }
 
         var producerPath = Path.Combine(Path.GetFullPath(outDir), "producer-evidence.v0.json");
         if (!File.Exists(producerPath))
@@ -627,9 +640,11 @@ public static class ScanEstate
             Program.WriteArtifactFile(producerPath, JsonSerializer.Serialize(new ProducerEvidence // atomic — same truncated-bootstrap reasoning as delta.json
             {
                 SchemaVersion = "producer-evidence.v0",
-                ExternalPackages = new List<ExternalPackage> { new() { PackageId = deltaPkgName } },
+                ExternalPackages = deltaPkgName is null ? new List<ExternalPackage>() : new List<ExternalPackage> { new() { PackageId = deltaPkgName } },
             }, WriteOpts).ReplaceLineEndings("\n") + "\n");
-            Console.Error.WriteLine($"note: templated producer-evidence.v0 (externalPackages lists the delta target {deltaPkgName}) — extend it for other public-feed packages");
+            Console.Error.WriteLine(deltaPkgName is null
+                ? "note: templated producer-evidence.v0 (empty — no delta to seed it with) — extend externalPackages for other public-feed packages"
+                : $"note: templated producer-evidence.v0 (externalPackages lists the delta target {deltaPkgName}) — extend it for other public-feed packages");
         }
         else
             Console.Error.WriteLine("note: existing producer-evidence.v0 reused — edit externalPackages if the delta target changed");
@@ -667,18 +682,26 @@ public static class ScanEstate
             File.WriteAllText(scopePathForIngest, scopeText);
         }
         var fixtureDir = Path.Combine(Path.GetFullPath(outDir), "fixture");
-        var rcIngest = Ingest.Run(freshDirs.ToArray(), fixtureDir, producerPath, ownershipPath, deltaPath, null, scopePathForIngest);
+        var rcIngest = Ingest.Run(freshDirs.ToArray(), fixtureDir, producerPath, ownershipPath, hasDelta ? deltaPath : null, null, scopePathForIngest);
         if (rcIngest != 0) return rcIngest;
-        var plan = Program.LoadEngine(fixtureDir).BuildPlan();
-        Program.WriteArtifactFile(Path.Combine(Path.GetFullPath(outDir), "plan.json"), Canonical.Write(plan));
-        Program.WriteArtifactFile(Path.Combine(Path.GetFullPath(outDir), "report.md"), Report.Render(plan));
+        if (!hasDelta)
+        {
+            Console.Error.WriteLine("note: plan/report skipped — no delta in this run (hand-write input/delta.json, bootstrap with --delta-package/--delta-old/--delta-new, or generate candidates from feed truth with drift --emit-deltas <dir>)");
+        }
+        else
+        {
+            var plan = Program.LoadEngine(fixtureDir).BuildPlan();
+            Program.WriteArtifactFile(Path.Combine(Path.GetFullPath(outDir), "plan.json"), Canonical.Write(plan));
+            Program.WriteArtifactFile(Path.Combine(Path.GetFullPath(outDir), "report.md"), Report.Render(plan));
+        }
 
         var nScan = entries.Count(e => e.Status == "scanned");
         var nReuse = entries.Count(e => e.Status == "reused");
         var nSkip = entries.Count(e => e.Status == "skipped");
         var nOos2 = entries.Count(e => e.Status == "out-of-scope");
         var nIgn2 = entries.Count(e => e.Status == "ignored");
-        Console.Error.WriteLine($"estate: {nScan} scanned, {nReuse} reused, {nSkip} skipped, {nOos2} out-of-scope, {nIgn2} ignored → {Path.Combine(Path.GetFullPath(outDir), "report.md")}");
+        var tail = hasDelta ? Path.Combine(Path.GetFullPath(outDir), "report.md") : fixtureDir;
+        Console.Error.WriteLine($"estate: {nScan} scanned, {nReuse} reused, {nSkip} skipped, {nOos2} out-of-scope, {nIgn2} ignored → {tail}");
         if (nSkip > 0) Console.Error.WriteLine($"note: skipped repos are listed in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
         return 0;
     }

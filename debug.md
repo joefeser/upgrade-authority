@@ -258,6 +258,24 @@ Format per entry: date — symptom / evidence / hypothesis / next diagnostic.
   snapshot remain usable via --scans-root). Estate-first gap: fresh-out
   bootstrap should be delta-less like ingest. Logged as a candidate.
 
+## 2026-10-21 — ESTATE-FIRST GAP FIXED: scan-estate completes delta-less (the operator just hit the gap live)
+
+- Live hit: the full estate rescan COMPLETED (all scans installed,
+  snapshot written) and then exited 1 with "missing --delta-package
+  --delta-old --delta-new" — the estate folder never had a delta.json
+  (the delta-optional flow doesn't create one), and bootstrap demanded
+  the trio anyway. The scans were safe the whole time.
+- Shipped on this branch: no delta.json + NO flags → the run completes
+  delta-less — note printed, sidecars bootstrapped (producer template
+  empty, no delta target to seed), ingest builds the fixture, and
+  plan/report are SKIPPED with a teaching note naming the three delta
+  sources. PARTIAL flags remain a typed error (operator mistake, not an
+  implied delta-less run). Verified locally end to end + selftest 164
+  (new case: scan-estate-delta-less).
+- Immediate operator impact: the scans from the errored run are already
+  installed — re-running ingest + registry needs NO rescan. The error
+  was cosmetic to the evidence; it just looked fatal.
+
 ## Open measurement (not a bug)
 
 - Registry unknown count vs the hand-verified baseline (copy/paste;

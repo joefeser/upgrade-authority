@@ -1692,6 +1692,30 @@ public static class Program
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-happy-path: {ex.Message}"); }
         finally { ForceDelete(seRoot1); if (Directory.Exists(seOut1)) ForceDelete(seOut1); }
 
+        // 1b. estate-first delta-less: no delta.json, no --delta-* flags → scans+sidecars+ingest COMPLETE,
+        // plan/report skipped with teaching note (live finding 2026-10-21: a finished 130-repo rescan
+        // errored at the last step demanding the delta trio — the estate-first flow never has one)
+        var seRoot1b = Path.Combine(Path.GetTempPath(), "ua-se1b-" + Guid.NewGuid().ToString("N")[..8]);
+        var seOut1b = Path.Combine(Path.GetTempPath(), "ua-se1b-out-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(seRoot1b);
+            EstateRepo(seRoot1b, "alpha");
+            var rc1b = ScanEstate.Run(Path.Combine(seRoot1b, "repos"), seOut1b, null, null, "team-a", false, Array.Empty<string>(), null, null, null, StubScanner);
+            if (rc1b != 0) throw new Exception($"delta-less scan-estate exited {rc1b} (must complete)");
+            if (File.Exists(Path.Combine(seOut1b, "delta.json"))) throw new Exception("delta.json must NOT be templated when flags are absent");
+            if (File.Exists(Path.Combine(seOut1b, "plan.json")) || File.Exists(Path.Combine(seOut1b, "report.md"))) throw new Exception("plan/report must be skipped delta-less");
+            if (!Directory.Exists(Path.Combine(seOut1b, "fixture", "input"))) throw new Exception("fixture must be built delta-less");
+            var prod1b = File.ReadAllText(Path.Combine(seOut1b, "producer-evidence.v0.json"));
+            if (prod1b.Contains("Newtonsoft.Json")) throw new Exception("producer template must be empty (no delta target to seed)");
+            // partial flags stay a typed operator error, not a silent delta-less run
+            var rc1c = ScanEstate.Run(Path.Combine(seRoot1b, "repos"), seOut1b + "-c", null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", null, "13.0.3", StubScanner);
+            if (rc1c == 0) throw new Exception("partial --delta-* flags must stay a typed error");
+            Console.WriteLine("ok   scan-estate-delta-less (estate-first completes; plan/report teach inputs; partial flags still error)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-delta-less: {ex.Message}"); }
+        finally { ForceDelete(seRoot1b); if (Directory.Exists(seOut1b)) ForceDelete(seOut1b); if (Directory.Exists(seOut1b + "-c")) ForceDelete(seOut1b + "-c"); }
+
         // 2. incremental: zero rescans when nothing changed; exactly the bumped repo rescans
         try
         {
