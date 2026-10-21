@@ -134,7 +134,10 @@ public static class Program
                 var scopeOpt = GetOpt(args, "--scope");
                 if (scopeOpt is null && Array.IndexOf(args, "--scope") >= 0)
                 { Console.Error.WriteLine("error: --scope requires a value (<file>)"); return 1; }
-                return Ingest.Run(scanDirs, outDir, GetOpt(args, "--producer"), GetOpt(args, "--ownership"), GetOpt(args, "--delta"), scansRootOpt, scopeOpt);
+                var archivedOpt = GetOpt(args, "--archived");
+                if (archivedOpt is null && Array.IndexOf(args, "--archived") >= 0)
+                { Console.Error.WriteLine("error: --archived requires a value (<file> — archived.v0.json or a plain one-per-line list written to the fixture input verbatim)"); return 1; }
+                return Ingest.Run(scanDirs, outDir, GetOpt(args, "--producer"), GetOpt(args, "--ownership"), GetOpt(args, "--delta"), scansRootOpt, scopeOpt, archivedOpt);
             }
             if (args.Length >= 2 && args[0] == "drift")
             {
@@ -231,7 +234,7 @@ public static class Program
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
-                foreach (var f in new[] { "--repos-root", "--out", "-o", "--tracemap", "--scope", "--self", "--delta-package", "--delta-old", "--delta-new", "--worktree-root", "--trunk", "--parallel" })
+                foreach (var f in new[] { "--repos-root", "--out", "-o", "--tracemap", "--scope", "--self", "--delta-package", "--delta-old", "--delta-new", "--worktree-root", "--trunk", "--parallel", "--git-timeout", "--archived" })
                 {
                     int? bad = ValueFlagError(args, f);
                     if (bad is not null) { Console.Error.WriteLine($"error: {args[bad.Value]} requires a value"); return 1; }
@@ -267,10 +270,10 @@ public static class Program
                     }
                 if (reposRoot is null) { Console.Error.WriteLine("error: --repos-root <dir> is required"); return 1; }
                 if (outDirE is null) { Console.Error.WriteLine("error: --out <dir> is required (the estate working dir: scans/, sidecars, fixture/, plan.json, report.md)"); return 1; }
-                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
+                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson, GetOpt(args, "--archived"));
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -512,7 +515,19 @@ public static class Program
             }
             freshnessFile = parsed;
         }
-        return new Engine(pe, ow, px, delta, lockRepos, scopeFile, freshnessFile, hasDelta: File.Exists(deltaPathF));
+        // archived.v0: optional operator annotation (archived repos keep evidence, lose wave scheduling)
+        ArchivedFile? archivedFile = null;
+        var archivedInputPath = Path.Combine(fixtureDir, "input", "archived.v0.json");
+        if (File.Exists(archivedInputPath))
+        {
+            try { archivedFile = JsonSerializer.Deserialize<ArchivedFile>(File.ReadAllText(archivedInputPath), Json); }
+            catch (JsonException ex) { throw new UaException($"malformed input archived.v0.json: {ex.Message}"); }
+            if (archivedFile?.SchemaVersion != "archived.v0")
+                throw new UaException($"malformed input archived.v0.json: unsupported schemaVersion '{archivedFile?.SchemaVersion}' (expected archived.v0)");
+            if (archivedFile.Repos is null)
+                throw new UaException("malformed input archived.v0.json: repos is null — a file with no entries must not exist at all");
+        }
+        return new Engine(pe, ow, px, delta, lockRepos, scopeFile, freshnessFile, hasDelta: File.Exists(deltaPathF), archived: archivedFile);
     }
 
     // SPEC-007 §7: load-time typed errors — one row per resolution group; v1 rows carry their key fields.
@@ -733,6 +748,36 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ingest-svc-e2e: {ex.Message}"); }
         finally { if (Directory.Exists(e2eTmp)) Directory.Delete(e2eTmp, true); }
+
+        // archived.v0 exclusion (live 2026-10-22: the synthetic estate's archived repo was scheduled in
+        // a wave with an executable pin edit — impossible work). Contract: archived repos keep
+        // classification/evidence, are excluded from waves, carry action archived-excluded + a named
+        // reason; the plain-list carrier (scan-estate --archived shape) wraps into archived.v0.json.
+        var archTmp = Path.Combine(Path.GetTempPath(), "ua-arch-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var richA = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
+            var rcA = Ingest.Run(new[] { Path.Combine(richA, "scans", "svc") }, archTmp,
+                Path.Combine(richA, "sidecars", "producer-evidence.v0.json"), Path.Combine(richA, "sidecars", "ownership.v0.json"), Path.Combine(richA, "sidecars", "delta.json"));
+            if (rcA != 0) throw new Exception($"ingest exited {rcA}");
+            var listFile = Path.Combine(archTmp, "archived-list.txt");
+            File.WriteAllText(listFile, "# archived at the remote\nsvc\n");
+            var rcA2 = Ingest.Run(new[] { Path.Combine(richA, "scans", "svc") }, archTmp,
+                Path.Combine(richA, "sidecars", "producer-evidence.v0.json"), Path.Combine(richA, "sidecars", "ownership.v0.json"), Path.Combine(richA, "sidecars", "delta.json"), null, null, listFile);
+            if (rcA2 != 0) throw new Exception($"re-ingest exited {rcA2}");
+            var archSidecar = File.ReadAllText(Path.Combine(archTmp, "input", "archived.v0.json"));
+            if (!archSidecar.Contains("\"svc\"")) throw new Exception("plain list not wrapped into archived.v0.json");
+            var planA = LoadEngine(archTmp).BuildPlan();
+            if (planA.Waves.Any(w => w.ReleaseUnits.Any(u => u.Repo == "svc"))) throw new Exception("archived repo must not appear in any wave");
+            var svcA = planA.Repos.FirstOrDefault(r => r.Repo == "svc") ?? throw new Exception("svc missing from plan rows");
+            if (svcA.Classification != "affected") throw new Exception($"classification changed to {svcA.Classification} — archived must NOT change it");
+            if (svcA.ActionType != "archived-excluded") throw new Exception($"action {svcA.ActionType}");
+            if (!svcA.Reasons.Any(r => r.Contains("ARCHIVED"))) throw new Exception("named ARCHIVED reason missing");
+            if (!Report.Render(planA).Contains("archived-excluded")) throw new Exception("report must show the archived-excluded action");
+            Console.WriteLine("ok   plan-archived-exclusion (evidence kept, waves excluded, named reason; plain-list carrier wraps)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL plan-archived-exclusion: {ex.Message}"); }
+        finally { if (Directory.Exists(archTmp)) Directory.Delete(archTmp, true); }
 
         // SPEC-008 §7.4: two-repo estate end-to-end on committed real scans — machine-checked forever
         var estateTmp = Path.Combine(Path.GetTempPath(), "ua-estate2-" + Guid.NewGuid().ToString("N")[..8]);

@@ -91,6 +91,17 @@ public sealed class DeltaFile
     [JsonPropertyName("changes")] public List<DeltaChange> Changes { get; set; } = new();
 }
 
+// Operator annotation: repos that are ARCHIVED at their remote (found live 2026-10-22 — the synthetic
+// estate's archived consumer was scheduled in a wave with an executable pin edit, but an archived repo
+// can never take the PR). Entries may be fixture repo keys OR repo folder names (the leaf of the key);
+// both match. Evidence flows unchanged — archived repos keep their classification and rows; only
+// wave scheduling is excluded, with a named reason.
+public sealed class ArchivedFile
+{
+    [JsonPropertyName("schemaVersion")] public string SchemaVersion { get; set; } = "archived.v0";
+    [JsonPropertyName("repos")] public List<string> Repos { get; set; } = new();
+}
+
 public sealed class DeltaChange
 {
     [JsonPropertyName("id")] public string Id { get; set; } = "";

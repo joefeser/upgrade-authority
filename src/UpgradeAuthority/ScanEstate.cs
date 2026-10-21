@@ -88,7 +88,7 @@ public static class ScanEstate
         string? selfTeam, bool allowStale, string[] tracemapExcludes,
         string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
         bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
-        int parallel = 2, bool build = false, bool indexDepsJson = false)
+        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
         if (updateCheckouts && worktreeMode)
@@ -753,7 +753,24 @@ public static class ScanEstate
             File.WriteAllText(scopePathForIngest, scopeText);
         }
         var fixtureDir = Path.Combine(Path.GetFullPath(outDir), "fixture");
-        var rcIngest = Ingest.Run(freshDirs.ToArray(), fixtureDir, producerPath, ownershipPath, hasDelta ? deltaPath : null, null, scopePathForIngest);
+        // ---- archived annotation (live 2026-10-22: the synthetic estate's archived repo was scheduled
+        // with an executable pin edit — impossible work; archived repos keep evidence, lose waves) ----
+        string? archivedPathForIngest = null;
+        if (archivedPath is not null)
+        {
+            if (!File.Exists(archivedPath)) { Console.Error.WriteLine($"error: --archived file not found: {archivedPath}"); return 1; }
+            var names = File.ReadAllLines(archivedPath).Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
+            if (names.Count == 0) { Console.Error.WriteLine("error: --archived file names nothing (one repo folder name per line, # comments allowed)"); return 1; }
+            var known = entries.ToDictionary(e => e.Name, e => e, StringComparer.Ordinal);
+            var unknown = names.Where(n => !known.ContainsKey(n)).ToList();
+            if (unknown.Count > 0) { Console.Error.WriteLine($"error: --archived names {unknown.Count} repo(s) not in this run: {string.Join(", ", unknown.Take(3))}{(unknown.Count > 3 ? $" (+{unknown.Count - 3} more)" : "")}"); return 1; }
+            var sidecar = Path.Combine(Path.GetFullPath(outDir), "archived.v0.json");
+            Program.WriteArtifactFile(sidecar, JsonSerializer.Serialize(new ArchivedFile { Repos = names }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+            Console.Error.WriteLine($"note: archived annotation recorded ({names.Count} repo(s)) — they keep their evidence but are excluded from plan waves (cannot take PRs)");
+            archivedPathForIngest = sidecar;
+        }
+
+        var rcIngest = Ingest.Run(freshDirs.ToArray(), fixtureDir, producerPath, ownershipPath, hasDelta ? deltaPath : null, null, scopePathForIngest, archivedPathForIngest);
         if (rcIngest != 0) return rcIngest;
         if (!hasDelta)
         {

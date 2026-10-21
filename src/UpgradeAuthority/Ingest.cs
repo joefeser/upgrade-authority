@@ -71,7 +71,7 @@ public static class Ingest
         return f.Repo ?? manifest?.RepoName ?? "unknown";
     }
 
-    public static int Run(string[] scanDirs, string outDir, string? producerPath, string? ownershipPath, string? deltaPath, string? scansRoot = null, string? scopePath = null)
+    public static int Run(string[] scanDirs, string outDir, string? producerPath, string? ownershipPath, string? deltaPath, string? scansRoot = null, string? scopePath = null, string? archivedPath = null)
     {
         var ingestGaps = new List<string>(); // stderr warnings (flat)
         var repoIngestGaps = new List<(string Key, string Value)>(); // per-repo coverage gaps
@@ -694,6 +694,20 @@ public static class Ingest
         if (oResult != 0) return oResult;
         if (hasDelta) File.Copy(deltaFile, Path.Combine(inputDir, "delta.json"), true);
         if (scopePath is not null) File.Copy(scopePath, Path.Combine(inputDir, "scope.v0.json"), true); // SPEC-017: verbatim copy; the flag's bytes win
+        if (archivedPath is not null)
+        {
+            // tolerant carrier (the scope plain-list precedent): a JSON sidecar copies verbatim; a plain
+            // one-name-per-line list (the scan-estate --archived shape) is wrapped into archived.v0.json
+            var text = File.ReadAllText(archivedPath);
+            if (text.TrimStart().StartsWith('{'))
+                File.Copy(archivedPath, Path.Combine(inputDir, "archived.v0.json"), true);
+            else
+            {
+                var names = text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
+                File.WriteAllText(Path.Combine(inputDir, "archived.v0.json"),
+                    JsonSerializer.Serialize(new ArchivedFile { Repos = names }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+            }
+        } // archived annotation rides the fixture input (planner excludes from waves)
 
 
 

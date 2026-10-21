@@ -15,6 +15,16 @@ public sealed class Engine
     readonly EstateScope? _scope; // SPEC-017: optional estate scope echo
     readonly Dictionary<string, string> _depsFreshness = new(); // SPEC-019 §5.3: repo -> fresh|stale|none|fresh-by-build; absent entry = conservative
     HashSet<string>? _affectedPkgsForReasons; // set in BuildPlan before BuildRepo runs (stale-reason scope)
+    readonly HashSet<string> _archivedKeys = new(StringComparer.Ordinal); // archived.v0: full fixture repo keys
+    readonly HashSet<string> _archivedLeafs = new(StringComparer.Ordinal); // archived.v0: folder-name leaves (scan-estate writes these)
+    internal bool IsArchived(string repo) => _archivedKeys.Contains(repo) || _archivedLeafs.Contains(RepoLeaf(repo));
+    static string RepoLeaf(string repo)
+    {
+        var t = repo.TrimEnd('/');
+        var cut = t.LastIndexOfAny(new[] { '/', ':' });
+        var leaf = cut >= 0 ? t[(cut + 1)..] : t;
+        return leaf.EndsWith(".git", StringComparison.Ordinal) ? leaf[..^4] : leaf;
+    }
     BuildFreshnessFile? _pendingFreshness; // ctor staging: applied once mirrors are loaded
     string _lockKind = "lockfile-rows.v0"; // evidence kind cites the input's actual schemaVersion (SPEC-007 §5.6)
 
@@ -80,13 +90,19 @@ public sealed class Engine
 
     static readonly List<(string Repo, string Pkg)> _noDeps = new();
 
-    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos, EstateScope? scope = null, BuildFreshnessFile? buildFreshness = null, bool hasDelta = true)
+    public Engine(ProducerEvidence pe, OwnershipFile ow, PackageEvidence px, DeltaFile delta, List<LockfileRows> lockRepos, EstateScope? scope = null, BuildFreshnessFile? buildFreshness = null, bool hasDelta = true, ArchivedFile? archived = null)
     {
         if (hasDelta && delta.Changes.Count != 1)
             throw new UaException($"rejected: package-delta.v1 must contain exactly one change (found {delta.Changes.Count}); single-change planning only in V0 (SPEC-003 §1a)");
         _hasDelta = hasDelta;
         _c = hasDelta ? delta.Changes[0] : new DeltaChange(); // sentinel when absent — BuildPlan refuses before reading it
         _pe = pe; _ow = ow; _px = px; _scope = scope;
+        foreach (var a in archived?.Repos ?? new List<string>())
+        {
+            _archivedKeys.Add(Norm(a));
+            var leaf = RepoLeaf(a);
+            if (leaf.Length > 0) _archivedLeafs.Add(leaf);
+        }
         _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
         // Mirrors load FIRST (PR6 Codex r1): the producer fold below resolves repos through Norm, so an
         // alias+canonical pair claiming one id must already map to one identity — and the STATIC map must
@@ -328,7 +344,7 @@ public sealed class Engine
             return cp;
         }
 
-        var scheduled = affected.Where(r => OwnershipOf(r) != "unknown").ToList();
+        var scheduled = affected.Where(r => OwnershipOf(r) != "unknown" && !IsArchived(r)).ToList(); // archived repos: evidence rows stay, wave scheduling goes (they can never take the PR)
         bool producerGated = contradiction || producerUnknown;
 
         // root gate: own unpublished dep, else inherited from deps (transitive propagation).
@@ -419,6 +435,13 @@ public sealed class Engine
         foreach (var w in waves)
             foreach (var u2 in w.ReleaseUnits)
             {
+                // archived prerequisite honesty: a scheduled unit whose dependency edge points at an
+                // ARCHIVED producer cannot rely on that republication ever landing — the wave order is
+                // sound, the campaign is not, and the plan must say so (operator: restore or fork)
+                var archDep = deps.GetValueOrDefault(u2.Repo, _noDeps).Where(d => IsArchived(d.Repo) && affected.Contains(d.Repo))
+                    .OrderBy(d => d.Repo, StringComparer.Ordinal).ThenBy(d => d.Pkg, StringComparer.Ordinal).FirstOrDefault();
+                if (archDep.Repo is not null)
+                    (u2.Notes ??= new List<string>()).Add($"prerequisite producer {archDep.Repo} (of {archDep.Pkg}) is ARCHIVED — it will never republish; this campaign needs operator action (restore or fork it) or the wave order is theoretical");
                 if (producers.Contains(u2.Repo) && u2.Repo == producers.FirstOrDefault()) continue;
                 var ds = _facts.Keys
                     .Where(r2 => r2 != u2.Repo && scheduled.Contains(r2) && waveIndexOf.ContainsKey(r2) && waveIndexOf[r2] > w.Index
@@ -781,7 +804,15 @@ public sealed class Engine
             e.Reasons.Add($"transitive CONTENT exposure to {Target} via {depsForD(repo).pkg} remains UNKNOWN (no lockfile) — recorded as a gap, never as not-affected");
 
         // qualifiers
-        if (contradiction0(producers) && isProducer)
+        if (IsArchived(repo))
+        {
+            // live finding 2026-10-22: an archived consumer was scheduled in a wave with an executable
+            // pin edit — impossible work. Archived repos keep their classification and evidence rows but
+            // never receive wave work; the operator decides (restore, fork, or leave pinned forever).
+            e.Reasons.Insert(0, $"ARCHIVED (operator annotation archived.v0) — this remote cannot take PRs, so no wave work is scheduled; classification and evidence are unchanged; the pin edit is an operator decision (restore, fork, or leave pinned)");
+            e.ActionType = "archived-excluded";
+        }
+        else if (contradiction0(producers) && isProducer)
         {
             int claimIdx = producers.IndexOf(repo);
             e.Reasons.Insert(0, claimIdx == 0
