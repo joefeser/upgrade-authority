@@ -165,11 +165,18 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
 - All diagnostics (run on the estate machine; substitute the fragments):
 
   ```powershell
-  # 1) odd-prefixed family: the FACT names its own provenance and signals
+  # 1) odd-prefixed family — OCR-FRIENDLY FORM (short labeled lines, not the raw JSON line;
+  #    the work machine cannot copy text out, so photograph THESE five lines at a larger font)
   $r = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*<repo-fragment>*' | Select-Object -First 1
-  Select-String "$($r.FullName)\facts.ndjson" -Pattern '<odd-prefix>\.' | Select-Object -First 2
-  # derived-default + the csproj file literally named <odd-prefix>.* = truth about a naming convention;
-  # interpolated = check the AssemblyName it evaluated from
+  $m = Select-String "$($r.FullName)\facts.ndjson" -Pattern '<odd-prefix>\.' | Select-Object -First 1
+  $m.Line | ConvertFrom-Json | Select-Object `
+    @{n='id';e={$_.targetSymbol}}, `
+    @{n='provenance';e={$_.properties.packageIdProvenance}}, `
+    @{n='source';e={$_.properties.packageIdSource}}, `
+    @{n='signals';e={$_.properties.packSignals}}, `
+    @{n='file';e={$_.evidence.filePath}} | Format-List
+  # derived-default + the csproj literally named <odd-prefix>.* = truth about a naming convention;
+  # interpolated + EMPTY signals = AssemblyName-only path = false-producer candidate (naming, not packing)
 
   # 2) checklist nominees: legit ONLY with a literal IsPackable=true
   Select-String -Path (Get-ChildItem "<repos-root>\<repo>" -Recurse -Filter *.csproj).FullName `
