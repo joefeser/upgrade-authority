@@ -232,6 +232,35 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   ciDefined count + internalPackages near ~100 closes the producer saga.
   Dll+flags changed = one full rescan (the usual honesty tax).
 
+## 2026-10-22 — PRODUCER EYEBALL PASS (the finish gate; post-guard numbers)
+
+- Final numbers: projectDeclared=57, ciDefined=114, internalPackages=142
+  (26 test ghosts removed by the guard; 29 packages dual-claimed by
+  metadata+workflow — counted once in internal, visible with both
+  provenances in producers).
+- The INVERSE views — judge "should this be here?" per row:
+
+  ```powershell
+  # per-producer with repo + provenance (spot test apps by repo name)
+  $reg = Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json
+  $reg.producers | Sort-Object packageId | Format-Table packageId, @{n='repo';e={Split-Path $_.repo -Leaf}}, provenance -AutoSize
+
+  # full evidence join — every producer with WHERE the claim came from
+  Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
+    $repo = $_.Name
+    Select-String "$($_.FullName)\facts.ndjson" -Pattern 'PackageProduced' | ForEach-Object {
+      $f = $_.Line | ConvertFrom-Json
+      [pscustomobject]@{ pkg=$f.targetSymbol; repo=$repo; prov=$f.properties.packageIdProvenance; signals=$f.properties.packSignals; wf=$f.properties.workflowPath }
+    }
+  } | Sort-Object repo, pkg | Format-Table -AutoSize
+  ```
+
+- Reading test apps: derived-default + ci-hint-workflow rows in repos you
+  know are test apps. Three-way call per row: genuinely ships (test utility
+  packages are real) / repo calls the release workflow but shouldn't
+  (estate-hygiene ticket at work) / a shape the guard should learn (report
+  the row). Single-digit stragglers + everything else recognized = PASS.
+
 ## 2026-10-21 — THE CLEAN PASS (saga complete)
 
 - Final run: `2 scanned, 123 reused, 0 SKIPPED, 14 out-of-scope` — both
