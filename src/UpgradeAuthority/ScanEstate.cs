@@ -32,6 +32,7 @@ public static class ScanEstate
         public string RepoName = ""; // SPEC-019 §3.2: the CANONICAL estate name — in worktree mode RepoPath is the satellite (its folder leaf is a ua hex name, never an identity)
         public bool IndexDepsJson; // pass-through flag for the real runner (stubs read RepoName/HeadSha)
         public bool IndexCiProducers; // pass-through: --index-ci-producers (ci-defined producer evidence from workflow files)
+        public string? CiHintsPath; // path to ci-hints.v1.json (auto-detected in the out dir; explicit --ci-hints overrides)
     }
 
     public sealed class CacheMeta
@@ -43,6 +44,7 @@ public static class ScanEstate
         [JsonPropertyName("depsFingerprint")] public string? DepsFingerprint { get; set; } // sorted (path,size,mtime) hash of bin/**/*.deps.json — make-style skip key
         [JsonPropertyName("indexDepsJson")] public bool IndexDepsJson { get; set; }
         [JsonPropertyName("indexCiProducers")] public bool IndexCiProducers { get; set; }
+        [JsonPropertyName("ciHintsSha256")] public string? CiHintsSha256 { get; set; }
         [JsonPropertyName("buildFreshness")] public string? BuildFreshness { get; set; } // fresh|stale|none|fresh-by-build
         [JsonPropertyName("scanMode")] public string ScanMode { get; set; } = "in-place"; // in-place|worktree
         [JsonPropertyName("trunk")] public string? Trunk { get; set; } // RESOLVED, e.g. origin/main
@@ -79,6 +81,7 @@ public static class ScanEstate
         foreach (var a in ComposeScanArgs(r)) psi.ArgumentList.Add(a);
         if (r.IndexDepsJson) psi.ArgumentList.Add("--index-deps-json");
         if (r.IndexCiProducers) psi.ArgumentList.Add("--index-ci-producers"); // ci-defined producers: the lane for estates that declare nothing (found live: one IsPackable in ~130 repos)
+        if (r.CiHintsPath is not null) { psi.ArgumentList.Add("--ci-hints"); psi.ArgumentList.Add(r.CiHintsPath); } // operator hints: shared workflows that mean 'this repo publishes' (sidecar auto-pickup, no flags)
         using var p = System.Diagnostics.Process.Start(psi)!;
         var outTask = p.StandardOutput.ReadToEndAsync();
         var errTask = p.StandardError.ReadToEndAsync();
@@ -91,7 +94,7 @@ public static class ScanEstate
         string? selfTeam, bool allowStale, string[] tracemapExcludes,
         string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
         bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
-        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false)
+        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false, string? ciHintsPath = null)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
         if (updateCheckouts && worktreeMode)
@@ -127,6 +130,12 @@ public static class ScanEstate
         var ownershipPathPre = Path.Combine(Path.GetFullPath(outDir), "ownership.v0.json");
         if (!File.Exists(ownershipPathPre) && selfTeam is null)
         { Console.Error.WriteLine("error: --self <teamId> is required to bootstrap ownership.v0.json (teams are never invented) — checked up front, before any scanning; pass --self once, or place an existing ownership.v0.json in the out dir"); return 1; }
+
+        // ci-hints sidecar auto-pickup (no flags needed): <outDir>/ci-hints.v1.json; explicit --ci-hints wins
+        var ciHintsResolved = ciHintsPath ?? (File.Exists(Path.Combine(Path.GetFullPath(outDir), "ci-hints.v1.json")) ? Path.Combine(Path.GetFullPath(outDir), "ci-hints.v1.json") : null);
+        string? ciHintsSha = ciHintsResolved is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(ciHintsResolved))).ToLowerInvariant();
+        if (ciHintsResolved is not null && indexCiProducers)
+            Console.Error.WriteLine($"note: ci-hints loaded ({ciHintsResolved}) — shared workflows named there mean 'this repo publishes'");
 
         var scansDir = Path.Combine(Path.GetFullPath(outDir), "scans");
         Directory.CreateDirectory(scansDir);
@@ -387,6 +396,7 @@ public static class ScanEstate
                 && meta.StaleScan == staleWaived // a dirty/behind scan never speaks for a clean run at the same SHA
                 && meta.IndexDepsJson == indexDepsJson
                 && meta.IndexCiProducers == indexCiProducers
+                && Ord(meta.CiHintsSha256) == Ord(ciHintsSha)
                 && meta.ScanMode == (worktreeMode ? "worktree" : "in-place")
                 && meta.Trunk == trunk
                 && Ord(meta.BuildFreshness) == Ord(freshnessNow)
@@ -513,7 +523,7 @@ public static class ScanEstate
                 }
                 ClearLeftovers(scansDir, entry.Name);
                 var tmp = Path.Combine(scansDir, "." + entry.Name + ".tmp-" + Guid.NewGuid().ToString("N")[..8]);
-                var request = new ScanRequest { RepoPath = scanTarget, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes, RepoName = entry.Name, IndexDepsJson = indexDepsJson, IndexCiProducers = indexCiProducers };
+                var request = new ScanRequest { RepoPath = scanTarget, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes, RepoName = entry.Name, IndexDepsJson = indexDepsJson, IndexCiProducers = indexCiProducers, CiHintsPath = (indexCiProducers ? ciHintsResolved : null) };
                 Console.Error.WriteLine($"scanning {entry.Name} ({System.Threading.Interlocked.Increment(ref scanStarted)}/{plannedScans.Count}){(satellite is not null ? " [worktree]" : "")}"); // tracemap runs take real time — a start line per repo keeps an estate-sized run readable
                 var rc = scanner is not null ? scanner(request) : DefaultRunner(request, tracemapDll!);
                 if (satellite is not null)
@@ -572,7 +582,7 @@ public static class ScanEstate
                 var meta = new CacheMeta
                 {
                     Exclude = tracemapExcludes.ToList(), TracemapSha256 = dllHash, StaleScan = staleWaived,
-                    DepsFingerprint = fingerprint, IndexDepsJson = indexDepsJson, IndexCiProducers = indexCiProducers, BuildFreshness = freshness,
+                    DepsFingerprint = fingerprint, IndexDepsJson = indexDepsJson, IndexCiProducers = indexCiProducers, CiHintsSha256 = ciHintsSha, BuildFreshness = freshness,
                     ScanMode = worktreePath is not null ? "worktree" : "in-place",
                     Trunk = resolvedTrunk, // recorded RESOLVED so --trunk main == auto-detect (§6)
                 };
