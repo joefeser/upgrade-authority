@@ -40,6 +40,7 @@ public static class ScanEstate
         [JsonPropertyName("schemaVersion")] public string SchemaVersion { get; set; } = "scan-estate-cache.v2"; // SPEC-019 §6: v1/unknown ⇒ rescan
         [JsonPropertyName("exclude")] public List<string> Exclude { get; set; } = new();
         [JsonPropertyName("tracemapSha256")] public string? TracemapSha256 { get; set; }
+        [JsonPropertyName("tracemapVersionsSha256")] public string? TracemapVersionsSha256 { get; set; } // extractor-version-set hash — THE cache key since 2026-10-22 (dll bytes only as fallback); null = pre-versions tracemap or stub scanner
         [JsonPropertyName("staleScan")] public bool StaleScan { get; set; }
         [JsonPropertyName("depsFingerprint")] public string? DepsFingerprint { get; set; } // sorted (path,size,mtime) hash of bin/**/*.deps.json — make-style skip key
         [JsonPropertyName("indexDepsJson")] public bool IndexDepsJson { get; set; }
@@ -120,8 +121,26 @@ public static class ScanEstate
         if (tracemapDll is not null && !File.Exists(tracemapDll))
         { Console.Error.WriteLine($"error: --tracemap dll not found: {tracemapDll} (build tracemap once, pass bin/Release/net10.0/tracemap.dll)"); return 1; }
         string? dllHash = null;
+        string? versionsKey = null;
         if (tracemapDll is not null)
+        {
             dllHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(tracemapDll))).ToLowerInvariant();
+            // THE CACHE KEY (2026-10-22): the extractor-VERSION SET, not the dll bytes — reporting/export
+            // changes must not invalidate cached evidence (live: every cosmetic rebuild cost a full
+            // estate rescan). Fallback to the dll hash when tracemap predates the `versions` verb.
+            // CONTRACT: extractor behavior changes bump their ScannerVersions constant or this key lies.
+            var psiV = new System.Diagnostics.ProcessStartInfo("dotnet", $"\"{tracemapDll}\" versions") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            try
+            {
+                using var pV = System.Diagnostics.Process.Start(psiV)!;
+                var vOut = pV.StandardOutput.ReadToEnd();
+                pV.WaitForExit(10000);
+                if (pV.ExitCode == 0 && vOut.TrimStart().StartsWith('{'))
+                    versionsKey = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(vOut.ReplaceLineEndings("\n")))).ToLowerInvariant();
+            }
+            catch { /* pre-versions tracemap: dll-hash fallback below */ }
+            versionsKey ??= "dll:" + dllHash;
+        }
 
         // PREFLIGHT (live 2026-10-21: a full 124-repo worktree pass finished its entire scan phase and
         // only THEN refused here) — bootstrap preconditions are checked BEFORE any fetch/scan, so a long
@@ -392,7 +411,7 @@ public static class ScanEstate
             var reuse = hasManifest && hasFacts && meta is not null
                 && CachedCommitSha(manifestPath) == headSha
                 && meta.Exclude.SequenceEqual(tracemapExcludes)
-                && (tracemapDll is null || meta.TracemapSha256 == dllHash) // hash compared only when --tracemap given
+                && (tracemapDll is null || CacheKeyMatches(meta, versionsKey, dllHash)) // versions-set key compared only when --tracemap given
                 && meta.StaleScan == staleWaived // a dirty/behind scan never speaks for a clean run at the same SHA
                 && meta.IndexDepsJson == indexDepsJson
                 && meta.IndexCiProducers == indexCiProducers
@@ -581,7 +600,7 @@ public static class ScanEstate
                 }
                 var meta = new CacheMeta
                 {
-                    Exclude = tracemapExcludes.ToList(), TracemapSha256 = dllHash, StaleScan = staleWaived,
+                    Exclude = tracemapExcludes.ToList(), TracemapSha256 = dllHash, TracemapVersionsSha256 = versionsKey, StaleScan = staleWaived,
                     DepsFingerprint = fingerprint, IndexDepsJson = indexDepsJson, IndexCiProducers = indexCiProducers, CiHintsSha256 = ciHintsSha, BuildFreshness = freshness,
                     ScanMode = worktreePath is not null ? "worktree" : "in-place",
                     Trunk = resolvedTrunk, // recorded RESOLVED so --trunk main == auto-detect (§6)
@@ -884,6 +903,16 @@ public static class ScanEstate
 
     // (retired 2026-10-21: eligibility now resolves an effective remote — origin, or the single
     //  remote with a warning; multi-remote-without-origin still refuses — see the eligibility loop)
+
+    static bool CacheKeyMatches(CacheMeta meta, string? versionsKey, string? dllHash)
+    {
+        // Same key KIND wins: both versions-keyed -> compare sets; both legacy/dll -> compare hashes.
+        // A null on either side (pre-versions tracemap, stub scanner) falls back to the dll hash —
+        // mismatching kinds rescan once, then the stronger key holds.
+        if (meta.TracemapVersionsSha256 is { } mKey && versionsKey is { } rKey && !mKey.StartsWith("dll:") && !rKey.StartsWith("dll:"))
+            return mKey == rKey;
+        return meta.TracemapSha256 == dllHash;
+    }
 
     static string Sha7(string sha) => sha.Length <= 7 ? sha : sha[..7];
     static string Ord(string? s) => s ?? "";
