@@ -17,10 +17,8 @@ dotnet build src/UpgradeAuthority -c Release
 
 # 2) refresh tracemap + PROVE the dll is fresh
 cd C:\tracemap
-# VERIFICATION PASS (pre-PR): the producer tiers live on a branch until
-# verified in the wild — checkout replaces the plain git pull:
-git fetch
-git checkout feature/package-produced-sdk-default-tiers
+git checkout dev          # the producer tiers MERGED via PR #900 — off the feature branch
+git pull
 dotnet build src/dotnet/TraceMap.sln -c Release
 Get-Item C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll | Select-Object LastWriteTime
 
