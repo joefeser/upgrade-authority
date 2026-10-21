@@ -188,6 +188,50 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
 - Merge rule: PR the branch once every internalPackages name is either
   known-legit or explained; odd-but-true beats tidy-but-wrong.
 
+## 2026-10-22 — CI-HINTS VERIFICATION PASS (the ~100-package completion; supersedes older blocks)
+
+- Producer story: estate declares nothing (one IsPackable in-repo; ids from
+  filenames; version from GitVersion); the shared CI workflow call is the
+  publication signal. Tracemap branch feature/ci-derived-package-id
+  (ci-workflow/0.2.0, includes BOTH the derived-id local pack tier and the
+  ci-hints lane) + ua auto-loading this sidecar.
+- Drop the hints file at C:\ua-estate\ci-hints.v1.json (adjust the uses
+  path to the REAL org/repo from release.yml; @ref omitted — refs ignored):
+
+  ```json
+  {
+    "schemaVersion": "ci-hints.v1",
+    "packWorkflows": [
+      { "uses": "<org>/<shared-workflows-repo>/.github/workflows/dotnet-release-library.yml", "note": "internal release tooling - a call means this repo publishes" }
+    ]
+  }
+  ```
+
+- And the archived list at C:\ua-estate\archived.txt (plain names, one per
+  line) for repos that cannot take PRs.
+- Then the verification pass:
+
+  ```powershell
+  cd C:\tracemap
+  git fetch
+  git checkout feature/ci-derived-package-id
+  dotnet build src/dotnet/TraceMap.sln -c Release
+  Get-Item C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll | Select-Object LastWriteTime
+
+  dotnet $ua scan-estate --repos-root <repos-root> `
+    --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
+    --scope <repos-root>\repos.txt `
+    --out C:\ua-estate --parallel 8 --worktree --archived C:\ua-estate\archived.txt --index-ci-producers
+
+  dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
+  (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).provenanceSummary
+  ```
+
+- Watch for: `note: ci-hints loaded (...)` before the fetch phase (proves the
+  sidecar engaged); then provenanceSummary projectDeclared/ciDefined — the
+  ciDefined count + internalPackages near ~100 closes the producer saga.
+  Dll+flags changed = one full rescan (the usual honesty tax).
+
 ## 2026-10-21 — THE CLEAN PASS (saga complete)
 
 - Final run: `2 scanned, 123 reused, 0 SKIPPED, 14 out-of-scope` — both
