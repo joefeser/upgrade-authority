@@ -31,6 +31,7 @@ public static class ScanEstate
         public string[] Excludes = Array.Empty<string>();
         public string RepoName = ""; // SPEC-019 §3.2: the CANONICAL estate name — in worktree mode RepoPath is the satellite (its folder leaf is a ua hex name, never an identity)
         public bool IndexDepsJson; // pass-through flag for the real runner (stubs read RepoName/HeadSha)
+        public bool IndexCiProducers; // pass-through: --index-ci-producers (ci-defined producer evidence from workflow files)
     }
 
     public sealed class CacheMeta
@@ -41,6 +42,7 @@ public static class ScanEstate
         [JsonPropertyName("staleScan")] public bool StaleScan { get; set; }
         [JsonPropertyName("depsFingerprint")] public string? DepsFingerprint { get; set; } // sorted (path,size,mtime) hash of bin/**/*.deps.json — make-style skip key
         [JsonPropertyName("indexDepsJson")] public bool IndexDepsJson { get; set; }
+        [JsonPropertyName("indexCiProducers")] public bool IndexCiProducers { get; set; }
         [JsonPropertyName("buildFreshness")] public string? BuildFreshness { get; set; } // fresh|stale|none|fresh-by-build
         [JsonPropertyName("scanMode")] public string ScanMode { get; set; } = "in-place"; // in-place|worktree
         [JsonPropertyName("trunk")] public string? Trunk { get; set; } // RESOLVED, e.g. origin/main
@@ -76,6 +78,7 @@ public static class ScanEstate
         psi.ArgumentList.Add(tracemapDll);
         foreach (var a in ComposeScanArgs(r)) psi.ArgumentList.Add(a);
         if (r.IndexDepsJson) psi.ArgumentList.Add("--index-deps-json");
+        if (r.IndexCiProducers) psi.ArgumentList.Add("--index-ci-producers"); // ci-defined producers: the lane for estates that declare nothing (found live: one IsPackable in ~130 repos)
         using var p = System.Diagnostics.Process.Start(psi)!;
         var outTask = p.StandardOutput.ReadToEndAsync();
         var errTask = p.StandardError.ReadToEndAsync();
@@ -88,7 +91,7 @@ public static class ScanEstate
         string? selfTeam, bool allowStale, string[] tracemapExcludes,
         string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
         bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
-        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null)
+        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
         if (updateCheckouts && worktreeMode)
@@ -383,6 +386,7 @@ public static class ScanEstate
                 && (tracemapDll is null || meta.TracemapSha256 == dllHash) // hash compared only when --tracemap given
                 && meta.StaleScan == staleWaived // a dirty/behind scan never speaks for a clean run at the same SHA
                 && meta.IndexDepsJson == indexDepsJson
+                && meta.IndexCiProducers == indexCiProducers
                 && meta.ScanMode == (worktreeMode ? "worktree" : "in-place")
                 && meta.Trunk == trunk
                 && Ord(meta.BuildFreshness) == Ord(freshnessNow)
@@ -509,7 +513,7 @@ public static class ScanEstate
                 }
                 ClearLeftovers(scansDir, entry.Name);
                 var tmp = Path.Combine(scansDir, "." + entry.Name + ".tmp-" + Guid.NewGuid().ToString("N")[..8]);
-                var request = new ScanRequest { RepoPath = scanTarget, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes, RepoName = entry.Name, IndexDepsJson = indexDepsJson };
+                var request = new ScanRequest { RepoPath = scanTarget, ScanOutDir = tmp, HeadSha = headSha, Excludes = tracemapExcludes, RepoName = entry.Name, IndexDepsJson = indexDepsJson, IndexCiProducers = indexCiProducers };
                 Console.Error.WriteLine($"scanning {entry.Name} ({System.Threading.Interlocked.Increment(ref scanStarted)}/{plannedScans.Count}){(satellite is not null ? " [worktree]" : "")}"); // tracemap runs take real time — a start line per repo keeps an estate-sized run readable
                 var rc = scanner is not null ? scanner(request) : DefaultRunner(request, tracemapDll!);
                 if (satellite is not null)
@@ -568,7 +572,7 @@ public static class ScanEstate
                 var meta = new CacheMeta
                 {
                     Exclude = tracemapExcludes.ToList(), TracemapSha256 = dllHash, StaleScan = staleWaived,
-                    DepsFingerprint = fingerprint, IndexDepsJson = indexDepsJson, BuildFreshness = freshness,
+                    DepsFingerprint = fingerprint, IndexDepsJson = indexDepsJson, IndexCiProducers = indexCiProducers, BuildFreshness = freshness,
                     ScanMode = worktreePath is not null ? "worktree" : "in-place",
                     Trunk = resolvedTrunk, // recorded RESOLVED so --trunk main == auto-detect (§6)
                 };
