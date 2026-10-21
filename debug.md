@@ -153,6 +153,36 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   boundary). Test estate (ua-xyz) must encode one repo per tier row
   plus the edge zoo (archived, ssh twin, dirty, CPM-in-props).
 
+## 2026-10-21 — POST-FIVE-TIER REGISTRY: verification diagnostics (producers 2 -> 143)
+
+- Wild result: `projectDeclared: 143` (was 2); internalPackages populated.
+  Three residual classes before the branch merges:
+  (a) odd-prefixed package families — real convention vs tier bug?
+  (b) the something-stupid checklist (test projects / sample libraries
+  appearing as producers — legit only with a literal IsPackable=true);
+  (c) zero-signal sinks staying unknown = tier-3 honesty, NOT a failure
+  (their fix path is the ci-defined lane or operator declaration).
+- All diagnostics (run on the estate machine; substitute the fragments):
+
+  ```powershell
+  # 1) odd-prefixed family: the FACT names its own provenance and signals
+  $r = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*<repo-fragment>*' | Select-Object -First 1
+  Select-String "$($r.FullName)\facts.ndjson" -Pattern '<odd-prefix>\.' | Select-Object -First 2
+  # derived-default + the csproj file literally named <odd-prefix>.* = truth about a naming convention;
+  # interpolated = check the AssemblyName it evaluated from
+
+  # 2) checklist nominees: legit ONLY with a literal IsPackable=true
+  Select-String -Path (Get-ChildItem "<repos-root>\<repo>" -Recurse -Filter *.csproj).FullName `
+    -Pattern 'AssemblyName|IsPackable|PackageId'
+
+  # 3) full internal list to eyeball (the something-stupid pass)
+  dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
+  (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.internalPackages
+  ```
+
+- Merge rule: PR the branch once every internalPackages name is either
+  known-legit or explained; odd-but-true beats tidy-but-wrong.
+
 ## 2026-10-21 — THE CLEAN PASS (saga complete)
 
 - Final run: `2 scanned, 123 reused, 0 SKIPPED, 14 out-of-scope` — both
