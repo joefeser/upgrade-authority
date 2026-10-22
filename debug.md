@@ -326,6 +326,32 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v16: CASE is the suspect (matcher is ordinal; OCR cannot tell DevOps/Devops apart — photos read it as Dev0ps); restore works (expired-key theory dead)
+
+- v15 receipts: tabs 0; first 3 bytes 110,97,109 = "nam" (no BOM); all
+  spaces. Operator: dotnet restore WORKS on the repo — the Artifactory
+  key is fine; FailedOrPartial is a real solo-build failure of some
+  project (the 200 compiler gaps are its receipts) and does NOT gate the
+  CI lane (unconditional in code).
+- Remaining invisible variable: CASE. HintMatches compares ordinal
+  (case-sensitive); a one-character case difference in the shared-workflow
+  path between repos makes the hint silently not match (call-null return,
+  gap-less by design). Photos cannot carry case (they read Dev0ps).
+  OCR-proof comparison (hex + -ceq):
+
+  ```powershell
+  $a = (Select-String -Path "<repos-root>\<this-repo>\.github\workflows\release.yml" -Pattern 'uses:').Line
+  $b = (Select-String -Path "<repos-root>\<one-working-repo>\.github\workflows\release.yml" -Pattern 'uses:').Line
+  "equal: $($a -ceq $b)"
+  "a-hex: $([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($a)).Substring(0,80))"
+  "b-hex: $([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($b)).Substring(0,80))"
+  (Get-Content C:\ua-estate\ci-hints.v1.json -Raw)
+  ```
+
+- Read: equal False -> case difference found; fix = add THIS repo's exact
+  spelling to ci-hints.v1.json packWorkflows (one line, no code). equal
+  True -> fall back to the v15 indentation dump; parser dig continues.
+
 ## 2026-10-22 — ZEROER v15: the silent gate FOUND in code (sweep returns gap-less when no call matches); the last mile = INVISIBLE INDENTATION — lead-space signature dump
 
 - Code receipts: CiWorkflowProducerExtractor.ReadWorkflows enumerates the
