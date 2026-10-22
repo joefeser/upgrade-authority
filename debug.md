@@ -326,6 +326,31 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v28: chopped-prefix census — who credits the short names, and what happened to the prefixed ones
+
+- Operator: "tons got the prefix chopped off" + "enterpriselogging all
+  in unknown now". Suspects: the sweep crediting filename-derived ids for
+  short-named csproj (real published name differs), and/or 0.4.1 guard
+  refusals removing prefixed producers. The registry shows the whole
+  chopped population at once:
+
+  ```powershell
+  $reg = Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json
+  "chopped (no org prefix): $(@($reg.producers | Where-Object { $_.packageId -notlike '<org-prefix>*' }).Count) of $($reg.producers.Count)"
+  $reg.producers | Where-Object { $_.packageId -notlike '<org-prefix>*' } | Select-Object -First 15 repo, packageId, provenance
+  # and one affected repo's own new scan: producers + ci gaps
+  Select-String "C:\ua-estate\scans\<logging-repo>\facts.ndjson" -Pattern '"factType":"PackageProduced"' | ForEach-Object { if ($_.Line -match '"package":"([^"]+)"') { $Matches[1] } }
+  "ci gaps: $((Select-String "C:\ua-estate\scans\<logging-repo>\facts.ndjson" -Pattern 'ci-hint-id-unevidenced' -AllMatches).Matches.Count)"
+  ```
+
+- Read: chopped names with provenance ci-defined + repo rows = the sweep
+  crediting filenames where csproj declares nothing (are those the REAL
+  published names? dotnet pack WOULD publish the filename — if the real
+  feed shows prefixed names, identity comes from somewhere the scan does
+  not read yet). The logging repo's producer list + gap count shows
+  whether its prefixed producers were refused (0.4.1 guards) — gap
+  detail names the rule.
+
 ## 2026-10-22 — ZEROER v27: post-rescan producer REMOVAL (the ccsplus service) — first estate exposure of the 0.4.1 guards; the gap names the refusing rule
 
 - Operator: after the full rescan, one service producer disappeared
