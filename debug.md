@@ -326,6 +326,32 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v13: LOCAL REPRO FIRES at BOTH versions (head 1f568e69 AND production cac77b55) — code is innocent for this shape; the difference is the REAL repo. Ghost-project vs yml-bytes splitter
+
+- Scratch repo (reconstructed yml: job-level uses of the exact shared
+  workflow + ${{ }} with-conditionals; one signal csproj + one zero-signal
+  xunit-flavored csproj): BOTH producer rows emit, the xunit one via
+  ci-hint-workflow, zero gaps — at the production commit too. The lane,
+  matcher, and sweep handle this shape.
+- Operator scan metadata (v12): indexCiProducers true, staleScan false,
+  cache.v2, worktree mode — the lane ran for this repo.
+- Remaining candidates: (1) the 2 missing csproj are NOT in the scanned
+  inventory (ghost projects — sweep has nothing; silence with no gaps is
+  exactly this signature), (2) the real yml bytes differ beyond OCR reach.
+- Splitter (one paste; run from anywhere):
+
+  ```powershell
+  (Select-String "C:\ua-estate\scans\<that-repo>\facts.ndjson" -Pattern '<zero-signal-project>\.csproj' -AllMatches).Matches.Count
+  git -C <repos-root>\<that-repo> ls-files "*xUnit*"
+  ```
+
+- Read: count > 0 -> the project IS in the pipeline (yml-bytes chase:
+  photo the yml TOP half — the on:/jobs: region above the uses line).
+  count = 0 + ls-files lists them -> inventory/exclusion bug (tracemap
+  dig). count = 0 + ls-files EMPTY -> the csproj are not committed on
+  trunk (branch-only or local-only): the scan told the trunk truth and
+  the "missing" producers live only outside the scanned history.
+
 ## 2026-10-22 — ZEROER v12: release.yml MATCHES the hint (uses: the exact shared workflow, job-level, 52 lines) and no drop-gap exists — check THIS repo's scan metadata (never checked; all flag checks were on zeroed repos)
 
 - WEE read of the operator photo (local only): uses = the exact hinted
