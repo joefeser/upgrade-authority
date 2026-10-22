@@ -243,6 +243,29 @@ scan folders: evidence and tooling must survive the moment of their creation).
 Consequence for the operator loop: when the agent gives you a command in
 chat, the correct response is "is that in debug.md" BEFORE running it.
 
+## 2026-10-22 — ZEROER v4: cache DEAD (fresh 11:02pm scans, flag true) — the ARITHMETIC points at the SIDECAR ACCUMULATOR
+
+- Run C math: project 44 + ci 56 = 100 but internal = 111. Eleven extra
+  producers came from the producer-evidence SIDECAR — scan-estate merges
+  scan facts into it each run PRESERVING prior entries: old-vintage
+  producers persist and every registry counts them. The drift may be
+  sidecar-vs-facts blending, and the 142 itself may have carried ghosts.
+- Expose the accumulator:
+
+  ```powershell
+  (Select-String C:\ua-estate\producer-evidence.v0.json -Pattern '"repo"' -AllMatches).Matches.Count
+  (Select-String C:\ua-estate\producer-evidence.v0.json -Pattern 'ci-defined').Count
+  (Select-String C:\ua-estate\producer-evidence.v0.json -Pattern 'project-declared').Count
+  ```
+
+- Sidecar holds 100+ entries while current scans produce fewer -> the
+  accumulator is the villain; zeroed repos may ALWAYS have been fact-zero
+  (sidecar-resident producers from an older vintage). ua fix: scan-derived
+  entries REBUILT fresh every run (stale ones expire loudly); sidecar keeps
+  ONLY operator-declared entries permanently.
+- Still run the DIRECT SCAN (v3 block) on one zeroed repo — zero facts AND
+  zero gaps there = extractor silence (tracemap dig); anything else = sidecar.
+
 ## 2026-10-22 — ZEROER v3: TOTAL SILENCE (no yml, no ci-workflow, no imports) = the CI lane never ran for these scans; suspect = CACHE served a flag-less vintage
 
 - Every guard leaves a mark; these facts have none. One thing is totally
