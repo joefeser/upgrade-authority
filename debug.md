@@ -243,6 +243,33 @@ scan folders: evidence and tooling must survive the moment of their creation).
 Consequence for the operator loop: when the agent gives you a command in
 chat, the correct response is "is that in debug.md" BEFORE running it.
 
+## 2026-10-22 — ZEROER UPDATE: props hypothesis DEAD (no Directory.Build.props in the family); new prime suspect = parser-backed hint calls
+
+- Operator check: zeroed repos have NO Directory.Build.props — inheritance
+  cannot be the zeroer. New prime suspect: the Shared family shares a
+  release.yml TEMPLATE; hint calls now require the file to parse cleanly
+  through the bounded structural YAML parser — ONE rejected construct in
+  the template (anchor / block scalar / flow collection / unsupported
+  shape) zeroes EVERY repo using it simultaneously.
+- Diagnostics:
+
+  ```powershell
+  # parser rejections leave ci-workflow gaps in the zeroed repo's facts:
+  $z = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*EnterpriseLogging*'
+  Select-String "$($z.FullName)\facts.ndjson" -Pattern 'ci-workflow' | Select-Object -First 3
+
+  # the delta names the construct: zeroed vs still-producing release.yml
+  Get-Content "<repos-root>\<zeroed-repo>\.github\workflows\release.yml" -Raw
+  Get-Content "<repos-root>\<still-producing-repo>\.github\workflows\release.yml" -Raw
+  ```
+
+- ci-workflow-unsupported / ci-workflow-invalid in the zeroed repo = case
+  closed: the fix is either teaching the parser the template's construct or
+  (honest fallback) a gap that names the file so the hint can't silently
+  vanish. NOTE: a hint call that silently vanishes because its file didn't
+  parse is EXACTLY the "assertion silently dropped" class the strict-UTF-8
+  fix closed — same law, new door.
+
 ## 2026-10-22 — NAME THE ZEROER (whole-repo producer loss; prime suspect = root Directory.Build.props identity)
 
 - Whole-repo zeroing can't be per-project policy. Prime suspect: a ROOT-level
