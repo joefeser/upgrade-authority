@@ -326,6 +326,26 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v14: every kill-mode is LOUD (BOM+CRLF / tabs / no-final-newline / gitignore all leave ci gaps) — the real repo is SILENT; read the scan's own analyzer.log
+
+- Faithful two-file repro (release.yml + build.yml, byte-faithful to the
+  operator photos) FIRES: hint matched, rows emitted. Byte variants that
+  kill rows all emit 2 ci-workflow gaps (loud). gitignore variants: same,
+  loud. The real repo has ZERO ci rows AND ZERO ci gaps — the extractor
+  contributed nothing as if it never ran.
+- Every scan writes logs/analyzer.log (scanId, commitSha, buildStatus,
+  facts count, capability lines). The real repo's copy — with its 200
+  compilation gaps — is the next read:
+
+  ```powershell
+  Get-Content "C:\ua-estate\scans\<that-repo>\logs\analyzer.log"
+  ```
+
+- Read: buildStatus != Succeeded, a missing CI capability line, or any
+  error state = the extractor (or its prerequisite) failed for this repo
+  while the scan continued — the silent-zero mechanism. Match against a
+  WORKING repo's log (any repo that contributed ci entries) if unclear.
+
 ## 2026-10-22 — PRE-COMMIT CLEAN-GATE installed (the morning leak's structural fix; operator suggestion)
 
 - push-trial.sh guards PUSHES; a pre-commit hook guards the COMMIT itself
