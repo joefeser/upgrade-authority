@@ -232,6 +232,23 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   ciDefined count + internalPackages near ~100 closes the producer saga.
   Dll+flags changed = one full rescan (the usual honesty tax).
 
+## 2026-10-22 — FIND THE LOST PRODUCERS (per-repo sweep; pick the double-scan victim)
+
+- You don't need to guess which producers vanished — count them per repo:
+
+  ```powershell
+  Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
+    [pscustomobject]@{ repo = $_.Name; producers = (Select-String "$($_.FullName)\facts.ndjson" -Pattern 'PackageProduced' -AllMatches).Count }
+  } | Sort-Object producers, repo | Format-Table -AutoSize
+  ```
+
+- Read top-down: every 0 you KNOW is a shipping library = a lost producer
+  (apps are 0 legitimately). Small-but-shrunk counts are drift too. Pick one
+  lost-library zero for the DETERMINISM CHECK double-scan below.
+- Optional second signal: zeros correlating with FailedOrPartial build
+  status / Reduced analysis level (scan-manifest.json per repo) points at
+  coverage-gating rather than pure nondeterminism.
+
 ## 2026-10-22 — DETERMINISM CHECK (the projectDeclared drift 57->55->44 across runs with no project-lane change — Joe's oldest tracemap fear, now with receipts; THE gate before any merge)
 
 - Run C numbers: project 44, ci 56 (chain recovered +30 of the 88), internal 111,
