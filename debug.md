@@ -300,6 +300,32 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
     tracemap dig (paste that repo's csproj top 20 lines into chat, not here).
   - FACT LINES ≈ 0 → the repo was not parsed at all.
 
+## 2026-10-22 — ZEROER v7: rescan decision tree (answers "rescan now or tracemap fix?" — NEITHER yet)
+
+- Why not rescan now: the scans on disk ARE the rescan — fresh 11:02pm,
+  right flags, current dll (v3 receipts). Same bits in, same zeroed facts
+  out. A rescan only pays AFTER whichever fix the discriminator orders.
+- The order:
+  1. v6 paste (one paste, right above) → closes 44+56+11=111: counting
+     bug or not.
+  2. direct-scan bypass on ONE zeroed repo (v6 block, 3 lines) → THE
+     tracemap-vs-ua answer:
+     - PRODUCED > 0 → NO tracemap fix; ua cache/ingest eats facts →
+       ua-side fix, then rescan.
+     - PRODUCED = 0 + gap lines naming why → tracemap 0.4.0 guard
+       refusing (chain/import/test guards) → fix-or-by-design call,
+       likely a small 0.4.1 patch, then rescan.
+     - PRODUCED = 0 + NO gaps → extractor silence → paste that repo's
+       csproj (top 20 lines) into CHAT, not here; tracemap dig.
+- Before any fix + full rescan (a tracemap fix bumps extractor versions →
+  whole-estate rescan), preserve the zeroed vintage as evidence:
+
+  ```powershell
+  Copy-Item C:\ua-estate\scans C:\ua-estate\scans-zeroed-vintage -Recurse
+  ```
+
+- #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
+
 ## 2026-10-22 — ZEROER v5: accumulator DEAD (operator sidecar empty; merge writes the FIXTURE copy only — code-verified)
 
 - The 111-vs-100 arithmetic needs the full decomposition instead:
