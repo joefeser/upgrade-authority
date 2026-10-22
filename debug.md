@@ -326,6 +326,39 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v11: both present rows are project-lane derived-default; CI lane contributed NOTHING to this repo — the missing 2 are zero-signal projects whose only rescue (the hint sweep) never fired
+
+- WEE read of the operator photo (local Apple Vision only; hosted: none):
+  both facts are PROJECT-lane rows — packageIdProvenance derived-default
+  (filename id), packSignals "Authors, Description, PackageTags,
+  Product", extractor project-file/0.4.2, version empty. Gap tally:
+  compilation 200 (noise), PropertyMappingShapeUnsupported 4,
+  unknown-candidate 1 — ZERO ci-* rows or gaps: the CI lane contributed
+  nothing to this repo. Zero-signal csproj (no pack metadata) refuse
+  silently in the project lane BY DESIGN; their only producer path is
+  the CI hint sweep, which never fired here (no call seen at all — not
+  even a ci-workflow-unsupported/invalid gap for a dropped file).
+- v9's regex "returned 0" because the fact property is "package", not
+  "packageId" — audit the real shape before pattern-matching (v10's raw
+  dump now pins it).
+- Fill in the 2 missing names (VS/NuGet) and run:
+
+  ```powershell
+  $facts = "C:\ua-estate\scans\<that-repo>\facts.ndjson"
+  "MISSING1 anywhere: $((Select-String $facts -Pattern '<missing-package-1>').Matches.Count)"
+  "MISSING2 anywhere: $((Select-String $facts -Pattern '<missing-package-2>').Matches.Count)"
+  "in registry unknown: $((Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.unknownPackages -match '<missing-package-1>|<missing-package-2>')"
+  "repo has workflows dir: $(Test-Path '<repos-root>\<that-repo>\.github\workflows')"
+  ```
+
+- Read: anywhere=0 -> never extracted at all (inventory dig). Registry
+  unknown hit -> the registry already flags consumed-but-unproduced —
+  unknownPackages intersected with names-known-ours becomes the
+  ESTATE-WIDE missing-producer detector. Workflows dir False -> the CI
+  lane had nothing to read (root cause in one line).
+- PASTES into CHAT (never this file): the repo's release.yml + top
+  halves of the 2 missing csproj.
+
 ## 2026-10-22 — ZEROER v10: the repo really has 4 packages, the scan found 2 — REAL tracemap gap (v9's "4" was 2 lines x 2 matches)
 
 - Operator receipts: VS/NuGet show 4 packages; 4 csproj files produce;
