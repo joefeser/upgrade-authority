@@ -243,6 +243,63 @@ scan folders: evidence and tooling must survive the moment of their creation).
 Consequence for the operator loop: when the agent gives you a command in
 chat, the correct response is "is that in debug.md" BEFORE running it.
 
+## 2026-10-22 — ZEROER v6: the missing 11 is probably operatorDeclared (the THIRD bucket — never quoted); "1k" sized the SIDECAR
+
+- Operator readback: "producer evidence is 1k" — that is the SIDECAR
+  (C:\ua-estate\producer-evidence.v0.json): ~1k bytes = a handful of
+  entries = "pretty much empty", exactly as v4 said. It is NOT the fixture
+  input the v5 count targeted (111 entries cannot fit in 1k).
+- Code facts (verified in source today):
+  1. provenanceSummary counts ENTRIES: every producer entry bumps exactly
+     one of projectDeclared / operatorDeclared / ciDefined (a bad value is
+     a typed refusal, never a silent skip).
+  2. internalPackages counts DISTINCT ids across those same entries.
+  3. So 44 + 56 = 100 vs internal = 111 closes if operatorDeclared = 11:
+     44 + 56 + 11 = 111 entries, all distinct. The third field is the
+     missing 11 — it was never quoted.
+  4. Ingest stamps every sidecar entry lacking the tracemap scan marker as
+     operator-declared — a ~1k sidecar holding ~11 entries is exactly that
+     bucket.
+- One paste settles which world we are in (sizes BOTH files, decomposes
+  the fixture entries by provenance, prints the registry summary on one
+  line):
+
+  ```powershell
+  $side = 'C:\ua-estate\producer-evidence.v0.json'
+  $fix  = 'C:\ua-estate\fixture\input\producer-evidence.v0.json'
+  "SIDECAR bytes: $((Get-Item $side).Length)"
+  "FIXTURE bytes: $((Get-Item $fix).Length)"
+  $fj = Get-Content $fix -Raw | ConvertFrom-Json
+  "FIXTURE entries: $($fj.producers.Count)"
+  $fj.producers | Group-Object provenance | ForEach-Object { "  $($_.Name): $($_.Count)" }
+  "FIXTURE distinct: $(@($fj.producers.packageId | Sort-Object -Unique).Count)"
+  "SUMMARY: $((Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).provenanceSummary | ConvertTo-Json -Compress)"
+  ```
+
+- Read it as:
+  - entries 111 / buckets 44+56+11 / distinct 111 → arithmetic CLOSED,
+    no counting bug. The only live bug is the per-repo fact loss (project
+    57→44 AND ci 140→56 = both lanes lost in the SAME repos).
+  - entries 111 but distinct < 111 → duplicate ids (multi-repo or case
+    variants) — overlap, still no counting bug.
+  - FIXTURE also ~1k with ~10 entries → the LAST ingest merged almost
+    nothing → find the "note: N producer(s) ... merged" line in that
+    console (N = what the merge received) and the hunt moves to ingest.
+- THEN the v3 discriminator on ONE zeroed repo (still unanswered; bypasses
+  the ua cache and ingest entirely):
+
+  ```powershell
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  dotnet $t scan --repo "<repos-root>\<zeroed-repo>" --out C:\z1 --index-ci-producers --ci-hints C:\ua-estate\ci-hints.v1.json
+  "FACT LINES: $((Get-Content C:\z1\facts.ndjson).Count)"
+  "PRODUCED:   $((Select-String C:\z1\facts.ndjson -Pattern 'PackageProduced' -AllMatches).Matches.Count)"
+  ```
+
+  - PRODUCED > 0 → tracemap finds them; ua's cache/ingest eats them → ua fix.
+  - PRODUCED = 0 with many fact lines → extractor refusing quietly →
+    tracemap dig (paste that repo's csproj top 20 lines into chat, not here).
+  - FACT LINES ≈ 0 → the repo was not parsed at all.
+
 ## 2026-10-22 — ZEROER v5: accumulator DEAD (operator sidecar empty; merge writes the FIXTURE copy only — code-verified)
 
 - The 111-vs-100 arithmetic needs the full decomposition instead:

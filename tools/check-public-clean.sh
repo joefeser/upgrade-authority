@@ -14,6 +14,7 @@ scan() {
   done < <(grep -rniE "$pattern" --include="*.md" --include="*.json" --include="*.cs" --include="*.mjs" --include="*.props" --include="*.csproj" --include="*.yml" --include="*.config" . 2>/dev/null | grep -v "testdata-ingest" || true)
 }
 scan '\bunited\b|united'"'"'s' "employer-name"
+scan '\bcrew\.' "employer-repo-prefix"
 scan '\bwiz\b|sonarqube|sonarqube' "alert-stack"
 scan 'CI in Harness|CI = Harness|lives in GitHub and Harness' "ci-stack"
 scan '~150|150 repos|150-repo' "estate-scale"
