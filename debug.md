@@ -232,6 +232,29 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   ciDefined count + internalPackages near ~100 closes the producer saga.
   Dll+flags changed = one full rescan (the usual honesty tax).
 
+## 2026-10-22 — NAME THE ZEROER (whole-repo producer loss; prime suspect = root Directory.Build.props identity)
+
+- Whole-repo zeroing can't be per-project policy. Prime suspect: a ROOT-level
+  Directory.Build.props declaring AssemblyName/PackageId — the inherited-identity
+  guard then refuses EVERY project in that repo at once; repos without root
+  props keep theirs ("some lost all"). One grep on a zeroed victim names it:
+
+  ```powershell
+  $z = Get-ChildItem C:\ua-estate\scans -Directory -Filter '<one-zeroed-repo>'
+  Select-String "$($z.FullName)\facts.ndjson" -Pattern 'ci-hint-id-unevidenced' | Select-Object -First 3
+  Select-String "$($z.FullName)\facts.ndjson" -Pattern 'Directory.Build' | Select-Object -First 3
+  Get-Content "<repos-root>\<that-repo>\Directory.Build.props" -ErrorAction SilentlyContinue | Select-Object -First 15
+  ```
+
+- Gap says "nearest Directory.Build.props declares a package identity" + the
+  props shows patterns -> CONFIRMED: inherited identity must FOLLOW THE CHAIN
+  (evaluate what the props declares; $(MSBuildProjectName) interpolates
+  per-project) instead of refusing. Same fix shape as the AssemblyName
+  recovery, one level up. Likely also explains projectDeclared 57->55->44
+  (the project lane's tier-3 shares the inspection).
+- Gaps absent + thin facts (Reduced analysis level) -> load degradation
+  instead; the DETERMINISM CHECK double-scan below becomes the priority.
+
 ## 2026-10-22 — FIND THE LOST PRODUCERS (per-repo sweep; pick the double-scan victim)
 
 - You don't need to guess which producers vanished — count them per repo:
