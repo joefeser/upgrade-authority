@@ -326,6 +326,25 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v27: post-rescan producer REMOVAL (the ccsplus service) — first estate exposure of the 0.4.1 guards; the gap names the refusing rule
+
+- Operator: after the full rescan, one service producer disappeared
+  (repo now shows only AbsenseAwardNotification). Prime suspect: the
+  round-4 guards (ci-workflow/0.4.1) refusing shapes 0.4.0 credited by
+  filename guess (ANY project Import; non-literal IsPackable;
+  Directory.Build Test.Sdk). Refusal = gap, not fact.
+- One grep names the rule:
+
+  ```powershell
+  Select-String "C:\ua-estate\scans\<ccsplus-repo>\facts.ndjson" -Pattern 'ci-hint-id-unevidenced|ci-producer-id-unevidenced' | ForEach-Object { $_.Line.Substring(0, [Math]::Min(220, $_.Line.Length)) } | Select-Object -First 6
+  ```
+
+- Read: the gap detail says imports / non-literal IsPackable / Test.Sdk /
+  not-in-inventory. imports + the service really publishes -> the honest
+  fix is operator assertion (producer-evidence entry) OR the repo
+  declaring identity; over-refusal (benign import) -> guard tuning in the
+  follow-up PR with this repo as the case.
+
 ## 2026-10-22 — ZEROER v26: PS 5.1 single-element collapse broke the rewrite (packWorkflows serialized as ONE OBJECT, not an array) — build entries explicitly + assert the shape
 
 - v24/v25 bug (mine): `packWorkflows=($list | ForEach-Object { @{uses=$_} })`
