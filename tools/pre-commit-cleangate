@@ -3,7 +3,7 @@
 # content (same patterns as tools/check-public-clean.sh; self-contained so it
 # works on any branch). Mirrors the gate's allowlist and file-type scope.
 set -u
-pat='\bunited\b|united'"'"'s|\bcrew\.|sonarqube|sonarqube|\bwiz\b|CI in Harness|CI = Harness|lives in GitHub and Harness|~150 repos|150-repo|8 packages compiled|publishes ~8 packages|employment agreement|invention-assignment|outside-work policy|88mph|88mphServer'
+pat='\bunited\b|united'"'"'s|\bcrew\.|LoggingManager|sonarqube|sonarqube|\bwiz\b|CI in Harness|CI = Harness|lives in GitHub and Harness|~150 repos|150-repo|8 packages compiled|publishes ~8 packages|employment agreement|invention-assignment|outside-work policy|88mph|88mphServer'
 fail=0
 for f in $(git diff --cached --name-only --diff-filter=ACMR); do
   [ -f "$f" ] || continue

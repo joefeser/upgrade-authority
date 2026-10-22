@@ -15,6 +15,7 @@ scan() {
 }
 scan '\bunited\b|united'"'"'s' "employer-name"
 scan '\bcrew\.' "employer-repo-prefix"
+scan 'LoggingManager' "estate-project-name"
 scan '\bwiz\b|sonarqube|sonarqube' "alert-stack"
 scan 'CI in Harness|CI = Harness|lives in GitHub and Harness' "ci-stack"
 scan '~150|150 repos|150-repo' "estate-scale"
