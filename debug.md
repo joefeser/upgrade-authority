@@ -243,6 +243,19 @@ scan folders: evidence and tooling must survive the moment of their creation).
 Consequence for the operator loop: when the agent gives you a command in
 chat, the correct response is "is that in debug.md" BEFORE running it.
 
+## 2026-10-22 — ZEROER v5: accumulator DEAD (operator sidecar empty; merge writes the FIXTURE copy only — code-verified)
+
+- The 111-vs-100 arithmetic needs the full decomposition instead:
+
+  ```powershell
+  # full summary incl. operatorDeclared:
+  (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).provenanceSummary
+  # the TRUE entry count behind internal=111:
+  (Select-String C:\ua-estate\fixture\input\producer-evidence.v0.json -Pattern '"packageId"' -AllMatches).Matches.Count
+  ```
+
+- entries(111?) vs summary(100) names the uncounted bucket.
+
 ## 2026-10-22 — ZEROER v4: cache DEAD (fresh 11:02pm scans, flag true) — the ARITHMETIC points at the SIDECAR ACCUMULATOR
 
 - Run C math: project 44 + ci 56 = 100 but internal = 111. Eleven extra
