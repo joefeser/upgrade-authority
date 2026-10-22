@@ -326,6 +326,26 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v19: probe the ARTIFACTS, not the facts — receipt carries the lane's version; healthy shapes known
+
+- Operator receipts: direct-scan facts 2834 -> 2822 (csproj edits shifting
+  counts), CI rows 0 gaps 0 STILL. Healthy control (green repro): the
+  scan receipt contains "ci-workflow/<version>" when the lane
+  participates, and facts reference release.yml via the ci row.
+- Three probes against the SILENT direct-scan output (C:\z1):
+
+  ```powershell
+  "receipt lane: $((Select-String C:\z1\scan-receipt.json -Pattern 'ci-workflow' -AllMatches).Matches.Count)"
+  "manifest ci : $((Select-String C:\z1\scan-manifest.json -Pattern 'ci-workflow' -AllMatches).Matches.Count)"
+  "yml in facts: $((Select-String C:\z1\facts.ndjson -Pattern 'release\.yml' -AllMatches).Matches.Count)"
+  ```
+
+- Read: receipt lane 0 -> the LANE NEVER PARTICIPATED (flag/hints plumbing
+  bug — nothing parser-level); the count-difference vs the estate scan's
+  receipt is the comparison. receipt 1 + yml in facts 0 -> lane ran, saw
+  files, emitted NOTHING anywhere -> deepest parser silence, yml diff (v18)
+  becomes the only trail.
+
 ## 2026-10-22 — ZEROER v18: DIRECT SCAN = TRUE SILENCE (0 rows, 0 gaps, fresh bits, no cache) — cache theory dead; DIFF the two repos' release.yml
 
 - Operator receipts: fact count 2834 before and after the pull (stable
