@@ -326,6 +326,34 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v17: everything file-level is EXONERATED (clean indent brute-force: baseline fires, all variants loud) — run the DIRECT SCAN (bypasses the ua cache; the never-run v6 discriminator)
+
+- Clean brute-force on fresh repo (faithful content): baseline 2/4/6 fires
+  (ci-rows=1); every other indent scheme is LOUD (1 gap). Combined with
+  v13-v16: content, bytes, ignore rules, casing, indentation — every
+  file-level failure is green or loud. The real repo's SILENCE cannot
+  come from the files. Operator logic check ("not a parse issue or all 4
+  would be missing"): the two FOUND packages are PROJECT-lane (csproj
+  pack metadata, no yml needed); the yml was only ever the witness for
+  the zero-signal two — a yml-lane failure removes exactly those two.
+- Remaining theory: the on-disk scan is a STALE-VINTAGE cache artifact —
+  ua re-stamps scan-estate.json flags (indexCiProducers=true) and mtimes
+  even when serving an older lane-less cached scan. The direct scan
+  bypasses the cache entirely and discriminates:
+
+  ```powershell
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  dotnet $t scan --repo "<repos-root>\<that-repo>" --out C:\z1 --index-ci-producers --ci-hints C:\ua-estate\ci-hints.v1.json
+  "CI ROWS: $((Select-String C:\z1\facts.ndjson -Pattern '"sourceKind":"ci-workflow"' -AllMatches).Matches.Count)"
+  "CI GAPS: $((Select-String C:\z1\facts.ndjson -Pattern '"gapKind":"ci-' -AllMatches).Matches.Count)"
+  ```
+
+- Read: CI ROWS > 0 -> current bits find the producers on the real repo;
+  the estate scan was a stale-cache artifact -> ua cache-key dig (v3
+  resurrected, now with the evidence it lacked). ROWS 0 + GAPS > 0 -> the
+  loud refusal names itself. ROWS 0 + GAPS 0 -> true silent repro on the
+  real repo; the yml diff continues from its bytes.
+
 ## 2026-10-22 — ZEROER v16: CASE is the suspect (matcher is ordinal; OCR cannot tell DevOps/Devops apart — photos read it as Dev0ps); restore works (expired-key theory dead)
 
 - v15 receipts: tabs 0; first 3 bytes 110,97,109 = "nam" (no BOM); all
