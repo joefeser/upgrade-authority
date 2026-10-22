@@ -326,6 +326,26 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v9: "only 2 show up not all 4" — facts vs DISTINCT packages (one paste decides)
+
+- Operator: v8.1 listed 2 fixture entries for the known producer; the
+  fact spot-check had counted 4. Almost certainly correct, not loss: a
+  package claimed by BOTH lanes (project file + CI workflow) = 2 FACTS
+  for 1 package; the fixture dedups by (repo, package) by design. 2
+  packages x 2 lanes = 4 facts -> 2 entries.
+- Decider — print the packageId of EVERY PackageProduced fact line for
+  that repo, then count distinct names:
+
+  ```powershell
+  $ids = (Select-String "C:\ua-estate\scans\<known-producer-repo>\facts.ndjson" -Pattern 'PackageProduced' -AllMatches).Line | ForEach-Object { if ($_ -match '"packageId"\s*:\s*"([^"]+)"') { $Matches[1] } }
+  $ids
+  "DISTINCT: $(@($ids | Sort-Object -Unique).Count)"
+  ```
+
+- 2 distinct (each twice) -> both lanes see the same 2 packages: CORRECT,
+  nothing lost, saga stays closed. 4 distinct -> 2 packages really lost
+  between facts and fixture -> ingest dig (ua side), fix immediately.
+
 ## 2026-10-22 — ZEROER v8: NO-ZEROER reframe (operator: every zero-list repo truly does not produce) — close-out checks
 
 - Operator verdict on the zero list: "every line with 0 does not produce a
