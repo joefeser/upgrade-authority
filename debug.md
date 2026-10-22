@@ -326,6 +326,27 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v12: release.yml MATCHES the hint (uses: the exact shared workflow, job-level, 52 lines) and no drop-gap exists — check THIS repo's scan metadata (never checked; all flag checks were on zeroed repos)
+
+- WEE read of the operator photo (local only): uses = the exact hinted
+  dotnet-release-library.yml@main, job-level with/secrets, 2,285 bytes.
+  Textually matches; no ci-workflow-invalid/unsupported gap in facts ->
+  the file was not dropped with a receipt. Two suspects left: the scan's
+  own flags/vintage for THIS repo, or a same-bits parser behavior (local
+  repro from the reconstructed yml).
+- The zeroed-repo flag checks (v3) never covered this repo. One paste:
+
+  ```powershell
+  Get-Content "C:\ua-estate\scans\<that-repo>\scan-estate.json" -Raw
+  ```
+
+- Read: indexCiProducers false or a missing/stale ci-hints hash on THIS
+  repo -> the lane never ran for this scan -> ua cache-key dig (why did
+  THIS repo's key differ?). All true + matching hashes -> the lane RAN
+  and still emitted nothing for a matching file -> tracemap dig; the yml
+  gets reconstructed locally from the OCR (52 lines) and repro'd against
+  head to find the silent drop.
+
 ## 2026-10-22 — ZEROER v11: both present rows are project-lane derived-default; CI lane contributed NOTHING to this repo — the missing 2 are zero-signal projects whose only rescue (the hint sweep) never fired
 
 - WEE read of the operator photo (local Apple Vision only; hosted: none):
