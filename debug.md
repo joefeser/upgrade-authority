@@ -326,6 +326,29 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v25: estate-wide uses census (every repo's release.yml -> distinct shared-workflow spellings -> self-healing hints file)
+
+  ```powershell
+  $uses = Get-ChildItem <repos-root> -Directory | ForEach-Object {
+    $f = Join-Path $_.FullName '.github\workflows\release.yml'
+    if (Test-Path $f) { (Select-String -Path $f -Pattern 'uses:\s*(\S+)' -AllMatches).Matches | ForEach-Object { $_.Groups[1].Value.Trim() } }
+  }
+  $shared = $uses | Where-Object { $_ -like '*.github/workflows/*' } | Sort-Object -Unique
+  $uses | Where-Object { $_ -like '*.github/workflows/*' } | Group-Object | Sort-Object Count -Descending | ForEach-Object { "$($_.Count)`t$($_.Name)" }
+  "distinct shared: $($shared.Count)"
+  ```
+
+- The grouped list = every spelling in the wild + repo count each (the
+  one-repo rows ARE the rush-spelling stragglers). Then rebuild the
+  hints file FROM REALITY (all spellings, nothing hand-typed):
+
+  ```powershell
+  @{schemaVersion='ci-hints.v1'; packWorkflows=($shared | ForEach-Object { @{uses=$_} })} | ConvertTo-Json -Depth 5 | Set-Content C:\ua-estate\ci-hints.v1.json -Encoding ascii
+  (Get-Content C:\ua-estate\ci-hints.v1.json -Raw | ConvertFrom-Json).packWorkflows.uses
+  ```
+
+- Then the z5 spot-check (v24 block) and the full estate rescan.
+
 ## 2026-10-22 — ZEROER v24: og hints file has MULTIPLE entries (blank -ceq = array semantics) — flatten, dedupe, rewrite, verify with z5
 
 - "hint-equal: blank" — -ceq against an array returns matches, not a
