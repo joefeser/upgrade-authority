@@ -326,6 +326,29 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v24: og hints file has MULTIPLE entries (blank -ceq = array semantics) — flatten, dedupe, rewrite, verify with z5
+
+- "hint-equal: blank" — -ceq against an array returns matches, not a
+  bool: $h1 (og) is an ARRAY. The og file lists multiple hint workflows,
+  none matching this repo. The v23 rewrite line nested the array — the
+  file on disk is likely malformed; the flattened rewrite fixes it:
+
+  ```powershell
+  $h1 = @((Get-Content C:\ua-estate\ci-hints.v1.json -Raw | ConvertFrom-Json).packWorkflows.uses)
+  $h2 = (Get-Content C:\z1-hints.json -Raw | ConvertFrom-Json).packWorkflows.uses
+  "og entries: $($h1.Count)"; $h1
+  $all = @($h1 + $h2) | Sort-Object -Unique
+  @{schemaVersion='ci-hints.v1'; packWorkflows=($all | ForEach-Object { @{uses=$_} })} | ConvertTo-Json -Depth 5 | Set-Content C:\ua-estate\ci-hints.v1.json -Encoding ascii
+  "now listed:"; (Get-Content C:\ua-estate\ci-hints.v1.json -Raw | ConvertFrom-Json).packWorkflows.uses
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  dotnet $t scan --repo "<repos-root>\<that-repo>" --out C:\z5 --index-ci-producers --ci-hints C:\ua-estate\ci-hints.v1.json
+  "z5 ROWS: $((Select-String C:\z5\facts.ndjson -Pattern '"sourceKind":"ci-workflow"' -AllMatches).Matches.Count)"
+  ```
+
+- Read: "og entries" shows what the estate has been hinting (multiple
+  workflows); "now listed" shows the merged set; z5 ROWS >= 2 proves the
+  production file fires before committing to the full estate rescan.
+
 ## 2026-10-22 — ZEROER v23 (CLOSE): two spellings of the shared workflow exist — z4 0/0 (og) vs z2 fired (fresh) on the SAME repo; list BOTH in the hints
 
 - Operator receipts: z4 ROWS 0 / GAPS 0 (og hints, post-cleanup repo);
