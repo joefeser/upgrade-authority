@@ -326,6 +326,33 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v20: receipt-0 reinterpreted (extractor list = facts-derived; all-zeros = RAN-AND-EMITTED-NOTHING) — test the HINTS FILE with a fresh minimal one
+
+- Code receipt: ScanExecutionReceipt builds extractorVersions from
+  result.Facts — a silent lane leaves no receipt trace either. The two
+  silent sweep exits remain: hints empty after load, or no call matched.
+- The estate run matched hints last night; the hints file has lived
+  through a day of edits since. Bypass it entirely — write a fresh
+  minimal hints file and rescan:
+
+  ```powershell
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  # <shared-workflow-path> = the SAME uses value your release.yml carries
+  '{"packWorkflows":[{"uses":"<shared-workflow-path>"}]}' | Set-Content C:\z1-hints.json
+  dotnet $t scan --repo "<repos-root>\<that-repo>" --out C:\z2 --index-ci-producers --ci-hints C:\z1-hints.json
+  "ROWS: $((Select-String C:\z2\facts.ndjson -Pattern '"sourceKind":"ci-workflow"' -AllMatches).Matches.Count)"
+  "GAPS: $((Select-String C:\z2\facts.ndjson -Pattern '"gapKind":"ci-' -AllMatches).Matches.Count)"
+  ```
+
+- Read: ROWS > 0 -> the PRODUCTION hints file is the culprit (changed
+  since last night's estate run — bytes, not content semantics); diff or
+  re-create it and the estate rescan completes. STILL 0/0 -> the repo
+  itself silences the sweep with known-good hints; the v18 yml diff
+  lines + a hexdump of the uses region become the trail.
+- Side quest closed by operator: the dead csproj was the FailedOrPartial
+  culprit (gaps 207 -> 7 in the fresh scan; the 200 compilation gaps
+  died with it).
+
 ## 2026-10-22 — ZEROER v19: probe the ARTIFACTS, not the facts — receipt carries the lane's version; healthy shapes known
 
 - Operator receipts: direct-scan facts 2834 -> 2822 (csproj edits shifting
