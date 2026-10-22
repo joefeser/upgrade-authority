@@ -326,6 +326,34 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v23 (CLOSE): two spellings of the shared workflow exist — z4 0/0 (og) vs z2 fired (fresh) on the SAME repo; list BOTH in the hints
+
+- Operator receipts: z4 ROWS 0 / GAPS 0 (og hints, post-cleanup repo);
+  z2 fired (fresh hints, same repo); git diff HEAD~1 = csproj lines only
+  (yml untouched by cleanup). The og entry matches the 56 estate repos;
+  the fresh entry (built from THIS repo's yml) matches this one — two
+  spellings in the wild, hints listed one. The -ceq "working repo" was
+  itself a direct-pack repo (same non-hint spelling), which is why its
+  uses line "equaled" this one.
+- See the byte, then fix by listing BOTH entries:
+
+  ```powershell
+  $h1 = (Get-Content C:\ua-estate\ci-hints.v1.json -Raw | ConvertFrom-Json).packWorkflows.uses
+  $h2 = (Get-Content C:\z1-hints.json -Raw | ConvertFrom-Json).packWorkflows.uses
+  "hint-equal: $($h1 -ceq $h2)"
+  "h1 hex: $([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($h1)))"
+  "h2 hex: $([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($h2)))"
+  @{schemaVersion='ci-hints.v1';packWorkflows=@(@{uses=$h1},@{uses=$h2})} | ConvertTo-Json -Depth 5 | Set-Content C:\ua-estate\ci-hints.v1.json -Encoding ascii
+  ```
+
+- Then: full estate rescan (hints hash changed -> cache key forces honest
+  rescan). Every repo with EITHER spelling fires; internal count grows by
+  the previously-missing producers; unknownPackages shrinks accordingly.
+- Code debts logged for the follow-up PR: (1) a parsed-but-zero-matching
+  hints set deserves a loud warning, not silence; (2) the hints file's
+  entries vs actual workflow calls could be cross-reported (a hint that
+  matched NOTHING estate-wide is a config smell the tool should surface).
+
 ## 2026-10-22 — ZEROER v22: fingerprints decoded (all-distinct = og file's hint ARRAY differs — @main/extra entries — NOT proof of broken; matching normalizes refs) — z4 decides
 
 - Receipt hashes RAW loaded entries; matching strips @ref. An og entry
