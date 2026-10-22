@@ -232,6 +232,28 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   ciDefined count + internalPackages near ~100 closes the producer saga.
   Dll+flags changed = one full rescan (the usual honesty tax).
 
+## 2026-10-22 — DETERMINISM CHECK (the projectDeclared drift 57->55->44 across runs with no project-lane change — Joe's oldest tracemap fear, now with receipts; THE gate before any merge)
+
+- Run C numbers: project 44, ci 56 (chain recovered +30 of the 88), internal 111,
+  customimports 0. The ci movement is explained; projectDeclared silently
+  losing 13 producers across two runs is NOT — suspects: load-dependent
+  extraction (the #857 regex-timeout family, Reduced-analysis level) or
+  coverage-gating dropping producer facts on partial scans.
+- The decisive test — same repo, same dll, twice:
+
+  ```powershell
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  dotnet $t scan --repo "<repos-root>\<one-repo-that-lost-producers>" --out C:\det1
+  dotnet $t scan --repo "<repos-root>\<same-repo>" --out C:\det2
+  (Select-String C:\det1\facts.ndjson -Pattern 'PackageProduced').Count
+  (Select-String C:\det2\facts.ndjson -Pattern 'PackageProduced').Count
+  ```
+
+- EQUAL counts -> deterministic; the 44-vs-57 is a real code interaction —
+  freeze #902 and diff the project-lane path (no merge on drifted numbers).
+- DIFFERENT counts -> nondeterminism — NOTHING merges until tracemap earns
+  "same input, same facts"; this becomes the only priority.
+
 ## 2026-10-22 — ROUND-3 VERIFY PASS (0.3.1: custom-import guard — likely last recount)
 
 - Head bd398f268: imports/linked-metadata refuse to derive (typed gaps),
