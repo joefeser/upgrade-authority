@@ -326,6 +326,19 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v29: TRUNCATION CLOSED (operator verdict): the short names match the csproj filenames and no identity is declared — technically correct, honestly published
+
+- Operator: the truncated names = csproj filenames; no default namespace
+  / identity declared -> dotnet pack publishes exactly that. The scanner
+  is correct; the short names belong in the internal list as-is. The
+  naming inconsistency (prefixed vs bare) is estate culture, not a tool
+  bug — it becomes the repo-cleanup backlog, not a code fix.
+- Still open: (1) Domain's silent removal from the logging repo
+  (gaps 0; needs the full producer list), (2) push the 2 local commits so
+  the next pass drops the dead-project ghost and reads the field edits,
+  (3) the internal-240 eyeball (now with correct expectations: short
+  names are real).
+
 ## 2026-10-22 — ZEROER v28: chopped-prefix census — who credits the short names, and what happened to the prefixed ones
 
 - Operator: "tons got the prefix chopped off" + "enterpriselogging all
