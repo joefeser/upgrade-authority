@@ -326,6 +326,27 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v18: DIRECT SCAN = TRUE SILENCE (0 rows, 0 gaps, fresh bits, no cache) — cache theory dead; DIFF the two repos' release.yml
+
+- Operator receipts: fact count 2834 before and after the pull (stable
+  output); CI ROWS 0, CI GAPS 0 on the direct scan of the real repo with
+  the round-4 bits. The estate scan was NOT a cache artifact — the real
+  repo silences the lane on current bits. My repro of the photo content
+  fires; the uses lines are byte-equal to a working repo's; so the
+  divergence lives in the surrounding lines. Compute it exactly:
+
+  ```powershell
+  $a = Get-Content "<repos-root>\<that-repo>\.github\workflows\release.yml"
+  $b = Get-Content "<repos-root>\<one-working-repo>\.github\workflows\release.yml"
+  "a lines: $($a.Count)  b lines: $($b.Count)"
+  Compare-Object $a $b | Select-Object -First 24 | ForEach-Object { "$($_.SideIndicator) $($_.InputObject)" }
+  ```
+
+- Read: the printed diff lines (=> only-in-b, <= only-in-a) ARE the
+  delta between a firing repo and a silent one — whatever construct
+  appears only in the silent file is the parser's blind spot. Line-count
+  mismatch with a small diff also hints at reordering/blank lines.
+
 ## 2026-10-22 — ZEROER v17: everything file-level is EXONERATED (clean indent brute-force: baseline fires, all variants loud) — run the DIRECT SCAN (bypasses the ua cache; the never-run v6 discriminator)
 
 - Clean brute-force on fresh repo (faithful content): baseline 2/4/6 fires
