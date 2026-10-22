@@ -326,6 +326,33 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v10: the repo really has 4 packages, the scan found 2 — REAL tracemap gap (v9's "4" was 2 lines x 2 matches)
+
+- Operator receipts: VS/NuGet show 4 packages; 4 csproj files produce;
+  facts.ndjson holds 2 PackageProduced LINES (names correct); the old
+  count of 4 was AllMatches counting the string twice per line. v9's
+  regex returned 0 — the id property is NOT named "packageId" in the
+  fact JSON; v10 prints raw lines instead of guessing the shape.
+- The 2 missing packages: either REFUSED with a gap naming why (guards),
+  or SILENCE (the lane never swept this repo). One paste:
+
+  ```powershell
+  $facts = "C:\ua-estate\scans\<known-producer-repo>\facts.ndjson"
+  "--- produced lines:"
+  (Select-String $facts -Pattern 'PackageProduced' -AllMatches).Line | ForEach-Object { $_.Substring(0, [Math]::Min(300, $_.Length)) }
+  "--- gap lines:"
+  $gl = (Select-String $facts -Pattern 'AnalysisGap').Line
+  "GAP COUNT: $(@($gl).Count)"
+  $gl | ForEach-Object { if ($_ -match '"[^"]*[Kk]ind[^"]*"\s*:\s*"([^"]+)"') { $Matches[1] } } | Group-Object | Sort-Object Count -Descending | ForEach-Object { "$($_.Name): $($_.Count)" }
+  ```
+
+- Read: gap kinds naming ci-producer-id-unevidenced / ci-hint-id-
+  unevidenced for the 2 missing projects -> guarded refusals -> paste
+  those gap lines; GAP COUNT 0 -> silence -> the lane never ran for this
+  repo (hint call not matched / workflow dropped) -> tracemap dig on
+  the repo's .github/workflows + the 2 missing csproj (paste their
+  csproj top halves into chat, never into this file).
+
 ## 2026-10-22 — ZEROER v9: "only 2 show up not all 4" — facts vs DISTINCT packages (one paste decides)
 
 - Operator: v8.1 listed 2 fixture entries for the known producer; the
