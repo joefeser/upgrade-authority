@@ -326,6 +326,30 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v21: let the RECEIPT fingerprints testify — hints-AS-LOADED compared across z1/z2/z3 (repo content does not enter the hash)
+
+- Receipt code: scope fingerprint = base scope + indexCiProducers +
+  ciHintWorkflows AS LOADED (null when zero entries). BC text-compare
+  cannot see encoding; the hash cannot lie. Operator note: report.md
+  packages produced 3 -> 5 across the two direct scans (the xunit pair
+  now evidenced). Calibrate the zero-hints hash with a no-hints scan:
+
+  ```powershell
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  dotnet $t scan --repo "<repos-root>\<that-repo>" --out C:\z3 --index-ci-producers
+  "z1 scope (silent, og hints):   $((Get-Content C:\z1\scan-receipt.json -Raw | ConvertFrom-Json).authorizedScopeFingerprint)"
+  "z2 scope (fired, fresh hints): $((Get-Content C:\z2\scan-receipt.json -Raw | ConvertFrom-Json).authorizedScopeFingerprint)"
+  "z3 scope (no hints at all):    $((Get-Content C:\z3\scan-receipt.json -Raw | ConvertFrom-Json).authorizedScopeFingerprint)"
+  ```
+
+- Read: z1 == z3 (and != z2) -> z1 loaded ZERO hints: the og file yields
+  nothing as-loaded despite BC == (encoding/BOM invisible to text
+  compare) -> recreate the og file (copy z1-hints.json over it), estate
+  rescan, done. z1 == z2 (and != z3) -> hints identical as-loaded; the
+  REPO's prior state was the silencer -> git checkout the pre-cleanup
+  commit, scan, confirm 0/0, bisect the edits. z1 unique -> partial
+  load; byte-dump the og file.
+
 ## 2026-10-22 — ZEROER v20: receipt-0 reinterpreted (extractor list = facts-derived; all-zeros = RAN-AND-EMITTED-NOTHING) — test the HINTS FILE with a fresh minimal one
 
 - Code receipt: ScanExecutionReceipt builds extractorVersions from
