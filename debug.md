@@ -326,6 +326,28 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v15: the silent gate FOUND in code (sweep returns gap-less when no call matches); the last mile = INVISIBLE INDENTATION — lead-space signature dump
+
+- Code receipts: CiWorkflowProducerExtractor.ReadWorkflows enumerates the
+  LIVE .github/workflows dir (not the git inventory; a missing dir is a
+  LOUD gap); SweepHintedProjects exits silently when no captured job call
+  matches the hints ("if (call is null) return") — zero rows + zero gaps
+  is BY DESIGN for call-not-seen. The parser is whitespace-sensitive and
+  photos cannot carry leading spaces, so the real file's indentation is
+  the last untested variable. Print it:
+
+  ```powershell
+  Get-Content <repos-root>\<that-repo>\.github\workflows\release.yml | ForEach-Object { $lead = ($_ -replace '^(\s*).*$','$1').Length; $t = $_.TrimStart(); "{0,3}|{1}" -f $lead, $t.Substring(0, [Math]::Min(55, $t.Length)) }
+  (Select-String -Path <repos-root>\<that-repo>\.github\workflows\release.yml -Pattern "\t" -AllMatches).Matches.Count
+  ([System.IO.File]::ReadAllBytes("<repos-root>\<that-repo>\.github\workflows\release.yml")[0..2]) -join ','
+  ```
+
+- Line 1 prints every line as LEAD-SPACES|trimmed-text (52 short lines,
+  photo-friendly); line 2 = tab count (expect 0); line 3 = first 3 bytes
+  (239,187,191 = BOM). With the true indentation the repro rebuild is
+  exact and the miss reproduces (or the mystery deepens to the parser's
+  job-level uses capture itself).
+
 ## 2026-10-22 — ZEROER v14: every kill-mode is LOUD (BOM+CRLF / tabs / no-final-newline / gitignore all leave ci gaps) — the real repo is SILENT; read the scan's own analyzer.log
 
 - Faithful two-file repro (release.yml + build.yml, byte-faithful to the
