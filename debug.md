@@ -326,6 +326,29 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v26: PS 5.1 single-element collapse broke the rewrite (packWorkflows serialized as ONE OBJECT, not an array) — build entries explicitly + assert the shape
+
+- v24/v25 bug (mine): `packWorkflows=($list | ForEach-Object { @{uses=$_} })`
+  collapses to a scalar when the list has ONE entry -> JSON object, not
+  array -> "element missing". Explicit array build cannot collapse:
+
+  ```powershell
+  $uses = Get-ChildItem <repos-root> -Directory | ForEach-Object {
+    $f = Join-Path $_.FullName '.github\workflows\release.yml'
+    if (Test-Path $f) { (Select-String -Path $f -Pattern 'uses:\s*(\S+)' -AllMatches).Matches | ForEach-Object { $_.Groups[1].Value.Trim() } }
+  }
+  $shared = @($uses | Where-Object { $_ -like '*.github/workflows/*' } | Sort-Object -Unique)
+  $entries = @(); foreach ($u in $shared) { $entries += @{ uses = [string]$u } }
+  @{ schemaVersion = 'ci-hints.v1'; packWorkflows = $entries } | ConvertTo-Json -Depth 5 | Set-Content C:\ua-estate\ci-hints.v1.json -Encoding ascii
+  # ASSERT the shape before trusting it:
+  $j = Get-Content C:\ua-estate\ci-hints.v1.json -Raw | ConvertFrom-Json
+  "type: $($j.packWorkflows.GetType().Name)  count: $($j.packWorkflows.Count)"
+  $j.packWorkflows | ForEach-Object { $_.uses }
+  ```
+
+- Expect `type: Object[]` and the full spelling list. THEN the z5
+  spot-check (v24 block) and the estate rescan.
+
 ## 2026-10-22 — ZEROER v25: estate-wide uses census (every repo's release.yml -> distinct shared-workflow spellings -> self-healing hints file)
 
   ```powershell
