@@ -232,6 +232,34 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   ciDefined count + internalPackages near ~100 closes the producer saga.
   Dll+flags changed = one full rescan (the usual honesty tax).
 
+## 2026-10-22 — ROUND-3 VERIFY PASS (0.3.1: custom-import guard — likely last recount)
+
+- Head bd398f268: imports/linked-metadata refuse to derive (typed gaps),
+  gaps anchored to the uses: call site, strict-UTF-8 hints. ci-workflow 0.3.1.
+- Pull + rebuild + the SAME command (the 0.3.1 bump forces the honest
+  rescan — count expected to HOLD at 142; any drop is an import-carrying
+  project naming itself in the new custom-imports gaps):
+
+  ```powershell
+  cd C:\tracemap
+  git pull
+  dotnet build src/dotnet/TraceMap.sln -c Release
+  dotnet $ua scan-estate --repos-root <repos-root> `
+    --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
+    --scope <repos-root>\repos.txt `
+    --out C:\ua-estate --parallel 8 --worktree --archived C:\ua-estate\archived.txt --index-ci-producers
+
+  dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
+  (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).provenanceSummary
+  (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.internalPackages.Count
+  # new gaps worth one glance:
+  Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object { Select-String "$($_.FullName)\facts.ndjson" -Pattern 'custom-imports' } | Measure-Object | ForEach-Object Count
+  ```
+
+- Verdict rule unchanged: count holds (±0) -> merge; small drop with every
+  dropout named in a custom-imports gap -> still merge (each explained);
+  anything else -> paste the gaps.
+
 ## 2026-10-22 — PRODUCER EYEBALL PASS (the finish gate; post-guard numbers)
 
 - Final numbers: projectDeclared=57, ciDefined=114, internalPackages=142
