@@ -698,7 +698,7 @@ public static class Ingest
         {
             // tolerant carrier (the scope plain-list precedent): a JSON sidecar copies verbatim; a plain
             // one-name-per-line list (the scan-estate --archived shape) is wrapped into archived.v0.json
-            var text = File.ReadAllText(archivedPath);
+            var text = File.ReadAllText(archivedPath).TrimStart('\uFEFF'); // one legal BOM (PowerShell default write); JSON sniff and line parsing both choke on it
             if (text.TrimStart().StartsWith('{'))
                 File.Copy(archivedPath, Path.Combine(inputDir, "archived.v0.json"), true);
             else

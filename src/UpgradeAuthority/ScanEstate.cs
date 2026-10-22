@@ -792,7 +792,7 @@ public static class ScanEstate
         if (archivedPath is not null)
         {
             if (!File.Exists(archivedPath)) { Console.Error.WriteLine($"error: --archived file not found: {archivedPath}"); return 1; }
-            var names = File.ReadAllLines(archivedPath).Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
+            var names = File.ReadAllLines(archivedPath).Select(l => l.Trim().TrimStart('\uFEFF')).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList(); // BOM-tolerant: PowerShell writes one by default
             if (names.Count == 0) { Console.Error.WriteLine("error: --archived file names nothing (one repo folder name per line, # comments allowed)"); return 1; }
             var known = entries.ToDictionary(e => e.Name, e => e, StringComparer.Ordinal);
             var unknown = names.Where(n => !known.ContainsKey(n)).ToList();
