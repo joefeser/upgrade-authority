@@ -326,6 +326,27 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v22: fingerprints decoded (all-distinct = og file's hint ARRAY differs — @main/extra entries — NOT proof of broken; matching normalizes refs) — z4 decides
+
+- Receipt hashes RAW loaded entries; matching strips @ref. An og entry
+  with @main (or extra entries) yields a different fingerprint that
+  still MATCHES. So z1-scope != z2-scope no longer implies broken hints.
+- z4: the PRODUCTION hints file against the CURRENT (post-cleanup) repo:
+
+  ```powershell
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  dotnet $t scan --repo "<repos-root>\<that-repo>" --out C:\z4 --index-ci-producers --ci-hints C:\ua-estate\ci-hints.v1.json
+  "z4 ROWS: $((Select-String C:\z4\facts.ndjson -Pattern '"sourceKind":"ci-workflow"' -AllMatches).Matches.Count)"
+  "z4 GAPS: $((Select-String C:\z4\facts.ndjson -Pattern '"gapKind":"ci-' -AllMatches).Matches.Count)"
+  git -C "<repos-root>\<that-repo>" diff HEAD~1 --stat
+  ```
+
+- Read: z4 ROWS > 0 -> the og file matches fine; the PRE-CLEANUP repo
+  state silenced z1 AND the estate scan -> the diff --stat names the
+  edit that unblocked it (expect: the yml touched during cleanup). z4
+  0/0 -> the og entries genuinely never match (spelling) -> replace the
+  og file with the z1-hints content, estate rescan, done.
+
 ## 2026-10-22 — ZEROER v21: let the RECEIPT fingerprints testify — hints-AS-LOADED compared across z1/z2/z3 (repo content does not enter the hash)
 
 - Receipt code: scope fingerprint = base scope + indexCiProducers +
