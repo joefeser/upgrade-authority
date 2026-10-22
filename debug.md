@@ -349,6 +349,18 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
   - (a) complete + (b) > 0 -> NO BUG EVER; the 142->111 story is
     false-positives correctly retired; #902 UNFREEZES.
+- FINAL eyeball (v8.1) — the names behind a known producer's rows (paste
+  beats a photo: names eyeball instantly, counts don't):
+
+  ```powershell
+  $fj = Get-Content C:\ua-estate\fixture\input\producer-evidence.v0.json -Raw | ConvertFrom-Json
+  $fj.producers | Where-Object { $_.repo -like '*<repo-fragment>*' } | ForEach-Object { "$($_.repo)  $($_.packageId)  [$($_.provenance)]" }
+  ```
+
+  Operator result 2026-10-22: (a) list correct; (b) known producer = 4
+  rows (old sweep showed 2 -> the 0.4.0 chain finds MORE real ids, not
+  fewer — growth, not loss). Remaining: the 4 NAMES look right ->
+  saga CLOSED, no fix, no rescan needed.
   - (a) missing known names -> those names' true producer repos are the
     direct-scan targets (v6 second fence) — that IS the bug trail.
   - (b) = 0 on a repo that really produces -> direct-scan it (v6 fence);
