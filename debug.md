@@ -232,6 +232,17 @@ scans, a skip-reason tally + INCOMPLETE warning if coverage is poor.
   ciDefined count + internalPackages near ~100 closes the producer saga.
   Dll+flags changed = one full rescan (the usual honesty tax).
 
+## LAW — the runbook's runbook (binding; overrides habit)
+
+**Every command lives HERE before it exists in chat.** The inverse view, the
+determinism check, the lost-producer sweep, the zeroer greps — every
+diagnostic of this saga shipped to this file the moment it was invented; the
+standing rule is now LAW because a diagnostic that lives only in chat is a
+diagnostic that is gone when you need it most (the same lesson as the old
+scan folders: evidence and tooling must survive the moment of their creation).
+Consequence for the operator loop: when the agent gives you a command in
+chat, the correct response is "is that in debug.md" BEFORE running it.
+
 ## 2026-10-22 — NAME THE ZEROER (whole-repo producer loss; prime suspect = root Directory.Build.props identity)
 
 - Whole-repo zeroing can't be per-project policy. Prime suspect: a ROOT-level
