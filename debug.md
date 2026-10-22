@@ -326,6 +326,38 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — ZEROER v8: NO-ZEROER reframe (operator: every zero-list repo truly does not produce) — close-out checks
+
+- Operator verdict on the zero list: "every line with 0 does not produce a
+  package. so the zero list is correct." If that holds, THERE IS NO ZEROER:
+  the falling counts were the 0.4.0 guards (test guard, parsed-XML
+  eligibility, chain strictness) retiring FALSE producers the older
+  over-broad versions credited. The crisis inverts — nothing real was lost;
+  the old 142-era numbers were inflated, not the new ones deficient.
+- Arithmetic already CLOSED (v6 receipts): current 55 project + 56 ci +
+  0 operator = 111 entries, 111 distinct, internal = 111. The old "44" was
+  a stale registry.json vintage. No counting bug anywhere.
+- Two checks close the hunt for good (both cheap):
+
+  ```powershell
+  # a) CURRENT internal list — eyeball: any package you KNOW we publish
+  #    that is MISSING? (the earlier 142-name list passed the same eyeball)
+  (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.internalPackages
+  # b) spot-check a KNOWN producer's estate facts — 0 rows there = REAL bug
+  (Select-String "C:\ua-estate\scans\<known-producer-repo>\facts.ndjson" -Pattern 'PackageProduced' -AllMatches).Matches.Count
+  ```
+
+  - (a) complete + (b) > 0 -> NO BUG EVER; the 142->111 story is
+    false-positives correctly retired; #902 UNFREEZES.
+  - (a) missing known names -> those names' true producer repos are the
+    direct-scan targets (v6 second fence) — that IS the bug trail.
+  - (b) = 0 on a repo that really produces -> direct-scan it (v6 fence);
+    producers appear = ua pipeline bug; none = tracemap bug.
+- The determinism question (57->55->44->55) collapses with the reframe:
+  each drop tracked a tracemap behavior change (guard landings, version
+  bumps) EXCEPT any same-bits drop — a same-bits rerun of ingest+registry
+  printing 55/0/56 again settles it in one command if it ever matters.
+
 ## 2026-10-22 — ZEROER v5: accumulator DEAD (operator sidecar empty; merge writes the FIXTURE copy only — code-verified)
 
 - The 111-vs-100 arithmetic needs the full decomposition instead:
