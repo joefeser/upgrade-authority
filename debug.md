@@ -326,6 +326,22 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
 
 - #902 stays MERGE FROZEN until step 2 says tracemap is innocent.
 
+## 2026-10-22 — PRE-COMMIT CLEAN-GATE installed (the morning leak's structural fix; operator suggestion)
+
+- push-trial.sh guards PUSHES; a pre-commit hook guards the COMMIT itself
+  — any agent, any shell, 1am included. Self-tested in a scratch repo
+  (clean passes, employer path refused with the line cited). Installed
+  locally on BOTH repos (ua main repo — shared with this worktree — and
+  tracemap). Tracked copy: tools/pre-commit-cleangate.
+- Work-machine clone (hooks are per-clone, nothing to pull):
+
+  ```powershell
+  Copy-Item C:\work\upgrade-authority\tools\pre-commit-cleangate C:\work\upgrade-authority\.git\hooks\pre-commit
+  ```
+
+  (after pulling this branch; any clone of tracemap can do the same with
+  its copy from the trial branch once synced)
+
 ## 2026-10-22 — ZEROER v13: LOCAL REPRO FIRES at BOTH versions (head 1f568e69 AND production cac77b55) — code is innocent for this shape; the difference is the REAL repo. Ghost-project vs yml-bytes splitter
 
 - Scratch repo (reconstructed yml: job-level uses of the exact shared
