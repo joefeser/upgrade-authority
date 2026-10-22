@@ -243,6 +243,27 @@ scan folders: evidence and tooling must survive the moment of their creation).
 Consequence for the operator loop: when the agent gives you a command in
 chat, the correct response is "is that in debug.md" BEFORE running it.
 
+## 2026-10-22 — ZEROER v3: TOTAL SILENCE (no yml, no ci-workflow, no imports) = the CI lane never ran for these scans; suspect = CACHE served a flag-less vintage
+
+- Every guard leaves a mark; these facts have none. One thing is totally
+  silent: the lane not running at all. Check the cached scan's own metadata:
+
+  ```powershell
+  Get-Content "C:\ua-estate\scans\<zeroed-repo>\scan-estate.json"
+  # "indexCiProducers": true or false??  false = cache bug (ua side)
+  ```
+
+- Corroborate with a direct scan, bypassing the estate cache:
+
+  ```powershell
+  $t = "C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll"
+  dotnet $t scan --repo "<repos-root>\<zeroed-repo>" --out C:\z1 --index-ci-producers --ci-hints C:\ua-estate\ci-hints.v1.json
+  (Select-String C:\z1\facts.ndjson -Pattern 'PackageProduced').Count
+  ```
+
+- Direct scan produces producers where the estate had zero -> cache bug,
+  ua-side, fix immediate.
+
 ## 2026-10-22 — ZEROER v2: no .yml and no ci-workflow ANYWHERE in the zeroed facts — the CI lane never ran for these repos
 
 - Implication: these were PROJECT-lane producers (csproj metadata tier-3, no
