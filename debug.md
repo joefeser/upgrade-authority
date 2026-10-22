@@ -243,6 +243,26 @@ scan folders: evidence and tooling must survive the moment of their creation).
 Consequence for the operator loop: when the agent gives you a command in
 chat, the correct response is "is that in debug.md" BEFORE running it.
 
+## 2026-10-22 — ZEROER v2: no .yml and no ci-workflow ANYWHERE in the zeroed facts — the CI lane never ran for these repos
+
+- Implication: these were PROJECT-lane producers (csproj metadata tier-3, no
+  yaml traces) — and the project lane is what zeroed the family (finally
+  explains projectDeclared 57->44 too).
+- CORRECTION: the earlier 'customimports 0' count grepped the DECISION
+  STRING which never appears in facts — the guard is ALIVE as prime suspect.
+  The Shared family centralizing via explicit <Import> in every csproj would
+  trip it family-wide. The REAL greps:
+
+  ```powershell
+  $z = Get-ChildItem C:\ua-estate\scans -Directory -Filter '*EnterpriseLogging*'
+  Select-String "$($z.FullName)\facts.ndjson" -Pattern 'imports a \.props' | Select-Object -First 3
+  Select-String -Path "<repos-root>\<the-logging-lib-repo>\*\*.csproj" -Pattern '<Import' | Select-Object -First 3
+  ```
+
+- Lights up -> the custom-imports guard over-fired; fix = follow the explicit
+  Import when its target is INSIDE the repo (bounded-evaluate; refuse only
+  what is genuinely unevaluable / outside).
+
 ## 2026-10-22 — ZEROER UPDATE: props hypothesis DEAD (no Directory.Build.props in the family); new prime suspect = parser-backed hint calls
 
 - Operator check: zeroed repos have NO Directory.Build.props — inheritance
