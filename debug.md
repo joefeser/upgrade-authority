@@ -364,6 +364,31 @@ chat, the correct response is "is that in debug.md" BEFORE running it.
   whether its prefixed producers were refused (0.4.1 guards) — gap
   detail names the rule.
 
+## 2026-10-23 — POST-0.4.4 LEDGER: 53/179/232/136 — eight guessed entries retired to NAMED gaps; the review tally
+
+- Operator receipts (post-merge rescan): projectsDeclared 53 (was 54),
+  ciDefined 179 (was 186), internal 232 (was 240), unknown 136 (was 135).
+  Shape = the 0.4.4 honesty rules working: conditioned IsPackable,
+  conditional identities, Otherwise branches, and mixed
+  body-vs-Directory.Build declarations no longer resolve to guessed
+  rows — they emit typed gaps that name the reason. Review the eight:
+
+  ```powershell
+  Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
+    Select-String "$($_.FullName)\facts.ndjson" -Pattern 'ci-hint-id-unevidenced|ci-producer-id-unevidenced' -AllMatches
+  } | ForEach-Object { $_.Line } | ForEach-Object {
+    if ($_ -match '"packageIdProvenance"[^}]*|"gapKind":"[^"]+"') { } ;
+    if ($_ -match '([^" ]+): (packed project[^"]{0,80}|the nearest[^"]{0,60})') { $Matches[1] + ' — ' + $Matches[2] }
+  } | Group-Object | Sort-Object Count -Descending | Select-Object -First 12 | ForEach-Object { "$($_.Count)`t$($_.Name)" }
+  ```
+
+- Read: each row = a project + its refusing reason (conditioned
+  IsPackable / CONDITIONED Test.Sdk / cannot-resolve identity /
+  inherited identity). Real publishers among them -> operator-assert in
+  producer-evidence (or fix the repo's declaration); retired guesses ->
+  correctly gone. The props-vs-targets precision debt (follow-up PR)
+  may reclaim the mixed-declaration ones WITHOUT operator action.
+
 ## 2026-10-22 — ZEROER v27: post-rescan producer REMOVAL (the ccsplus service) — first estate exposure of the 0.4.1 guards; the gap names the refusing rule
 
 - Operator: after the full rescan, one service producer disappeared
