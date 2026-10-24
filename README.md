@@ -58,6 +58,23 @@ Requires the .NET 10 SDK. Everything else is self-contained.
 
 ## From zero on your estate
 
+There are two ways to drive ua, and the choice belongs up front:
+
+- **One shot — `ua scan-estate`.** One command from a folder of repo checkouts to a plan: it
+  fetches every origin to prove each repo is at its trunk tip before reusing anything, scans
+  only what moved, bootstraps the sidecars you'd otherwise hand-create, and runs
+  ingest → plan → report. That freshness guarantee is exactly what a **real estate run** wants —
+  and the wrong cost for testing, because every invocation re-pays the fetch.
+- **One command at a time.** `ingest` over scans you already have (seconds, offline, explicit
+  sidecars) produces the `fixture` folder; then `plan`, `report`, `registry`, `drift`, `audit`,
+  and `export-campaign` each read only that fixture — instant, re-runnable, in any order. This
+  is the loop for **testing and exploring**: set up once, iterate freely, re-ingest only when a
+  sidecar changes, and never re-scan unless you run `scan-estate` again.
+
+The walkthrough below is the one-shot path (it also *creates* the inputs the step-by-step path
+consumes — the scans and the sidecars). Already have scans and want the cheap loop? Jump to
+[Iterating without re-scanning](#iterating-without-re-scanning-the-cheap-test-loop).
+
 The demo above runs on committed data. On your own repos, the entry point is `ua scan-estate` —
 one command takes a folder of repo checkouts to a plan, and **bootstraps every sidecar you need**
 on first run (nothing to create by hand):
@@ -104,9 +121,112 @@ trunk tip first — a behind checkout makes evidence stale twice over), `--index
 (closure evidence from build-output `deps.json` — converts "unknown" repos into answers; `--build`
 compiles each checkout, which restores from your configured NuGet feeds and **executes the repo's
 build scripts with your privileges — only point it at repos you trust**), `--worktree` (scan
-isolated worktrees, never touching your checkout), `--scope <file>` (declare repos out of scope,
-visible in the report), `--parallel <N>` (parallel fetches). Repos must be clean and at their
-origin trunk tip, or they are visibly skipped — that precondition is the point.
+isolated worktrees, never touching your checkout), `--parallel <N>` (parallel fetches). Repos
+must be clean and at their origin trunk tip, or they are visibly skipped — that precondition is
+the point.
+
+### Scoping a repos root you don't fully control
+
+If the checkouts folder contains repos you don't want in the estate — work repos next to
+experiments, or you've already curated a subset for this campaign — don't reorganize the folder.
+This is **pre-work**: you know your subset up front, before the first run, so write it down first
+and pass `--scope`. The friendly format is a plain text list — one repo folder name per line,
+`#` comments and blank lines allowed:
+
+```powershell
+# C:\ua-estate\repos.txt — the estate you actually care about
+billing-api
+checkout-web
+# experiments-repo   (left out on purpose)
+
+dotnet $ua scan-estate --repos-root C:\repos --out C:\ua-estate --tracemap C:\tracemap\bin\Release\net10.0\tracemap.dll `
+  --self my-team --scope C:\ua-estate\repos.txt
+```
+
+A list means *include exactly these*. Already have scans you trust and want the list generated
+from them? `Get-ChildItem C:\ua-estate\scans -Directory | Select-Object -ExpandProperty Name | Set-Content C:\ua-estate\repos.txt`.
+For *exclude-mode* (easier when the few you removed are simpler to name than the many you kept),
+author the JSON form instead:
+
+```json
+{ "schemaVersion": "estate-scope.v0", "exclude": [ "repo-x", "repo-y" ] }
+```
+
+Either way the run normalizes what you wrote into canonical `scope.v0.json` inside the fixture,
+so the evidence stays schema'd no matter which form you authored.
+
+Names are repo **folder names** under `--repos-root`. Out-of-scope repos are never scanned, never
+fetched, never added to ownership — they appear in the run manifest (`scan-estate.v1.json`) as
+`out-of-scope`, named and counted, never silently dropped, and the scope is copied into the
+fixture and echoed in the plan ("Scope: include-mode — 130 repos in scope by config", plus the
+out-of-scope names when you used exclude-mode) — so the filter travels with the evidence instead
+of living in your head. The two modes cannot be combined, and a list or `include: []` that names
+nothing is rejected — a scope that names nothing is a mistake, not an empty estate.
+
+### Iterating without re-scanning (the cheap test loop)
+
+`scan-estate` re-verifies freshness on every run — it fetches every origin to prove each repo
+is still at trunk tip before reusing anything. That is the right behavior for a *real* estate
+run (stale evidence is wrong twice over), and the wrong cost for *testing* against scans you
+already have. Don't pay it twice: the whole chain after scanning reads one folder — the fixture —
+and re-runs in seconds, offline, as many times as you like:
+
+```powershell
+$ua = "run","--project","src/UpgradeAuthority","-c","Release","--"
+
+# ONE-TIME: turn your existing scans into the fixture (seconds; no network):
+#   copy your sidecars next to the scans folder (ownership.v0.json, producer-evidence.v0.json)
+#   — a delta.json is OPTIONAL at this step (registry/drift/audit don't need one; see below)
+dotnet $ua ingest --scans-root C:\ua-estate\scans `
+  --producer C:\ua-estate\producer-evidence.v0.json `
+  --ownership C:\ua-estate\ownership.v0.json `
+  --out C:\ua-estate\fixture
+
+# THEN iterate freely — every command below reads only the fixture (instant, re-runnable).
+# plan/report PRINT to the console by default; --out writes the file:
+dotnet $ua plan C:\ua-estate\fixture --out C:\ua-estate\plan.json
+dotnet $ua report C:\ua-estate\fixture --out C:\ua-estate\report.md
+dotnet $ua registry C:\ua-estate\fixture
+dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json --out C:\ua-estate\drift.json
+dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json --out C:\ua-estate\audit.json
+dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign
+```
+
+Changed a sidecar (edited ownership teams, declared more externals, swapped the delta)? Re-run
+the one `ingest` — still seconds. Re-scan only ever happens when you run `scan-estate` again,
+and then only for repos that actually moved. The fetch phase can be widened with `--parallel <N>`.
+
+### Where the delta comes from (and when you need one)
+
+The delta is the ONE package upgrade you're planning a campaign around — ua plans one at a time
+(V0). You do **not** need one to see your estate: `registry`, `drift`, and `audit` never read it,
+and `ingest` builds the fixture without one. You DO need one for `plan`, `report`, `apply`,
+`push`, `export-packet`, and `export-campaign` — those refuse with a pointer here when it's
+missing. Three ways to get a `delta.json`:
+
+1. **Hand-write it** — it's six lines; `oldVersion`/`newVersion` are the upgrade's endpoints:
+
+   ```json
+   {
+     "version": "package-delta.v1",
+     "sourceRepo": "https://your-vcs/your-org/producer-repo.git",
+     "sourceCommitSha": "the commit that introduced the new version (or 40 zeros)",
+     "changes": [ {
+       "id": "any-short-label",
+       "packageName": "Your.Package",
+       "ecosystem": "nuget",
+       "changeType": "updated",
+       "oldVersion": "1.0.0",
+       "newVersion": "2.0.0"
+     } ]
+   }
+   ```
+
+2. **Let scan-estate bootstrap the template** — `--delta-package <id> --delta-old <v> --delta-new <v>`
+   writes the file on first run (drop the flags on re-runs once your real delta is in place).
+3. **Generate candidates from feed truth** — `ua drift <fixture> --feed feed-versions.v1.json
+   --emit-deltas <dir>` writes one delta file per distinct behind-version it found; pick one and
+   copy it in as `delta.json`.
 
 ## The commands
 

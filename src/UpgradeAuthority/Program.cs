@@ -134,7 +134,10 @@ public static class Program
                 var scopeOpt = GetOpt(args, "--scope");
                 if (scopeOpt is null && Array.IndexOf(args, "--scope") >= 0)
                 { Console.Error.WriteLine("error: --scope requires a value (<file>)"); return 1; }
-                return Ingest.Run(scanDirs, outDir, GetOpt(args, "--producer"), GetOpt(args, "--ownership"), GetOpt(args, "--delta"), scansRootOpt, scopeOpt);
+                var archivedOpt = GetOpt(args, "--archived");
+                if (archivedOpt is null && Array.IndexOf(args, "--archived") >= 0)
+                { Console.Error.WriteLine("error: --archived requires a value (<file> — archived.v0.json or a plain one-per-line list written to the fixture input verbatim)"); return 1; }
+                return Ingest.Run(scanDirs, outDir, GetOpt(args, "--producer"), GetOpt(args, "--ownership"), GetOpt(args, "--delta"), scansRootOpt, scopeOpt, archivedOpt);
             }
             if (args.Length >= 2 && args[0] == "drift")
             {
@@ -231,7 +234,7 @@ public static class Program
             if (args.Length >= 1 && args[0] == "scan-estate")
             {
                 // SPEC-017: one command — repos folder → freshness → cached scans → sidecars → plan → report
-                foreach (var f in new[] { "--repos-root", "--out", "-o", "--tracemap", "--scope", "--self", "--delta-package", "--delta-old", "--delta-new", "--worktree-root", "--trunk", "--parallel" })
+                foreach (var f in new[] { "--repos-root", "--out", "-o", "--tracemap", "--scope", "--self", "--delta-package", "--delta-old", "--delta-new", "--worktree-root", "--trunk", "--parallel", "--git-timeout", "--archived", "--ci-hints" })
                 {
                     int? bad = ValueFlagError(args, f);
                     if (bad is not null) { Console.Error.WriteLine($"error: {args[bad.Value]} requires a value"); return 1; }
@@ -249,10 +252,16 @@ public static class Program
                 var worktreeMode = Array.IndexOf(args, "--worktree") >= 0;
                 var buildFlag = Array.IndexOf(args, "--build") >= 0;
                 var indexDepsJson = Array.IndexOf(args, "--index-deps-json") >= 0;
+                var indexCiProducers = Array.IndexOf(args, "--index-ci-producers") >= 0;
                 var parallelOpt = GetOpt(args, "--parallel");
                 int parallel = 2;
                 if (parallelOpt is not null && (!int.TryParse(parallelOpt, out parallel) || parallel < 1 || parallel > 64))
                 { Console.Error.WriteLine("error: --parallel requires a value in 1..64"); return 1; }
+                var gitTimeoutOpt = GetOpt(args, "--git-timeout");
+                int gitTimeout = ScanEstate.GitTimeoutSeconds;
+                if (gitTimeoutOpt is not null && (!int.TryParse(gitTimeoutOpt, out gitTimeout) || gitTimeout < 0))
+                { Console.Error.WriteLine("error: --git-timeout requires a value in seconds (0 disables the kill timer)"); return 1; }
+                ScanEstate.GitTimeoutSeconds = gitTimeout;
                 var excludes = new List<string>();
                 for (int i = 0; i < args.Length; i++)
                     if (args[i] == "--exclude") // repeatable tracemap pass-through (folder globs, NOT scope exclusion)
@@ -262,10 +271,10 @@ public static class Program
                     }
                 if (reposRoot is null) { Console.Error.WriteLine("error: --repos-root <dir> is required"); return 1; }
                 if (outDirE is null) { Console.Error.WriteLine("error: --out <dir> is required (the estate working dir: scans/, sidecars, fixture/, plan.json, report.md)"); return 1; }
-                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson);
+                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson, GetOpt(args, "--archived"), indexCiProducers, GetOpt(args, "--ci-hints"));
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--index-ci-producers] [--ci-hints <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -413,7 +422,12 @@ public static class Program
         var pe = Load<ProducerEvidence>("producer-evidence.v0.json");
         var ow = Load<OwnershipFile>("ownership.v0.json");
         var px = Load<PackageEvidence>("package-evidence.v0.json");
-        var delta = Load<DeltaFile>("delta.json");
+        // delta.json is OPTIONAL (estate-first flow): registry/drift/audit never read it — only the
+        // campaign commands do, and they refuse with instructions when it's absent
+        var deltaPathF = Path.Combine(fixtureDir, "input", "delta.json");
+        var delta = File.Exists(deltaPathF)
+            ? Load<DeltaFile>("delta.json")
+            : new DeltaFile { Version = "package-delta.v1" };
         // SPEC-008: exactly one lockfile input file, any of v0/v1/v2
         var lockFiles = new[] { "lockfile-rows.v2.json", "lockfile-rows.v1.json", "lockfile-rows.v0.json" }
             .Select(n => (name: n, path: Path.Combine(fixtureDir, "input", n))).Where(t => File.Exists(t.path)).ToList();
@@ -502,7 +516,19 @@ public static class Program
             }
             freshnessFile = parsed;
         }
-        return new Engine(pe, ow, px, delta, lockRepos, scopeFile, freshnessFile);
+        // archived.v0: optional operator annotation (archived repos keep evidence, lose wave scheduling)
+        ArchivedFile? archivedFile = null;
+        var archivedInputPath = Path.Combine(fixtureDir, "input", "archived.v0.json");
+        if (File.Exists(archivedInputPath))
+        {
+            try { archivedFile = JsonSerializer.Deserialize<ArchivedFile>(File.ReadAllText(archivedInputPath), Json); }
+            catch (JsonException ex) { throw new UaException($"malformed input archived.v0.json: {ex.Message}"); }
+            if (archivedFile?.SchemaVersion != "archived.v0")
+                throw new UaException($"malformed input archived.v0.json: unsupported schemaVersion '{archivedFile?.SchemaVersion}' (expected archived.v0)");
+            if (archivedFile.Repos is null)
+                throw new UaException("malformed input archived.v0.json: repos is null — a file with no entries must not exist at all");
+        }
+        return new Engine(pe, ow, px, delta, lockRepos, scopeFile, freshnessFile, hasDelta: File.Exists(deltaPathF), archived: archivedFile);
     }
 
     // SPEC-007 §7: load-time typed errors — one row per resolution group; v1 rows carry their key fields.
@@ -723,6 +749,36 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ingest-svc-e2e: {ex.Message}"); }
         finally { if (Directory.Exists(e2eTmp)) Directory.Delete(e2eTmp, true); }
+
+        // archived.v0 exclusion (live 2026-10-22: the synthetic estate's archived repo was scheduled in
+        // a wave with an executable pin edit — impossible work). Contract: archived repos keep
+        // classification/evidence, are excluded from waves, carry action archived-excluded + a named
+        // reason; the plain-list carrier (scan-estate --archived shape) wraps into archived.v0.json.
+        var archTmp = Path.Combine(Path.GetTempPath(), "ua-arch-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var richA = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
+            var rcA = Ingest.Run(new[] { Path.Combine(richA, "scans", "svc") }, archTmp,
+                Path.Combine(richA, "sidecars", "producer-evidence.v0.json"), Path.Combine(richA, "sidecars", "ownership.v0.json"), Path.Combine(richA, "sidecars", "delta.json"));
+            if (rcA != 0) throw new Exception($"ingest exited {rcA}");
+            var listFile = Path.Combine(archTmp, "archived-list.txt");
+            File.WriteAllText(listFile, "# archived at the remote\nsvc\n");
+            var rcA2 = Ingest.Run(new[] { Path.Combine(richA, "scans", "svc") }, archTmp,
+                Path.Combine(richA, "sidecars", "producer-evidence.v0.json"), Path.Combine(richA, "sidecars", "ownership.v0.json"), Path.Combine(richA, "sidecars", "delta.json"), null, null, listFile);
+            if (rcA2 != 0) throw new Exception($"re-ingest exited {rcA2}");
+            var archSidecar = File.ReadAllText(Path.Combine(archTmp, "input", "archived.v0.json"));
+            if (!archSidecar.Contains("\"svc\"")) throw new Exception("plain list not wrapped into archived.v0.json");
+            var planA = LoadEngine(archTmp).BuildPlan();
+            if (planA.Waves.Any(w => w.ReleaseUnits.Any(u => u.Repo == "svc"))) throw new Exception("archived repo must not appear in any wave");
+            var svcA = planA.Repos.FirstOrDefault(r => r.Repo == "svc") ?? throw new Exception("svc missing from plan rows");
+            if (svcA.Classification != "affected") throw new Exception($"classification changed to {svcA.Classification} — archived must NOT change it");
+            if (svcA.ActionType != "archived-excluded") throw new Exception($"action {svcA.ActionType}");
+            if (!svcA.Reasons.Any(r => r.Contains("ARCHIVED"))) throw new Exception("named ARCHIVED reason missing");
+            if (!Report.Render(planA).Contains("archived-excluded")) throw new Exception("report must show the archived-excluded action");
+            Console.WriteLine("ok   plan-archived-exclusion (evidence kept, waves excluded, named reason; plain-list carrier wraps)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL plan-archived-exclusion: {ex.Message}"); }
+        finally { if (Directory.Exists(archTmp)) Directory.Delete(archTmp, true); }
 
         // SPEC-008 §7.4: two-repo estate end-to-end on committed real scans — machine-checked forever
         var estateTmp = Path.Combine(Path.GetTempPath(), "ua-estate2-" + Guid.NewGuid().ToString("N")[..8]);
@@ -1097,13 +1153,15 @@ public static class Program
                 throw new Exception("missing root must exit 1");
             Console.WriteLine("ok   ingest-scans-root-missing-root (exit 1)"); pass++;
 
-            // sidecar explicitness: two dirs, sidecar PRESENT in one dir but flag omitted => typed error (per kind)
+            // sidecar explicitness: two dirs, sidecar PRESENT in one dir but flag omitted => typed error (per kind).
+            // DELTA is exempt since the estate-first flow: omitting --delta proceeds delta-less, and a delta.json
+            // sitting in a scan dir is still NEVER auto-discovered for multi-dir runs
             var d1 = Path.Combine(rich2, "scans", "svc"); var d2 = Path.Combine(rich2, "scans", "billing");
             var o2 = Path.Combine(Path.GetTempPath(), "ua-sr-o2-" + Guid.NewGuid().ToString("N")[..8]);
             var eP = Path.Combine(rich2, "sidecars-estate2", "producer-evidence.v0.json");
             var eO = Path.Combine(rich2, "sidecars-estate2", "ownership.v0.json");
             var eD = Path.Combine(rich2, "sidecars-estate2", "delta.json");
-            foreach (var omit in new[] { "producer", "ownership", "delta" })
+            foreach (var omit in new[] { "producer", "ownership" })
             {
                 var tmpScan = Path.Combine(Path.GetTempPath(), "ua-sr-scan-" + Guid.NewGuid().ToString("N")[..8]);
                 CopyDir(d1, tmpScan);
@@ -1117,7 +1175,15 @@ public static class Program
                 if (rc != 1) throw new Exception($"present-but-implicit {omit}: exit {rc}, expected 1");
                 ForceDelete(tmpScan);
             }
-            Console.WriteLine("ok   ingest-scans-root-sidecar-explicitness (present-but-implicit refused, per kind)"); pass++;
+            {
+                var tmpScan = Path.Combine(Path.GetTempPath(), "ua-sr-scan-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(d1, tmpScan);
+                File.Copy(eD, Path.Combine(tmpScan, "delta.json"), true); // present-but-implicit delta
+                if (Ingest.Run(new[] { tmpScan, d2 }, o2, eP, eO, null) != 0) throw new Exception("omitted --delta must proceed (estate-first: delta optional)");
+                if (File.Exists(Path.Combine(o2, "input", "delta.json"))) throw new Exception("a delta.json sitting in a scan dir must never be auto-discovered for multi-dir runs");
+                ForceDelete(tmpScan);
+            }
+            Console.WriteLine("ok   ingest-scans-root-sidecar-explicitness (present-but-implicit refused, per kind; delta omitted = proceed, never auto-discovered)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL ingest-scans-root-cases: {ex.Message}"); }
 
@@ -1428,11 +1494,26 @@ public static class Program
             var covSv = JsonDocument.Parse(File.ReadAllText(Path.Combine(sv, "input", "package-evidence.v0.json"))).RootElement.GetProperty("scanCoverage")[0];
             if (covSv.GetProperty("status").GetString() != "gaps") throw new Exception("svc must stay gaps (real package problems)");
             var gapTexts = string.Join("\n", covSv.GetProperty("gaps").EnumerateArray().Select(g2 => g2.GetString()));
-            if (!gapTexts.Contains("packages-lock-group-unsupported") || !gapTexts.Contains("constraint not evidenced")) throw new Exception("package-relevant gaps missing");
+            if (!gapTexts.Contains("packages-lock-group-unsupported")) throw new Exception("package-relevant gaps missing");
+            if (gapTexts.Contains("constraint not evidenced")) throw new Exception("CPM-correlated references must NOT stay gaps — the central pin IS the constraint (svc's Contoso.Core/Serilog references all correlate; the old behavior double-counted them as gaps while also emitting the pin facts, blocking not-affected forever)");
             if (gapTexts.Contains("CompilerDiagnostic")) throw new Exception("compile noise leaked into gaps");
             var noteTexts = string.Join("\n", covSv.GetProperty("notes").EnumerateArray().Select(g2 => g2.GetString()));
             if (!noteTexts.Contains("Compiler diagnostic") || !noteTexts.Contains("buildStatus")) throw new Exception("compile health not in notes");
-            Console.WriteLine("ok   gap-scope-package-relevant (svc keeps real gaps; compile health noted)"); pass++;
+            Console.WriteLine("ok   gap-scope-package-relevant (svc keeps real gaps; CPM-correlated constraints withdrawn; compile health noted)"); pass++;
+            // the honest residual: a versionless reference with NO correlating central pin STAYS a gap
+            {
+                var scratchG = Path.Combine(Path.GetTempPath(), "ua-g15c-" + Guid.NewGuid().ToString("N")[..8]);
+                CopyDir(Path.Combine(richG, "scans", "svc"), scratchG);
+                File.AppendAllText(Path.Combine(scratchG, "facts.ndjson"),
+                    "{\"factId\":\"fact-nopin0001\",\"scanId\":\"scan-svc\",\"repo\":\"svc\",\"commitSha\":\"c1\",\"factType\":\"PackageReferenced\",\"ruleId\":\"project.file.v1\",\"evidenceTier\":\"Tier2Structural\",\"evidence\":{\"filePath\":\"src/App.csproj\",\"startLine\":9,\"endLine\":9},\"properties\":{\"ecosystem\":\"nuget\",\"manifestKind\":\"csproj\",\"packageName\":\"NoPin.Package\",\"version\":\"\"}}\n");
+                var outG = Path.Combine(Path.GetTempPath(), "ua-g15c-out-" + Guid.NewGuid().ToString("N")[..8]);
+                if (Ingest.Run(new[] { scratchG }, outG, Path.Combine(richG, "sidecars", "producer-evidence.v0.json"), Path.Combine(richG, "sidecars", "ownership.v0.json"), Path.Combine(richG, "sidecars", "delta.json")) != 0) throw new Exception("nopin ingest failed");
+                var covG = JsonDocument.Parse(File.ReadAllText(Path.Combine(outG, "input", "package-evidence.v0.json"))).RootElement.GetProperty("scanCoverage")[0];
+                var gapsG = string.Join("\n", covG.GetProperty("gaps").EnumerateArray().Select(g2 => g2.GetString()));
+                if (!gapsG.Contains("constraint not evidenced: NoPin.Package")) throw new Exception("a versionless reference with no central pin must stay an honest gap: " + gapsG);
+                ForceDelete(scratchG); ForceDelete(outG);
+                Console.WriteLine("ok   gap-scope-nopin-residual (versionless + no pin = honest gap)"); pass++;
+            }
             Directory.Delete(sv, true);
 
             // classifier rows: MSBuildRegistrationFailed (diagnosticKind join) + csharp.syntax (broken .cs) => notes; unknown shape stays gap
@@ -1657,6 +1738,80 @@ public static class Program
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-happy-path: {ex.Message}"); }
         finally { ForceDelete(seRoot1); if (Directory.Exists(seOut1)) ForceDelete(seOut1); }
 
+        // 1b. estate-first delta-less: no delta.json, no --delta-* flags → scans+sidecars+ingest COMPLETE,
+        // plan/report skipped with teaching note (live finding 2026-10-21: a finished 130-repo rescan
+        // errored at the last step demanding the delta trio — the estate-first flow never has one)
+        var seRoot1b = Path.Combine(Path.GetTempPath(), "ua-se1b-" + Guid.NewGuid().ToString("N")[..8]);
+        var seOut1b = Path.Combine(Path.GetTempPath(), "ua-se1b-out-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(seRoot1b);
+            EstateRepo(seRoot1b, "alpha");
+            var rc1b = ScanEstate.Run(Path.Combine(seRoot1b, "repos"), seOut1b, null, null, "team-a", false, Array.Empty<string>(), null, null, null, StubScanner);
+            if (rc1b != 0) throw new Exception($"delta-less scan-estate exited {rc1b} (must complete)");
+            if (File.Exists(Path.Combine(seOut1b, "delta.json"))) throw new Exception("delta.json must NOT be templated when flags are absent");
+            if (File.Exists(Path.Combine(seOut1b, "plan.json")) || File.Exists(Path.Combine(seOut1b, "report.md"))) throw new Exception("plan/report must be skipped delta-less");
+            if (!Directory.Exists(Path.Combine(seOut1b, "fixture", "input"))) throw new Exception("fixture must be built delta-less");
+            var prod1b = File.ReadAllText(Path.Combine(seOut1b, "producer-evidence.v0.json"));
+            if (prod1b.Contains("Newtonsoft.Json")) throw new Exception("producer template must be empty (no delta target to seed)");
+            // partial flags stay a typed operator error, not a silent delta-less run
+            var rc1c = ScanEstate.Run(Path.Combine(seRoot1b, "repos"), seOut1b + "-c", null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", null, "13.0.3", StubScanner);
+            if (rc1c == 0) throw new Exception("partial --delta-* flags must stay a typed error");
+            Console.WriteLine("ok   scan-estate-delta-less (estate-first completes; plan/report teach inputs; partial flags still error)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-delta-less: {ex.Message}"); }
+        finally { ForceDelete(seRoot1b); if (Directory.Exists(seOut1b)) ForceDelete(seOut1b); if (Directory.Exists(seOut1b + "-c")) ForceDelete(seOut1b + "-c"); }
+
+        // 1c. remote fallback (live 2026-10-21: SSH blocked at work, operator carries an https twin remote):
+        // a single non-origin remote scans with a warning; ssh/https forms of the SAME repo fold to one
+        // identity; multiple remotes without origin still refuses (never guess which is authoritative)
+        var seRoot1c = Path.Combine(Path.GetTempPath(), "ua-se1c-" + Guid.NewGuid().ToString("N")[..8]);
+        var seOut1c = Path.Combine(Path.GetTempPath(), "ua-se1c-out-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(seRoot1c);
+            var repo1c = EstateRepo(seRoot1c, "norepo-origin");
+            Push.Git(repo1c, "remote rename origin work", out _, out _); // exactly one remote, not named origin
+            if (!ScanEstate.SameRepository("git@github.com:org/rep.git", "https://github.com/org/rep.git")) throw new Exception("ssh/https transport folding failed");
+            if (ScanEstate.SameRepository("https://github.com/org/rep.git", "https://github.com/org/rep2.git")) throw new Exception("different repos must never fold");
+            if (ScanEstate.SameRepository("https://github.com/org/Rep.git", "https://github.com/org/rep.git")) throw new Exception("case-variant paths are distinct repos and must not fold");
+            var origErr1c = Console.Error; var sw1c = new StringWriter(); Console.SetError(sw1c);
+            int rc1c;
+            try { rc1c = ScanEstate.Run(Path.Combine(seRoot1c, "repos"), seOut1c, null, null, "team-a", false, Array.Empty<string>(), null, null, null, StubScanner); }
+            finally { Console.SetError(origErr1c); }
+            if (rc1c != 0) throw new Exception($"single non-origin remote must scan (exit {rc1c})");
+            if (!sw1c.ToString().Contains("no origin remote")) throw new Exception("fallback warning missing from output");
+            using (var m1c = SEManifest(seOut1c))
+                if (!m1c.RootElement.GetProperty("repos").EnumerateArray().Any(e => e.GetProperty("status").GetString() == "scanned"))
+                    throw new Exception("repo must be scanned via the only remote");
+            Push.Git(repo1c, "remote add other https://example.invalid/x.git", out _, out _); // now ambiguous
+            var seOut1c2 = seOut1c + "-2";
+            var rc1c2 = ScanEstate.Run(Path.Combine(seRoot1c, "repos"), seOut1c2, null, null, "team-a", false, Array.Empty<string>(), "Polly", "8.0.0", "8.6.6", StubScanner);
+            if (rc1c2 == 0) throw new Exception("multi-remote without origin must refuse");
+            using (var m1c2 = SEManifest(seOut1c2))
+                if (!m1c2.RootElement.GetProperty("repos").EnumerateArray().Any(e => e.GetProperty("status").GetString() == "skipped" && (e.GetProperty("reason").GetString() ?? "").Contains("ambiguous")))
+                    throw new Exception("ambiguity skip reason missing");
+            Console.WriteLine("ok   scan-estate-remote-fallback (single non-origin remote scans with warning; transports fold per repo; ambiguous multi-remote refuses)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-remote-fallback: {ex.Message}"); }
+        finally { ForceDelete(seRoot1c); if (Directory.Exists(seOut1c)) ForceDelete(seOut1c); if (Directory.Exists(seOut1c + "-2")) ForceDelete(seOut1c + "-2"); }
+
+        // 1d. ownership preflight: missing ownership + no --self must refuse BEFORE any scanning —
+        // a long run may never finish its work and stop at the last step (live 2026-10-21)
+        var seRoot1d = Path.Combine(Path.GetTempPath(), "ua-se1d-" + Guid.NewGuid().ToString("N")[..8]);
+        var seOut1d = Path.Combine(Path.GetTempPath(), "ua-se1d-out-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(seRoot1d);
+            EstateRepo(seRoot1d, "alpha");
+            var rc1d = ScanEstate.Run(Path.Combine(seRoot1d, "repos"), seOut1d, null, null, null, false, Array.Empty<string>(), "P", "1", "2", StubScanner);
+            if (rc1d == 0) throw new Exception("missing ownership + no --self must refuse");
+            if (Directory.Exists(Path.Combine(seOut1d, "scans"))) throw new Exception("preflight must fire BEFORE any scanning (no scans dir may exist)");
+            Console.WriteLine("ok   scan-estate-ownership-preflight (bootstrap precondition checked before any work)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-ownership-preflight: {ex.Message}"); }
+        finally { ForceDelete(seRoot1d); if (Directory.Exists(seOut1d)) ForceDelete(seOut1d); }
+
         // 2. incremental: zero rescans when nothing changed; exactly the bumped repo rescans
         try
         {
@@ -1794,10 +1949,12 @@ public static class Program
             File.WriteAllText(Path.Combine(zeta6, "b.txt"), "x");
             Push.Git(zeta6, "add -A", out _, out _); Push.Git(zeta6, "-c user.email=ua@test -c user.name=ua commit -qm b", out _, out _); Push.Git(zeta6, "push -q origin main", out _, out _);
             if (ScanEstate.Run(Path.Combine(root6, "repos"), out6, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", Fail6) != 1) throw new Exception("single-repo estate with a failed scan must exit 1 (0 fresh) — skip visible in manifest");
+            // NOTE (2026-10-23): Fail6 now runs 3 times (bounded backoff retries) and sleeps 5+15s
+            // total — the retry armor is the FIX for the moving-victim race, not a regression.
             if (!File.Exists(Path.Combine(out6, "scans", "zeta", "scan-manifest.json"))) throw new Exception("failed scan must leave the previous cache intact");
             if (Directory.GetDirectories(Path.Combine(out6, "scans")).Any(d => Path.GetFileName(d).StartsWith('.'))) throw new Exception("tmp/old residue left behind");
             using (var m6b = SEManifest(out6))
-                if (m6b.RootElement.GetProperty("repos")[0].GetProperty("reason").GetString() != "tracemap exited 9") throw new Exception("failure reason wrong");
+                if (m6b.RootElement.GetProperty("repos")[0].GetProperty("reason").GetString() != "tracemap exited 9 after 3 attempt(s)") throw new Exception("failure reason wrong");
             if (ScanEstate.Run(Path.Combine(root6, "repos"), out6, null, null, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner) != 0) throw new Exception("recovery run failed");
             using (var m6c = SEManifest(out6))
                 if (m6c.RootElement.GetProperty("repos")[0].GetProperty("status").GetString() != "scanned") throw new Exception("recovery must rescan");
@@ -1850,6 +2007,55 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-scope: {ex.Message}"); }
 
+        // 7c. scope as a PLAIN LIST (the onboarding pre-work carrier): one name per line, '#' comments,
+        // blank lines, CRLF tolerated; means include-mode; the snapshot + fixture copy stay canonical
+        // estate-scope.v0 JSON no matter which form was authored; an effectively-empty list is a typed error
+        try
+        {
+            var root7c = Path.Combine(Path.GetTempPath(), "ua-se7c-" + Guid.NewGuid().ToString("N")[..8]);
+            var out7c = Path.Combine(Path.GetTempPath(), "ua-se7c-out-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(root7c);
+            EstateRepo(root7c, "alpha");
+            EstateRepo(root7c, "beta");
+            EstateRepo(root7c, "gamma");
+            var listPath = Path.Combine(Path.GetTempPath(), "ua-se7c-list-" + Guid.NewGuid().ToString("N")[..8] + ".txt");
+            File.WriteAllText(listPath, "# the estate I actually care about\r\nalpha\r\n\r\nbeta\r\n# gamma deliberately left out\r\n");
+            if (ScanEstate.Run(Path.Combine(root7c, "repos"), out7c, null, listPath, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner) != 0)
+                throw new Exception("list-scope run failed");
+            using (var m7c = SEManifest(out7c))
+            {
+                var st7c = m7c.RootElement.GetProperty("repos").EnumerateArray().ToDictionary(e => e.GetProperty("name").GetString(), e => e.GetProperty("status").GetString());
+                if (st7c["alpha"] != "scanned" || st7c["beta"] != "scanned" || st7c["gamma"] != "out-of-scope") throw new Exception($"list-scope statuses: {string.Join(",", st7c.Select(kv => kv.Key + "=" + kv.Value))}");
+            }
+            var rep7c = File.ReadAllText(Path.Combine(out7c, "report.md"));
+            if (!rep7c.Contains("- Scope: include-mode — 2 repos in scope by config")) throw new Exception("list-scope report statement missing");
+            if (rep7c.Contains("out of scope by config: gamma")) throw new Exception("a pure include list has no exclude entries to echo — unlisted repos live in the manifest, not the plan");
+            // the fixture copy is canonical JSON (schema'd bytes downstream), and the snapshot equals it
+            var fixtureScope7c = File.ReadAllText(Path.Combine(out7c, "fixture", "input", "scope.v0.json"));
+            var (parsed7c, parseErr7c) = Scope.ParseAndValidate(fixtureScope7c, "scope.v0.json");
+            if (parseErr7c is not null || parsed7c?.EffectiveInclude is not { Count: 2 } || !parsed7c.EffectiveInclude.Contains("alpha") || !parsed7c.EffectiveInclude.Contains("beta"))
+                throw new Exception($"fixture scope must be canonical include-JSON for the list: {parseErr7c}");
+            if (fixtureScope7c != File.ReadAllText(Path.Combine(out7c, "scope.snapshot.json"))) throw new Exception("scope snapshot differs from the fixture copy");
+            // a name with spaces survives verbatim; duplicates collapse with the same warning as JSON; empty = typed error
+            var spPath = listPath + ".sp";
+            File.WriteAllText(spPath, "repo with spaces\r\nrepo with spaces\r\n");
+            var (spCanon, spErr) = Scope.ReadCanonicalText(spPath);
+            if (spErr is not null) throw new Exception("space-name list must load");
+            var (spScope, spVErr) = Scope.ParseAndValidate(spCanon, "sp.txt");
+            if (spVErr is not null || spScope!.EffectiveInclude is not { Count: 1 } || spScope.EffectiveInclude[0] != "repo with spaces") throw new Exception("space-name + duplicate list handling wrong");
+            File.WriteAllText(spPath, "# nothing but comments\r\n\r\n");
+            var (_, emptyErr) = Scope.ReadCanonicalText(spPath);
+            if (emptyErr is null || !emptyErr.Contains("names nothing")) throw new Exception("effectively-empty list must be a typed error");
+            var savedErr7c = Console.Error; var cap7c = new System.IO.StringWriter();
+            Console.SetError(cap7c);
+            var rcEmpty = ScanEstate.Run(Path.Combine(root7c, "repos"), out7c, null, spPath, "team-a", false, Array.Empty<string>(), "P", "1", "2", StubScanner);
+            Console.SetError(savedErr7c);
+            if (rcEmpty != 1 || !cap7c.ToString().Contains("names nothing")) throw new Exception($"empty list must refuse before scanning (rc {rcEmpty})");
+            Console.WriteLine("ok   scan-estate-scope-list (plain-list carrier: comments/CRLF/spaces; canonical-JSON snapshot; empty = typed error)"); pass++;
+            ForceDelete(root7c); ForceDelete(out7c); File.Delete(listPath); File.Delete(spPath);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-scope-list: {ex.Message}"); }
+
         // 8. alternates: two checkouts of one origin -> the later is visibly skipped; no-origin always skipped
         try
         {
@@ -1874,7 +2080,7 @@ public static class Program
             {
                 var st8 = m8.RootElement.GetProperty("repos").EnumerateArray().ToDictionary(e => e.GetProperty("name").GetString(), e => (status: e.GetProperty("status").GetString(), reason: e.TryGetProperty("reason", out var rr) ? rr.GetString() : null));
                 if (st8["alpha-clone"].status != "skipped" || !st8["alpha-clone"].reason!.Contains("alternate checkout of alpha")) throw new Exception($"alternate skip wrong: {st8["alpha-clone"]}");
-                if (st8["theta"].status != "skipped" || st8["theta"].reason != "no origin remote") throw new Exception($"no-origin skip wrong: {st8["theta"]}");
+                if (st8["theta"].status != "skipped" || st8["theta"].reason != "no git remotes configured") throw new Exception($"no-remote skip wrong (zero remotes is its own reason since the single-remote fallback): {st8["theta"]}");
             }
             if (ScanEstate.Run(Path.Combine(root8, "repos"), out8, null, null, "team-a", true, Array.Empty<string>(), "P", "1", "2", StubScanner) != 0) throw new Exception("allow-stale run failed");
             using (var m8b = SEManifest(out8))
@@ -2106,6 +2312,36 @@ public static class Program
             Directory.Delete(inc14, true); Directory.Delete(Path.GetDirectoryName(bad14)!, true);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scope-plan-statement: {ex.Message}"); }
+
+        // estate-first flow: ingest WITHOUT a delta builds the fixture (note, not an error);
+        // registry/drift-style engine views work; BuildPlan refuses with a pointer to the README
+        try
+        {
+            var outNd = Path.Combine(Path.GetTempPath(), "ua-no-delta-out-" + Guid.NewGuid().ToString("N")[..8]);
+            var sideNd = Path.Combine(Path.GetTempPath(), "ua-no-delta-side-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(sideNd);
+            File.WriteAllText(Path.Combine(sideNd, "producer.json"), "{\"schemaVersion\":\"producer-evidence.v0\",\"source\":\"fixture-declared\",\"externalPackages\":[],\"producers\":[]}");
+            File.WriteAllText(Path.Combine(sideNd, "ownership.json"), "{\"schemaVersion\":\"ownership.v0\",\"selfTeamId\":\"team-a\",\"ownerships\":[{\"repo\":\"svc\",\"team\":\"team-a\"}]}");
+            var errNdPrev = Console.Error;
+            var capNd = new System.IO.StringWriter();
+            int rcNd;
+            try { Console.SetError(capNd); rcNd = Ingest.Run(new[] { Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich", "scans", "svc") }, outNd, Path.Combine(sideNd, "producer.json"), Path.Combine(sideNd, "ownership.json"), null); }
+            finally { Console.SetError(errNdPrev); }
+            if (rcNd != 0) throw new Exception($"delta-less ingest must succeed, got exit {rcNd}");
+            if (File.Exists(Path.Combine(outNd, "input", "delta.json"))) throw new Exception("no delta was given — none may be invented");
+            if (!capNd.ToString().Contains("no delta found") || !capNd.ToString().Contains("registry/drift/audit are unaffected")) throw new Exception("the delta-less note must say what works and what doesn't: " + capNd.ToString());
+            var engNd = LoadEngine(outNd); // loads without throwing — the estate views don't need a delta
+            if (engNd.HasDelta) throw new Exception("HasDelta must be false for a delta-less fixture");
+            if (Registry.Run(outNd).Item2 != 0) throw new Exception("registry must work on a delta-less fixture");
+            string? planErrNd = null;
+            try { engNd.BuildPlan(); }
+            catch (UaException exNd) { planErrNd = exNd.Message; }
+            if (planErrNd is null || !planErrNd.Contains("no delta in this fixture") || !planErrNd.Contains("Where the delta comes from") || !planErrNd.Contains("emit-deltas"))
+                throw new Exception($"BuildPlan's refusal must teach the three ways to get a delta: {planErrNd}");
+            Console.WriteLine("ok   delta-optional (ingest note; registry works; plan refuses with instructions)"); pass++;
+            ForceDelete(outNd); ForceDelete(sideNd);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL delta-optional: {ex.Message}"); }
 
         // 15. PR #2 Baz round 1: empty origin URL never becomes the dedupe key; ALL --delta-* flags
         //     warn (not just --delta-package); persisted failure reasons scrub URL userinfo
@@ -2387,11 +2623,12 @@ public static class Program
                 throw new Exception("all-current rerun into the stale dir must exit 3 — no-behind must not skip the destination check");
             File.Delete(feedCur21);
             Directory.Delete(emitDir21, true);
-            // delta = loader precondition: deleted → exit 3 naming it; 2-change → exit 3; dual-fault (fixture+feed) → 3
+            // delta is OPTIONAL now (estate-first flow): a delta-less fixture LOADS and drifts normally;
+            // 2-change delta still exits 3; dual-fault (fixture+feed) → 3
             var scratch21 = Path.Combine(Path.GetTempPath(), "ua-dr21x-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(fd21, scratch21);
             File.Delete(Path.Combine(scratch21, "input", "delta.json"));
-            if (Drift.Run(scratch21, feed21, null, null).Item3 != 3) throw new Exception("delta-less fixture must exit 3");
+            if (Drift.Run(scratch21, feed21, null, null).Item3 != 0) throw new Exception("delta-less fixture must drift normally (estate-first: drift never reads the delta)");
             File.WriteAllText(Path.Combine(scratch21, "input", "delta.json"), "{\"version\":\"package-delta.v1\",\"sourceRepo\":\"x\",\"sourceCommitSha\":\"0\",\"changes\":[{\"id\":\"a\",\"packageName\":\"P\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"},{\"id\":\"b\",\"packageName\":\"Q\",\"ecosystem\":\"nuget\",\"changeType\":\"updated\",\"oldVersion\":\"1\",\"newVersion\":\"2\"}]}");
             if (Drift.Run(scratch21, feed21, null, null).Item3 != 3) throw new Exception("2-change delta must exit 3");
             if (Drift.Run(scratch21, feed21 + "-absent", null, null).Item3 != 3) throw new Exception("dual fault must resolve fixture-first (exit 3)");
@@ -2700,11 +2937,12 @@ public static class Program
             if (stdoutSanX != stdoutCapX) throw new Exception("--sanitized registry stdout differs from canonical");
             if (Main(new[] { "registry", frX, "--out" }) != 1) throw new Exception("bare trailing --out must exit 1");
             if (Main(new[] { "registry", frX, "-o" }) != 1) throw new Exception("bare trailing -o must exit 1");
-            // delta = loader precondition (same as drift); missing input ⇒ typed 3
+            // delta is OPTIONAL now (estate-first flow): a delta-less fixture LOADS and the registry runs;
+            // missing producer-evidence is still a typed 3
             var sX = Path.Combine(Path.GetTempPath(), "ua-rg-x-" + Guid.NewGuid().ToString("N")[..8]);
             CopyDir(frX, sX);
             File.Delete(Path.Combine(sX, "input", "delta.json"));
-            if (Registry.Run(sX).Item2 != 3) throw new Exception("delta-less fixture must exit 3");
+            if (Registry.Run(sX).Item2 != 0) throw new Exception("delta-less fixture must registry normally (estate-first: the registry never reads the delta)");
             File.Delete(Path.Combine(sX, "input", "producer-evidence.v0.json"));
             if (Registry.Run(sX).Item2 != 3) throw new Exception("missing producer-evidence must exit 3");
             Directory.Delete(sX, true);

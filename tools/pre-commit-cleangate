@@ -1,0 +1,24 @@
+#!/bin/bash
+# pre-commit clean-gate: refuse any commit that stages employer-identifying
+# content (same patterns as tools/check-public-clean.sh; self-contained so it
+# works on any branch). Mirrors the gate's allowlist and file-type scope.
+set -u
+pat='\bunited\b|united'"'"'s|\bcrew\.|LoggingManager|sonarqube|sonarqube|\bwiz\b|CI in Harness|CI = Harness|lives in GitHub and Harness|~150 repos|150-repo|8 packages compiled|publishes ~8 packages|employment agreement|invention-assignment|outside-work policy|88mph|88mphServer'
+fail=0
+for f in $(git diff --cached --name-only --diff-filter=ACMR); do
+  [ -f "$f" ] || continue
+  case "$f" in
+    docs/COMPARISONS.md|*testdata-ingest*) continue ;;
+  esac
+  case "$f" in
+    *.md|*.json|*.cs|*.mjs|*.props|*.csproj|*.yml|*.config) ;;
+    *) continue ;;
+  esac
+  hit=$(grep -niE "$pat" "$f" | head -1)
+  if [ -n "$hit" ]; then
+    echo "COMMIT REFUSED [pre-commit clean-gate] $f:$hit" >&2
+    echo "  (employer-identifying content; fix or see tools/check-public-clean.sh)" >&2
+    fail=1
+  fi
+done
+exit $fail
