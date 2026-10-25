@@ -858,9 +858,23 @@ public static class ScanEstate
             var known = entries.ToDictionary(e => e.Name, e => e, StringComparer.Ordinal);
             var unknown = names.Where(n => !known.ContainsKey(n)).ToList();
             if (unknown.Count > 0) { Console.Error.WriteLine($"error: --archived names {unknown.Count} repo(s) not in this run: {string.Join(", ", unknown.Take(3))}{(unknown.Count > 3 ? $" (+{unknown.Count - 3} more)" : "")}"); return 1; }
+            // translate each accepted CHECKOUT NAME to its INGESTED repo key (review r3: the fixture
+            // identity comes from the scan manifest's remoteUrl, not the folder name — a checkout
+            // named service-local ingests as org/service, and the sidecar must say org/service or
+            // the annotation silently matches nothing and the repo keeps its wave work)
+            var scanDirsByName = freshDirs.Concat(plannedScans.Where(u => Directory.Exists(Path.Combine(scansDir, u.Entry.Name))).Select(u => Path.Combine(scansDir, u.Entry.Name))).Distinct(StringComparer.Ordinal).ToList();
+            var nameToKey = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var sd in scanDirsByName)
+            {
+                var folder = Path.GetFileName(sd.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                var keys = Ingest.EnumerateRepoKeys(new[] { sd });
+                if (keys.Count > 0 && !nameToKey.ContainsKey(folder)) nameToKey[folder] = keys[0];
+            }
+            var archivedKeysForSidecar = names.Select(n => nameToKey.TryGetValue(n, out var k) ? k : n).Distinct(StringComparer.Ordinal).ToList();
+            var translated = archivedKeysForSidecar.Count != names.Count;
             var sidecar = Path.Combine(Path.GetFullPath(outDir), "archived.v0.json");
-            Program.WriteArtifactFile(sidecar, JsonSerializer.Serialize(new ArchivedFile { Repos = names }, WriteOpts).ReplaceLineEndings("\n") + "\n");
-            Console.Error.WriteLine($"note: archived annotation recorded ({names.Count} repo(s)) — they keep their evidence but are excluded from plan waves (cannot take PRs)");
+            Program.WriteArtifactFile(sidecar, JsonSerializer.Serialize(new ArchivedFile { Repos = archivedKeysForSidecar }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+            Console.Error.WriteLine($"note: archived annotation recorded ({archivedKeysForSidecar.Count} repo(s){(translated ? ", checkout names translated to their ingested identities" : "")}) — they keep their evidence but are excluded from plan waves (cannot take PRs)");
             archivedPathForIngest = sidecar;
         }
 
