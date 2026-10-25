@@ -78,8 +78,34 @@ public static class Scope
     {
         if (scopePath is null) return (null, 0);
         if (!File.Exists(scopePath)) { Console.Error.WriteLine($"error: --scope file not found: {scopePath}"); return (null, 1); }
-        var (scope, err) = ParseAndValidate(File.ReadAllText(scopePath), Path.GetFileName(scopePath));
+        var (canonical, listErr) = ReadCanonicalText(scopePath);
+        if (listErr is not null) { Console.Error.WriteLine($"error: {listErr}"); return (null, 5); }
+        var (scope, err) = ParseAndValidate(canonical, Path.GetFileName(scopePath));
         if (err is not null) { Console.Error.WriteLine($"error: {err}"); return (null, 5); }
         return (scope, 0);
+    }
+
+    // Two carriers, one meaning (the drift --feed/--folder-feed precedent). JSON starting with '{'
+    // passes through untouched; anything else is the onboarding-friendly PLAIN LIST — one repo
+    // folder name per line, '#' comments, blank lines ignored — meaning INCLUDE-mode (found on the
+    // real 130-repo validation, 2026-10-20: the operator knows the subset up front and wants to
+    // write it down BEFORE the first run; hand-authoring 130-entry JSON is not a reasonable ask).
+    // A list is normalized to canonical estate-scope.v0 JSON here, so the run's snapshot, the
+    // fixture copy, and every downstream consumer (plan echo, digests, known-inputs) see the same
+    // schema'd bytes regardless of which form was written. Exclude-mode stays JSON-only.
+    public static (string canonical, string? error) ReadCanonicalText(string scopePath)
+    {
+        var text = File.ReadAllText(scopePath);
+        if (text.TrimStart().StartsWith('{')) return (text, null);
+        var names = new List<string>();
+        foreach (var line in File.ReadLines(scopePath))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith('#')) continue;
+            names.Add(trimmed);
+        }
+        if (names.Count == 0)
+            return ("", $"scope file {Path.GetFileName(scopePath)}: the list names nothing — a list file must list repos (delete the file to scan everything)");
+        return (JsonSerializer.Serialize(new { schemaVersion = "estate-scope.v0", include = names }, Opts), null);
     }
 }

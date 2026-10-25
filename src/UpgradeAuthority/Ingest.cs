@@ -71,7 +71,7 @@ public static class Ingest
         return f.Repo ?? manifest?.RepoName ?? "unknown";
     }
 
-    public static int Run(string[] scanDirs, string outDir, string? producerPath, string? ownershipPath, string? deltaPath, string? scansRoot = null, string? scopePath = null)
+    public static int Run(string[] scanDirs, string outDir, string? producerPath, string? ownershipPath, string? deltaPath, string? scansRoot = null, string? scopePath = null, string? archivedPath = null)
     {
         var ingestGaps = new List<string>(); // stderr warnings (flat)
         var repoIngestGaps = new List<(string Key, string Value)>(); // per-repo coverage gaps
@@ -83,6 +83,12 @@ public static class Ingest
         // svc-net48 sneak in as the "first" snapshot).
         var (scope, scopeRc) = Scope.LoadForCli(scopePath);
         if (scopeRc != 0) return scopeRc;
+        string? canonicalScopeText = null; // the CANONICAL bytes (a plain list normalized here) — persisted below so plan/registry/drift/audit can load what ingest accepted (review: verbatim plain list broke every loader)
+        if (scopePath is not null)
+        {
+            var (canonical, _) = Scope.ReadCanonicalText(scopePath); // validated by LoadForCli above
+            canonicalScopeText = canonical;
+        }
         if (scope is not null)
             foreach (var d in scanDirs)
                 if (!Scope.IsInScope(Path.GetFileName(d.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), scope))
@@ -141,7 +147,8 @@ public static class Ingest
         {
             if (producerPath is null) producerSatisfiedByScan = false; // re-checked after facts parse (B1(b))
             if (ownershipPath is null) multiDirMissing.Add("--ownership");
-            if (deltaPath is null) multiDirMissing.Add("--delta");
+            // delta deliberately NOT here: it is optional at fixture-build time (estate-first flow —
+            // registry/drift/audit never read it; the campaign commands refuse with instructions)
         }
 
         // Parse all scans (multi-dir: one per repo)
@@ -183,9 +190,58 @@ public static class Ingest
                 if (!repoKeys.ContainsKey(key)) repoKeys[key] = (rn, manifest);
             }
         }
+        // delta is OPTIONAL at fixture-build time (the estate-first flow: "i don't want a delta file,
+        // i want everything" — registry/drift/audit never read it; only the campaign commands need one,
+        // and they refuse with instructions when it's absent)
+        var deltaFile = deltaPath ?? (scanDirs.Length == 1 ? Path.Combine(scanDirs[0], "delta.json") : null); // auto-discovery is single-dir only — a multi-dir run with no --delta proceeds delta-less
+        // an EXPLICIT --delta that does not exist is a typo, not an intent: refuse (typed), never
+        // silently build without it — downstream plan/report/apply would fail far from the cause (review)
+        if (deltaPath is not null && !File.Exists(deltaPath))
+        {
+            Console.Error.WriteLine($"error: --delta file not found: {deltaPath} — an explicit delta path must exist (omit the flag for a delta-less build)");
+            return 3;
+        }
+        // --archived is validated BEFORE anything is written (review r6): Program.LoadEngine validates
+        // input/archived.v0.json, so an unvalidated copy would let one bad operator file atomically replace
+        // a usable fixture with one every engine-backed command refuses to load. Same checks as LoadEngine.
+        if (archivedPath is not null)
+        {
+            if (!File.Exists(archivedPath))
+            {
+                Console.Error.WriteLine($"error: --archived file not found: {archivedPath} — an explicit archived path must exist (omit the flag for no annotation)");
+                return 3;
+            }
+            var archivedText = File.ReadAllText(archivedPath).TrimStart('\uFEFF');
+            if (archivedText.TrimStart().StartsWith('{'))
+            {
+                ArchivedFile? parsed;
+                try { parsed = JsonSerializer.Deserialize<ArchivedFile>(archivedText, JsonOpts); }
+                catch (JsonException ex)
+                {
+                    Console.Error.WriteLine($"error: sidecar {Path.GetFileName(archivedPath)}: invalid JSON ({ex.Message}) — expected archived.v0 (schemaVersion + repos[]) or a plain one-name-per-line list");
+                    return 5;
+                }
+                if (parsed?.SchemaVersion != "archived.v0")
+                {
+                    Console.Error.WriteLine($"error: sidecar {Path.GetFileName(archivedPath)}: schemaVersion mismatch — expected 'archived.v0', got '{parsed?.SchemaVersion ?? "missing"}'");
+                    return 5;
+                }
+                if (parsed.Repos is null)
+                {
+                    Console.Error.WriteLine($"error: sidecar {Path.GetFileName(archivedPath)}: repos is null — a file with no entries must not exist at all");
+                    return 5;
+                }
+            }
+        }
+        var hasDelta = deltaFile is not null && File.Exists(deltaFile);
+        Console.Error.WriteLine($"ingest: {allFacts.Count} fact(s) across {repoKeys.Count} repo(s) from {scanDirs.Length} scan dir(s){(hasDelta ? "" : " — no delta (see note)")}");
+        Console.Error.WriteLine("ingest: classifying gaps vs compile-health, joining lockfile rows, writing the fixture...");
+        if (!hasDelta)
+            Console.Error.WriteLine($"note: no delta found at {deltaFile} — building the fixture WITHOUT one (registry/drift/audit are unaffected; plan/report/apply/export require input/delta.json — see README 'Where the delta comes from')");
 
         // ---- consumer facts (PackageReferenced, non-lockfile) ----
         var evidence = new Dictionary<string, List<Fact>>(StringComparer.Ordinal);
+        var deferredUnevidenced = new List<(string Repo, string Pkg, string FactId)>(); // resolved after the CPM pin correlation — see the gap-deferral note in the loop
         foreach (var (f, manifest, dir) in allFacts)
         {
             if (f.FactType != "PackageReferenced") continue;
@@ -211,10 +267,16 @@ public static class Ingest
             }
             else if (version is null || version == "")
             {
-                // CPM central version or redacted — constraint not evidenced
+                // CPM central version or redacted — constraint not evidenced AT THE REFERENCE SITE.
+                // Under CPM this is the NORMAL shape (version lives in Directory.Packages.props); the
+                // central-pin correlation below decides whether the constraint is evidenced after all,
+                // so the gap decision is DEFERRED — emitting it here kept every CPM repo in "gaps"
+                // coverage forever, which blocks not-affected classification and inflates unknowns
+                // (found on the real 130-repo estate run, 2026-10-20: "lots of warnings... for
+                // probably all of the repos"). Redacted (hashed) versions carry their own marker.
                 var vh = Prop(f, "versionHash");
                 constraint = vh is not null ? $"redacted:{vh.Replace("version-hash:", "")}" : "";
-                if (constraint == "") { ingestGaps.Add($"fact {f.FactId}: constraint not evidenced (CPM/central version or redacted) — {pkg}"); repoIngestGaps.Add((key, $"constraint not evidenced: {pkg}")); }
+                if (constraint == "") deferredUnevidenced.Add((key, pkg!, f.FactId!));
             }
             else constraint = version;
 
@@ -260,6 +322,7 @@ public static class Ingest
         // the same package — lockfile rows are resolutions, not consumer declarations, and an unused pin
         // must never fabricate a consumer edge (rule b) or an unnecessary edit.
         var unusedPins = 0;
+        var pinEvidenced = new HashSet<(string Repo, string Pkg)>(); // (repoKey, lowercased pkg) — a central pin evidences this reference's constraint
         foreach (var (f, manifest, dir) in allFacts)
         {
             if (f.FactType != "CentralPackageVersionDeclared") continue;
@@ -280,6 +343,7 @@ public static class Ingest
             var endLine = f.Evidence?.EndLine;
             if (startLine is not null && endLine is not null && endLine == startLine) endLine = null;
             var referencing = evidence[key].Where(x => x.PackageId == pkg && x.ConstraintSource != "Directory.Packages.props").Select(x => x.Path).Distinct().OrderBy(p2 => p2, StringComparer.Ordinal).ToList();
+            pinEvidenced.Add((key, pkg.ToLowerInvariant())); // the pin IS the constraint for these references (NuGet CPM semantics)
             var fact = new Fact
             {
                 Repo = key, PackageId = pkg!, DeclaredConstraint = version,
@@ -293,6 +357,16 @@ public static class Ingest
         }
         foreach (var kv in evidence) kv.Value.Sort((a, b) => string.CompareOrdinal(a.PackageId + "\0" + a.Path + "\0" + Ord2(a.Line) + "\0" + Ord2(a.EndLine), b.PackageId + "\0" + b.Path + "\0" + Ord2(b.Line) + "\0" + Ord2(b.EndLine)));
         if (unusedPins > 0) Console.Error.WriteLine($"note: {unusedPins} central pin(s) skipped — no non-lockfile reference consumes them (not consumer evidence; no edit needed for the delta)");
+
+        // resolve the deferred constraint gaps: a reference with no inline version whose (repo, package)
+        // carries a central pin IS evidenced (the pin is the constraint — NuGet CPM semantics); only the
+        // references with NO correlating pin stay honest gaps (truly unevidenced or redacted-without-hash)
+        foreach (var (rKey, rPkg, rFid) in deferredUnevidenced)
+            if (!pinEvidenced.Contains((rKey, rPkg.ToLowerInvariant())))
+            {
+                ingestGaps.Add($"fact {rFid} in {rKey}: constraint not evidenced (no version on the reference and no central pin for it) — {rPkg}"); // repo NAMED: 130-repo estates cannot triage anonymous fact ids
+                repoIngestGaps.Add((rKey, $"constraint not evidenced: {rPkg}"));
+            }
 
         // ---- lockfile rows (SPEC-007: keyed by (lockfile, tfm, packageId), emitted as v1) ----
         var lockfiles = new Dictionary<string, List<LockRow>>(StringComparer.Ordinal);
@@ -441,12 +515,8 @@ public static class Ingest
         }
 
         // ---- validate delta before writing anything (M1) ----
-        var deltaFile = deltaPath ?? Path.Combine(scanDirs[0], "delta.json");
-        if (!File.Exists(deltaFile))
-        {
-            Console.Error.WriteLine($"error: required delta not found at {deltaFile}");
-            return 3;
-        }
+        // (deltaFile/hasDelta declared at the top of the run — the note for the delta-less
+        // estate-first flow prints there, before the work begins)
 
         // B1(b): PackageProduced facts from the scan become producer entries — the scan joins the
         // sidecar as a producer source. Sidecar entries are preserved verbatim; scan entries are
@@ -578,7 +648,8 @@ public static class Ingest
             if (missing2.Count > 0)
             {
                 var hint = missing2.Contains("--producer") ? "" : " (--producer satisfied by PackageProduced facts)";
-                Console.Error.WriteLine($"error: {scanDirs.Length} scan dirs in this run ({string.Join(", ", scanDirs.Select(Path.GetFileName))}) — sidecars are run-wide: pass {string.Join(" ", missing2)} explicitly (auto-discovery is single-dir only){hint}");
+                var dirList = string.Join(", ", scanDirs.Take(3).Select(Path.GetFileName)) + (scanDirs.Length > 3 ? $" (+{scanDirs.Length - 3} more)" : ""); // never a 130-name wall
+                Console.Error.WriteLine($"error: {scanDirs.Length} scan dirs in this run ({dirList}) — sidecars are run-wide: pass {string.Join(" ", missing2)} explicitly (auto-discovery is single-dir only){hint}");
                 return 1;
             }
         }
@@ -666,8 +737,30 @@ public static class Ingest
         var oResult = CopyValidated(ownershipPath ?? FindSidecar(scanDirs, "ownership.v0.json"),
             Path.Combine(inputDir, "ownership.v0.json"), "ownership.v0", ingestGaps);
         if (oResult != 0) return oResult;
-        File.Copy(deltaFile, Path.Combine(inputDir, "delta.json"), true);
-        if (scopePath is not null) File.Copy(scopePath, Path.Combine(inputDir, "scope.v0.json"), true); // SPEC-017: verbatim copy; the flag's bytes win
+        if (hasDelta) File.Copy(deltaFile, Path.Combine(inputDir, "delta.json"), true);
+        if (scopePath is not null)
+        {
+            // SPEC-017 said "the flag's bytes win" — but a plain-list flag's bytes are NOT loadable
+            // (Scope.ParseAndValidate is JSON-only). The CANONICAL normalization wins: same schema,
+            // same include list, loadable by every consumer (review: ingest succeeded, plan failed).
+            File.WriteAllText(Path.Combine(inputDir, "scope.v0.json"), canonicalScopeText is { } canonical
+                ? canonical + (canonical.EndsWith("\n") ? "" : "\n")
+                : File.ReadAllText(scopePath));
+        }
+        if (archivedPath is not null)
+        {
+            // tolerant carrier (the scope plain-list precedent): a JSON sidecar copies verbatim; a plain
+            // one-name-per-line list (the scan-estate --archived shape) is wrapped into archived.v0.json
+            var text = File.ReadAllText(archivedPath).TrimStart('\uFEFF'); // one legal BOM (PowerShell default write); JSON sniff and line parsing both choke on it
+            if (text.TrimStart().StartsWith('{'))
+                File.Copy(archivedPath, Path.Combine(inputDir, "archived.v0.json"), true);
+            else
+            {
+                var names = text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
+                File.WriteAllText(Path.Combine(inputDir, "archived.v0.json"),
+                    JsonSerializer.Serialize(new ArchivedFile { Repos = names }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+            }
+        } // archived annotation rides the fixture input (planner excludes from waves)
 
 
 

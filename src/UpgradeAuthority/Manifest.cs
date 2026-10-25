@@ -20,7 +20,7 @@ public static class Manifest
     {
         "producer-evidence.v0.json", "ownership.v0.json", "package-evidence.v0.json", "delta.json",
         "lockfile-rows.v0.json", "lockfile-rows.v1.json", "lockfile-rows.v2.json",
-        "scope.v0.json", "build-freshness.v0.json",
+        "scope.v0.json", "build-freshness.v0.json", "archived.v0.json",
     };
 
     public static (string? manifest, List<(string File, string Text)> waves, int rc) Run(string fixtureDir)
