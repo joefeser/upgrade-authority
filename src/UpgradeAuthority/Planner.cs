@@ -465,7 +465,12 @@ public sealed class Engine
                     .OrderBy(r2 => r2, StringComparer.Ordinal).FirstOrDefault();
                 if (ds is not null)
                 {
+                    // the ripple note REPLACES the unit's existing notes, but the archived-prerequisite
+                    // warning added above must survive — it explains why this wave can never complete
+                    // (review r4: the clear was erasing it from the report and exported packets)
+                    var archivedNote = u2.Notes?.FirstOrDefault(n => n.StartsWith("prerequisite producer ", StringComparison.Ordinal));
                     (u2.Notes ??= new List<string>()).Clear();
+                    if (archivedNote is not null) u2.Notes.Add(archivedNote);
                     u2.Notes.Add($"{ds} scheduled in wave {waveIndexOf[ds]} on the ripple obligation; its {Target} content-exposure stays a gap");
                 }
             }

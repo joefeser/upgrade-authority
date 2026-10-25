@@ -855,9 +855,6 @@ public static class ScanEstate
             else
                 names = File.ReadAllLines(archivedPath).Select(l => l.Trim().TrimStart('\uFEFF')).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
             if (names.Count == 0) { Console.Error.WriteLine("error: --archived file names nothing (JSON repos[] or one repo folder name per line, # comments allowed)"); return 1; }
-            var known = entries.ToDictionary(e => e.Name, e => e, StringComparer.Ordinal);
-            var unknown = names.Where(n => !known.ContainsKey(n)).ToList();
-            if (unknown.Count > 0) { Console.Error.WriteLine($"error: --archived names {unknown.Count} repo(s) not in this run: {string.Join(", ", unknown.Take(3))}{(unknown.Count > 3 ? $" (+{unknown.Count - 3} more)" : "")}"); return 1; }
             // translate each accepted CHECKOUT NAME to its INGESTED repo key (review r3: the fixture
             // identity comes from the scan manifest's remoteUrl, not the folder name — a checkout
             // named service-local ingests as org/service, and the sidecar must say org/service or
@@ -870,6 +867,14 @@ public static class ScanEstate
                 var keys = Ingest.EnumerateRepoKeys(new[] { sd });
                 if (keys.Count > 0 && !nameToKey.ContainsKey(folder)) nameToKey[folder] = keys[0];
             }
+            // validation accepts BOTH checkout names AND ingested keys (review r4: a sidecar this
+            // tool generated contains org/service keys; validating only against folder names rejected
+            // the tool's own output — the sidecar format must round-trip)
+            var known = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var e2 in entries) known.Add(e2.Name);
+            foreach (var k2 in nameToKey.Values) known.Add(k2);
+            var unknown = names.Where(n => !known.Contains(n)).ToList();
+            if (unknown.Count > 0) { Console.Error.WriteLine($"error: --archived names {unknown.Count} repo(s) not in this run (checkout names or ingested keys): {string.Join(", ", unknown.Take(3))}{(unknown.Count > 3 ? $" (+{unknown.Count - 3} more)" : "")}"); return 1; }
             var archivedKeysForSidecar = names.Select(n => nameToKey.TryGetValue(n, out var k) ? k : n).Distinct(StringComparer.Ordinal).ToList();
             var translated = archivedKeysForSidecar.Count != names.Count;
             var sidecar = Path.Combine(Path.GetFullPath(outDir), "archived.v0.json");

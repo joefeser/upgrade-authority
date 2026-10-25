@@ -34,11 +34,15 @@ Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
   if ($m.tracemapSha256 -ne $dll) { $_.Name }
 } | Measure-Object | ForEach-Object Count
 
-# 3) ingest + registry
-dotnet $ua ingest --scans-root C:\ua-estate\scans `
-  --producer C:\ua-estate\producer-evidence.v0.json `
-  --ownership C:\ua-estate\ownership.v0.json --out C:\ua-estate\fixture
+# 3) registry (scan-estate ALREADY built the fixture — never re-ingest manually unless you
+#    change a sidecar: a standalone ingest re-discovers EVERY scan child on disk, silently
+#    resurrecting out-of-scope cached scans from previous scoped runs; if you must re-ingest,
+#    pass the SAME --scope file)
 dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
+# re-ingest only when a sidecar changed, with the same scope:
+#   dotnet $ua ingest --scans-root C:\ua-estate\scans --scope <repos-root>\repos.txt `
+#     --producer C:\ua-estate\producer-evidence.v0.json `
+#     --ownership C:\ua-estate\ownership.v0.json --out C:\ua-estate\fixture
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).provenanceSummary
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.internalPackages.Count
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.unknownPackages.Count
