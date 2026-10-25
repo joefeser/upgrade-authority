@@ -1959,6 +1959,29 @@ public static class Program
             using (var m6c = SEManifest(out6))
                 if (m6c.RootElement.GetProperty("repos")[0].GetProperty("status").GetString() != "scanned") throw new Exception("recovery must rescan");
             Console.WriteLine("ok   scan-estate-cache-honesty (facts-w/o-manifest; failure keeps cache, no residue)"); pass++;
+
+            // ci-hints sidecar auto-enables the ci producer lane (2026-10-23: the comment always
+            // promised flagless pickup; this pins the implementation to it — a lane-off pass is silent otherwise)
+            {
+                var root7 = Path.Combine(Path.GetTempPath(), "ua-ci-auto-" + Guid.NewGuid().ToString("N")[..8]);
+                var out7 = Path.Combine(Path.GetTempPath(), "ua-ci-auto-out-" + Guid.NewGuid().ToString("N")[..8]);
+                Directory.CreateDirectory(root7);
+                EstateRepo(root7, "zeta"); // the established shape: origin remote, committed files, trunk resolvable
+                Directory.CreateDirectory(out7);
+                var hints7 = new System.Text.StringBuilder().Append('{').Append('"').Append("schemaVersion").Append('"').Append(':').Append('"').Append("ci-hints.v1").Append('"').Append(',')
+                    .Append('"').Append("packWorkflows").Append('"').Append(":[{").Append('"').Append("uses").Append('"').Append(':').Append('"').Append("org/x/.github/workflows/r.yml").Append('"').Append("}]}\n");
+                File.WriteAllText(Path.Combine(out7, "ci-hints.v1.json"), hints7.ToString());
+                bool sawLane = false;
+                int Capture7(ScanEstate.ScanRequest r) { sawLane = r.IndexCiProducers; return StubScanner(r); }
+                if (ScanEstate.Run(Path.Combine(root7, "repos"), out7, null, null, "team-a", false, Array.Empty<string>(), null, null, null, Capture7, indexCiProducers: false) != 0) throw new Exception("auto-enable seed run failed");
+                if (!sawLane) throw new Exception("sidecar present but ci lane did NOT auto-enable");
+                File.Delete(Path.Combine(out7, "ci-hints.v1.json"));
+                sawLane = true;
+                if (ScanEstate.Run(Path.Combine(root7, "repos"), out7, null, null, "team-a", false, Array.Empty<string>(), null, null, null, Capture7, indexCiProducers: false, updateCheckouts: false, worktreeMode: false) != 0) throw new Exception("no-sidecar run failed");
+                if (sawLane) throw new Exception("no sidecar and no flag — the lane must be OFF (loud note, not silent)");
+                Console.WriteLine("ok   scan-estate-ci-auto-enable (sidecar alone enables the ci lane; flag enables; neither = off)"); pass++;
+                ForceDelete(root7);
+            }
             ForceDelete(root6); ForceDelete(out6);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-cache-honesty: {ex.Message}"); }
