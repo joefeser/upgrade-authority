@@ -135,12 +135,22 @@ public static class ScanEstate
             try
             {
                 using var pV = System.Diagnostics.Process.Start(psiV)!;
-                var vOut = pV.StandardOutput.ReadToEnd();
-                pV.WaitForExit(10000);
+                // BOTH streams drained asynchronously, timed wait, KILL on hang (review: ReadToEnd
+                // blocked before the timeout could fire; undrained stderr deadlocks the pipe) —
+                // a hung probe falls back to the dll hash, never hangs the estate run
+                var outV = pV.StandardOutput.ReadToEndAsync();
+                var errV = pV.StandardError.ReadToEndAsync();
+                if (!pV.WaitForExit(10000))
+                {
+                    try { pV.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                    throw new InvalidOperationException("versions probe timed out");
+                }
+                var vOut = outV.Wait(2000) ? outV.Result : "";
+                _ = errV.Wait(2000) ? errV.Result : "";
                 if (pV.ExitCode == 0 && vOut.TrimStart().StartsWith('{'))
                     versionsKey = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(vOut.ReplaceLineEndings("\n")))).ToLowerInvariant();
             }
-            catch { /* pre-versions tracemap: dll-hash fallback below */ }
+            catch { /* pre-versions or hung tracemap: dll-hash fallback below */ }
             versionsKey ??= "dll:" + dllHash;
         }
 
@@ -159,6 +169,16 @@ public static class ScanEstate
         var ciHintsResolved = ciHintsPath ?? (File.Exists(Path.Combine(Path.GetFullPath(outDir), "ci-hints.v1.json")) ? Path.Combine(Path.GetFullPath(outDir), "ci-hints.v1.json") : null);
         var ciLaneOn = indexCiProducers || ciHintsResolved is not null; // a sidecar present in the out dir IS operator intent
         indexCiProducers = ciLaneOn;
+        // SNAPSHOT the hints at run start (review: the operator's mutable file could be edited and
+        // restored mid-run, making facts from the edited bytes validate against the restored digest).
+        // Every scan of this run reads the frozen copy; the digest is computed FROM the snapshot.
+        string? ciHintsSnapshot = null;
+        if (ciHintsResolved is not null)
+        {
+            ciHintsSnapshot = Path.Combine(Path.GetFullPath(outDir), ".ci-hints.snapshot-" + Guid.NewGuid().ToString("N")[..8]);
+            File.Copy(ciHintsResolved, ciHintsSnapshot, true);
+            ciHintsResolved = ciHintsSnapshot;
+        }
         string? ciHintsSha = ciHintsResolved is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(ciHintsResolved))).ToLowerInvariant();
         if (ciHintsResolved is not null)
             Console.Error.WriteLine($"note: ci-hints loaded ({ciHintsResolved}) — ci producer lane ON (explicit flag or sidecar auto-pickup); shared workflows named there mean 'this repo publishes'");
@@ -809,7 +829,7 @@ public static class ScanEstate
         if (scopePath is not null && scopeText is not null)
         {
             scopePathForIngest = Path.Combine(Path.GetFullPath(outDir), "scope.snapshot.json");
-            File.WriteAllText(scopePathForIngest, scopeText);
+            File.WriteAllText(scopePathForIngest, scopeText.EndsWith("\n") ? scopeText : scopeText + "\n"); // trailing newline: house style, and the fixture copy must equal the snapshot byte-for-byte
         }
         var fixtureDir = Path.Combine(Path.GetFullPath(outDir), "fixture");
         // ---- archived annotation (live 2026-10-22: the synthetic estate's archived repo was scheduled
@@ -818,8 +838,22 @@ public static class ScanEstate
         if (archivedPath is not null)
         {
             if (!File.Exists(archivedPath)) { Console.Error.WriteLine($"error: --archived file not found: {archivedPath}"); return 1; }
-            var names = File.ReadAllLines(archivedPath).Select(l => l.Trim().TrimStart('\uFEFF')).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList(); // BOM-tolerant: PowerShell writes one by default
-            if (names.Count == 0) { Console.Error.WriteLine("error: --archived file names nothing (one repo folder name per line, # comments allowed)"); return 1; }
+            // tolerant carrier (the Ingest.Run precedent): a JSON archived.v0 sidecar is validated and
+            // used verbatim; a plain one-name-per-line list is the runbook shape and wraps below (review)
+            var archivedRaw = File.ReadAllText(archivedPath).TrimStart('\uFEFF');
+            List<string> names;
+            if (archivedRaw.TrimStart().StartsWith('{'))
+            {
+                ArchivedFile? parsedArchive;
+                try { parsedArchive = JsonSerializer.Deserialize<ArchivedFile>(archivedRaw, JsonOpts); }
+                catch (JsonException) { Console.Error.WriteLine("error: --archived JSON is malformed (expect archived.v0: schemaVersion + repos[])"); return 1; }
+                if (parsedArchive?.SchemaVersion != "archived.v0" || parsedArchive.Repos is null)
+                { Console.Error.WriteLine("error: --archived JSON must be archived.v0 with a repos array"); return 1; }
+                names = parsedArchive.Repos;
+            }
+            else
+                names = File.ReadAllLines(archivedPath).Select(l => l.Trim().TrimStart('\uFEFF')).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
+            if (names.Count == 0) { Console.Error.WriteLine("error: --archived file names nothing (JSON repos[] or one repo folder name per line, # comments allowed)"); return 1; }
             var known = entries.ToDictionary(e => e.Name, e => e, StringComparer.Ordinal);
             var unknown = names.Where(n => !known.ContainsKey(n)).ToList();
             if (unknown.Count > 0) { Console.Error.WriteLine($"error: --archived names {unknown.Count} repo(s) not in this run: {string.Join(", ", unknown.Take(3))}{(unknown.Count > 3 ? $" (+{unknown.Count - 3} more)" : "")}"); return 1; }
@@ -833,7 +867,13 @@ public static class ScanEstate
         if (rcIngest != 0) return rcIngest;
         if (!hasDelta)
         {
-            Console.Error.WriteLine("note: plan/report skipped — no delta in this run (hand-write input/delta.json, bootstrap with --delta-package/--delta-old/--delta-new, or generate candidates from feed truth with drift --emit-deltas <dir>)");
+            // a delta-less rerun must not present the PREVIOUS run's plan/report as current (review)
+            foreach (var stale in new[] { "plan.json", "report.md" })
+            {
+                var sp = Path.Combine(Path.GetFullPath(outDir), stale);
+                if (File.Exists(sp)) File.Delete(sp);
+            }
+            Console.Error.WriteLine("note: plan/report skipped and stale copies removed — no delta in this run (hand-write input/delta.json, bootstrap with --delta-package/--delta-old/--delta-new, or generate candidates from feed truth with drift --emit-deltas <dir>)");
         }
         else
         {
@@ -861,6 +901,7 @@ public static class ScanEstate
         }
         if (nScan + nReuse < nSkip + nOos2 + nIgn2) // most of the estate did NOT make it in — an incomplete fixture must never read as success
             Console.Error.WriteLine($"warning: only {nScan + nReuse}/{entries.Count} repos have fresh evidence — the fixture is INCOMPLETE; fix the skip reasons above (behind-tip or dirty checkouts rescan cleanly under --worktree)");
+        if (ciHintsSnapshot is not null) { try { File.Delete(ciHintsSnapshot); } catch { /* best-effort */ } }
         return 0;
     }
 
@@ -901,6 +942,10 @@ public static class ScanEstate
             host = t[(at + 1)..colon]; path = t[(colon + 1)..];
         }
         else return ("", "");
+        // strip user info (ssh://git@host/... → host): user info is transport detail, not identity —
+        // "git@host" vs "host" must fold to the same repository or the fallback never tries (review)
+        var atHost = host.LastIndexOf('@');
+        if (atHost >= 0) host = host[(atHost + 1)..];
         host = host.TrimEnd('/');
         path = path.TrimEnd('/');
         if (path.EndsWith(".git", StringComparison.Ordinal)) path = path[..^4];

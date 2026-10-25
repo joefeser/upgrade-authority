@@ -97,11 +97,23 @@ public sealed class Engine
         _hasDelta = hasDelta;
         _c = hasDelta ? delta.Changes[0] : new DeltaChange(); // sentinel when absent — BuildPlan refuses before reading it
         _pe = pe; _ow = ow; _px = px; _scope = scope;
+        var allRepoKeys = (pe.Producers.Select(x => Norm(x.Repo))
+            .Concat(px.Facts.Select(x => Norm(x.Repo)))
+            .Concat(ow.Ownerships.Select(x => Norm(x.Repo))))
+            .Distinct(StringComparer.Ordinal).ToList();
         foreach (var a in archived?.Repos ?? new List<string>())
         {
-            _archivedKeys.Add(Norm(a));
+            var key = Norm(a);
+            _archivedKeys.Add(key);
+            if (allRepoKeys.Contains(key)) continue; // an exact fixture key: unambiguous, done
             var leaf = RepoLeaf(a);
-            if (leaf.Length > 0) _archivedLeafs.Add(leaf);
+            if (leaf.Length == 0) continue;
+            // a LEAF only (scan-estate's folder-name carrier): if MULTIPLE fixture repos share the
+            // leaf, archiving all of them by folder coincidence is a data hazard — refuse (review)
+            var sharingLeaf = allRepoKeys.Where(k => RepoLeaf(k) == leaf).ToList();
+            if (sharingLeaf.Count > 1)
+                throw new UaException($"rejected: archived.v0 entry '{a}' is a folder leaf shared by {sharingLeaf.Count} repos ({string.Join(", ", sharingLeaf)}) — name the exact repo keys or the annotation would archive unrelated repos");
+            _archivedLeafs.Add(leaf);
         }
         _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
         // Mirrors load FIRST (PR6 Codex r1): the producer fold below resolves repos through Norm, so an
@@ -666,6 +678,7 @@ public sealed class Engine
     PlanRepo BuildRepo(string repo, List<char> ruleLettersRaw, Dictionary<string, string> classification, List<string> producers, bool externalTarget, bool producerGated)
     {
         var e = new PlanRepo { Repo = repo, Classification = classification[repo], Ownership = OwnershipOf(repo) };
+        var archivedTerminal = false; // set when archived-excluded is chosen: later chains must not overwrite it
         var covNotes = _coverage.GetValueOrDefault(repo)?.Notes;
         if (covNotes is { Count: > 0 }) e.ScanNotes = covNotes.OrderBy(n => n, StringComparer.Ordinal).ToList(); // SPEC-015: notes ride the plan, order-canonicalized (input-permutation stability)
         var letters = ruleLettersRaw.OrderBy(x => "abcd".IndexOf(x)).ToList();
@@ -811,6 +824,9 @@ public sealed class Engine
             // never receive wave work; the operator decides (restore, fork, or leave pinned forever).
             e.Reasons.Insert(0, $"ARCHIVED (operator annotation archived.v0) — this remote cannot take PRs, so no wave work is scheduled; classification and evidence are unchanged; the pin edit is an operator decision (restore, fork, or leave pinned)");
             e.ActionType = "archived-excluded";
+            archivedTerminal = true; // the chains below must not overwrite archived-excluded with
+                                     // external-request-await/unknown (review) — ownership of an
+                                     // un-PR-able remote is context, not a scheduled action
         }
         else if (contradiction0(producers) && isProducer)
         {
@@ -821,7 +837,11 @@ public sealed class Engine
             e.Reasons.RemoveAll(r => r.StartsWith("produces "));
             e.ActionType = "unknown";
         }
-        if (e.Ownership == "external")
+        if (archivedTerminal)
+        {
+            // ownership of an un-PR-able remote is context, not a scheduled action — keep archived-excluded
+        }
+        else if (e.Ownership == "external")
         {
             e.Reasons.Add($"ownership.v0 declares {repo} = {TeamOf(repo)} (external to {_ow.SelfTeamId}): rendered as coordination, NOT executable work for our team");
             kinds.Add("ownership.v0");

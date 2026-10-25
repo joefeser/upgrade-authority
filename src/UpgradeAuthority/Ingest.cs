@@ -83,6 +83,12 @@ public static class Ingest
         // svc-net48 sneak in as the "first" snapshot).
         var (scope, scopeRc) = Scope.LoadForCli(scopePath);
         if (scopeRc != 0) return scopeRc;
+        string? canonicalScopeText = null; // the CANONICAL bytes (a plain list normalized here) — persisted below so plan/registry/drift/audit can load what ingest accepted (review: verbatim plain list broke every loader)
+        if (scopePath is not null)
+        {
+            var (canonical, _) = Scope.ReadCanonicalText(scopePath); // validated by LoadForCli above
+            canonicalScopeText = canonical;
+        }
         if (scope is not null)
             foreach (var d in scanDirs)
                 if (!Scope.IsInScope(Path.GetFileName(d.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), scope))
@@ -188,6 +194,13 @@ public static class Ingest
         // i want everything" — registry/drift/audit never read it; only the campaign commands need one,
         // and they refuse with instructions when it's absent)
         var deltaFile = deltaPath ?? (scanDirs.Length == 1 ? Path.Combine(scanDirs[0], "delta.json") : null); // auto-discovery is single-dir only — a multi-dir run with no --delta proceeds delta-less
+        // an EXPLICIT --delta that does not exist is a typo, not an intent: refuse (typed), never
+        // silently build without it — downstream plan/report/apply would fail far from the cause (review)
+        if (deltaPath is not null && !File.Exists(deltaPath))
+        {
+            Console.Error.WriteLine($"error: --delta file not found: {deltaPath} — an explicit delta path must exist (omit the flag for a delta-less build)");
+            return 3;
+        }
         var hasDelta = deltaFile is not null && File.Exists(deltaFile);
         Console.Error.WriteLine($"ingest: {allFacts.Count} fact(s) across {repoKeys.Count} repo(s) from {scanDirs.Length} scan dir(s){(hasDelta ? "" : " — no delta (see note)")}");
         Console.Error.WriteLine("ingest: classifying gaps vs compile-health, joining lockfile rows, writing the fixture...");
@@ -693,7 +706,15 @@ public static class Ingest
             Path.Combine(inputDir, "ownership.v0.json"), "ownership.v0", ingestGaps);
         if (oResult != 0) return oResult;
         if (hasDelta) File.Copy(deltaFile, Path.Combine(inputDir, "delta.json"), true);
-        if (scopePath is not null) File.Copy(scopePath, Path.Combine(inputDir, "scope.v0.json"), true); // SPEC-017: verbatim copy; the flag's bytes win
+        if (scopePath is not null)
+        {
+            // SPEC-017 said "the flag's bytes win" — but a plain-list flag's bytes are NOT loadable
+            // (Scope.ParseAndValidate is JSON-only). The CANONICAL normalization wins: same schema,
+            // same include list, loadable by every consumer (review: ingest succeeded, plan failed).
+            File.WriteAllText(Path.Combine(inputDir, "scope.v0.json"), canonicalScopeText is { } canonical
+                ? canonical + (canonical.EndsWith("\n") ? "" : "\n")
+                : File.ReadAllText(scopePath));
+        }
         if (archivedPath is not null)
         {
             // tolerant carrier (the scope plain-list precedent): a JSON sidecar copies verbatim; a plain
