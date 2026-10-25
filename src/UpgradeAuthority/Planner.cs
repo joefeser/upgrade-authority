@@ -119,6 +119,10 @@ public sealed class Engine
             var key = Norm(a); // post-mirror: aliases resolve to canonical identities
             _archivedKeys.Add(key);
             if (allRepoKeys.Contains(key)) continue; // an exact fixture key: unambiguous, done
+            // leaf matching is for BARE names only (review r6): a QUALIFIED key absent from this fixture
+            // (an estate-wide sidecar ingested with a scoped subset) stays an exact-only match — falling
+            // back to its leaf would archive host/org-b/service on an annotation for host/org-a/service
+            if (key.IndexOfAny(new[] { '/', ':' }) >= 0) continue;
             var leaf = RepoLeaf(a);
             if (leaf.Length == 0) continue;
             // a LEAF only (scan-estate's folder-name carrier): if MULTIPLE fixture repos share the

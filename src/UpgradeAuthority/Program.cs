@@ -780,6 +780,44 @@ public static class Program
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL plan-archived-exclusion: {ex.Message}"); }
         finally { if (Directory.Exists(archTmp)) Directory.Delete(archTmp, true); }
 
+        // PR #18 review r6: (a) a QUALIFIED archived key absent from the fixture never falls back to its
+        // leaf (host/org-a/svc must not archive the fixture's svc); (b) an invalid --archived sidecar is
+        // refused BEFORE the swap — the existing usable fixture survives untouched and still loads.
+        var archQTmp = Path.Combine(Path.GetTempPath(), "ua-archq-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var richQ = Path.GetFullPath(Path.Combine(fixturesRoot, "..", "testdata-ingest", "tracemap-rich"));
+            var svcQ = new[] { Path.Combine(richQ, "scans", "svc") };
+            string pQ = Path.Combine(richQ, "sidecars", "producer-evidence.v0.json"), oQ = Path.Combine(richQ, "sidecars", "ownership.v0.json"), dQ = Path.Combine(richQ, "sidecars", "delta.json");
+            var sideQ = Path.Combine(archQTmp, "sidecars"); Directory.CreateDirectory(sideQ);
+            var fixQ = Path.Combine(archQTmp, "fixture");
+
+            var qualified = Path.Combine(sideQ, "qualified.json");
+            File.WriteAllText(qualified, "{\"schemaVersion\":\"archived.v0\",\"repos\":[\"example.invalid/org-a/svc\"]}\n");
+            if (Ingest.Run(svcQ, fixQ, pQ, oQ, dQ, null, null, qualified) != 0) throw new Exception("ingest with a qualified archived key failed");
+            var planQ = LoadEngine(fixQ).BuildPlan();
+            var svcRow = planQ.Repos.FirstOrDefault(r => r.Repo == "svc") ?? throw new Exception("svc missing from plan rows");
+            if (svcRow.ActionType == "archived-excluded") throw new Exception("qualified key example.invalid/org-a/svc archived the unrelated fixture repo svc via leaf fallback");
+            if (!planQ.Waves.Any(w => w.ReleaseUnits.Any(u => u.Repo == "svc"))) throw new Exception("svc lost its wave work to a non-matching qualified archived key");
+
+            var before = File.ReadAllText(Path.Combine(fixQ, "input", "archived.v0.json"));
+            foreach (var (name, body, rc) in new[] { ("v1.json", "{\"schemaVersion\":\"archived.v1\",\"repos\":[]}", 5), ("bad.json", "{\"schemaVersion\":\"archived.v0\",\"repos\":[", 5), ("null-repos.json", "{\"schemaVersion\":\"archived.v0\",\"repos\":null}", 5) })
+            {
+                var badPath = Path.Combine(sideQ, name);
+                File.WriteAllText(badPath, body);
+                var got = Ingest.Run(svcQ, fixQ, pQ, oQ, dQ, null, null, badPath);
+                if (got != rc) throw new Exception($"{name}: ingest exited {got}, expected {rc}");
+            }
+            var missingRc = Ingest.Run(svcQ, fixQ, pQ, oQ, dQ, null, null, Path.Combine(sideQ, "does-not-exist.json"));
+            if (missingRc != 3) throw new Exception($"missing --archived: ingest exited {missingRc}, expected 3");
+            if (File.ReadAllText(Path.Combine(fixQ, "input", "archived.v0.json")) != before) throw new Exception("a refused --archived replaced the existing fixture");
+            LoadEngine(fixQ).BuildPlan(); // the surviving fixture must still load
+            if (Directory.GetDirectories(archQTmp, ".fixture.*").Length != 0) throw new Exception("a refused --archived left swap siblings behind");
+            Console.WriteLine("ok   ingest-archived-validated-qualified-exact (no leaf fallback for qualified keys; invalid sidecar refused pre-swap, fixture intact)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL ingest-archived-validated-qualified-exact: {ex.Message}"); }
+        finally { if (Directory.Exists(archQTmp)) Directory.Delete(archQTmp, true); }
+
         // SPEC-008 §7.4: two-repo estate end-to-end on committed real scans — machine-checked forever
         var estateTmp = Path.Combine(Path.GetTempPath(), "ua-estate2-" + Guid.NewGuid().ToString("N")[..8]);
         try

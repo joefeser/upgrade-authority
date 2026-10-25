@@ -34,7 +34,8 @@ Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
   if ($m.tracemapSha256 -ne $dll) { $_.Name }
 } | Measure-Object | ForEach-Object Count
 
-# 3) registry (scan-estate ALREADY built the fixture — never re-ingest manually: a standalone
+# 3) registry (step 1's FULL-estate scan-estate ALREADY built the fixture — never re-ingest
+#    manually after it; a SCOPED one-repo run is different, see "One-repo refresh": a standalone
 #    ingest drops state in three ways (review receipt): without --scope it re-discovers EVERY scan
 #    child on disk, resurrecting out-of-scope cached scans; without --delta it REMOVES
 #    input/delta.json (plan/report/apply break downstream); without --archived the annotation is
@@ -44,7 +45,7 @@ dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
 #   dotnet $ua ingest --scans-root C:\ua-estate\scans --scope <repos-root>\repos.txt `
 #     --producer C:\ua-estate\producer-evidence.v0.json `
 #     --ownership C:\ua-estate\ownership.v0.json `
-#     --delta C:\ua-estate\fixture\input\delta.json `
+#     --delta C:\ua-estate\delta.json `
 #     --archived C:\ua-estate\archived.v0.json --out C:\ua-estate\fixture
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).provenanceSummary
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.internalPackages.Count
@@ -53,8 +54,12 @@ dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
 
 ## One-repo refresh (the fast path)
 
-Refresh exactly one repo into an existing estate (the rest of the scans stay on
-disk; ingest reads the whole scans tree; run the vintage census afterwards):
+Refresh exactly one repo's scan, then rebuild the FULL estate fixture. The other
+scans stay on disk, but the scoped `scan-estate` run ingests only THIS run's
+scans and atomically replaces `C:\ua-estate\fixture` with a one-repo fixture
+(and, with a delta, a one-repo `plan.json`/`report.md`). Running registry on
+that fixture reports an estate missing every other repo. The full re-ingest
+below is mandatory, not optional; run the vintage census afterwards:
 
 ```powershell
 Set-Content C:\ua-estate\one-repo.txt "<that-repo>"
@@ -62,8 +67,18 @@ dotnet $ua scan-estate --repos-root <repos-root> `
   --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
   --scope C:\ua-estate\one-repo.txt `
   --out C:\ua-estate --parallel 1 --worktree
-# then registry directly (scan-estate rebuilt the fixture); re-ingest ONLY after sidecar
-# changes, carrying EVERY carrier per step 3's receipt
+# REBUILD the full estate fixture: the ORIGINAL estate scope (never one-repo.txt) and EVERY
+# carrier per step 3's receipt — omit --delta / --archived only if the estate has none
+# (an explicit path that does not exist is refused)
+dotnet $ua ingest --scans-root C:\ua-estate\scans --scope <repos-root>\repos.txt `
+  --producer C:\ua-estate\producer-evidence.v0.json `
+  --ownership C:\ua-estate\ownership.v0.json `
+  --delta C:\ua-estate\delta.json `
+  --archived C:\ua-estate\archived.v0.json --out C:\ua-estate\fixture
+# with a delta: replace the one-repo plan/report the scoped run wrote
+dotnet $ua plan C:\ua-estate\fixture --out C:\ua-estate\plan.json
+dotnet $ua report C:\ua-estate\fixture --out C:\ua-estate\report.md
+dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
 ```
 
 ## The ci-hints sidecar (census-derived — its only sanctioned birth)

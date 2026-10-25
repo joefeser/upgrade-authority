@@ -201,6 +201,38 @@ public static class Ingest
             Console.Error.WriteLine($"error: --delta file not found: {deltaPath} — an explicit delta path must exist (omit the flag for a delta-less build)");
             return 3;
         }
+        // --archived is validated BEFORE anything is written (review r6): Program.LoadEngine validates
+        // input/archived.v0.json, so an unvalidated copy would let one bad operator file atomically replace
+        // a usable fixture with one every engine-backed command refuses to load. Same checks as LoadEngine.
+        if (archivedPath is not null)
+        {
+            if (!File.Exists(archivedPath))
+            {
+                Console.Error.WriteLine($"error: --archived file not found: {archivedPath} — an explicit archived path must exist (omit the flag for no annotation)");
+                return 3;
+            }
+            var archivedText = File.ReadAllText(archivedPath).TrimStart('\uFEFF');
+            if (archivedText.TrimStart().StartsWith('{'))
+            {
+                ArchivedFile? parsed;
+                try { parsed = JsonSerializer.Deserialize<ArchivedFile>(archivedText, JsonOpts); }
+                catch (JsonException ex)
+                {
+                    Console.Error.WriteLine($"error: sidecar {Path.GetFileName(archivedPath)}: invalid JSON ({ex.Message}) — expected archived.v0 (schemaVersion + repos[]) or a plain one-name-per-line list");
+                    return 5;
+                }
+                if (parsed?.SchemaVersion != "archived.v0")
+                {
+                    Console.Error.WriteLine($"error: sidecar {Path.GetFileName(archivedPath)}: schemaVersion mismatch — expected 'archived.v0', got '{parsed?.SchemaVersion ?? "missing"}'");
+                    return 5;
+                }
+                if (parsed.Repos is null)
+                {
+                    Console.Error.WriteLine($"error: sidecar {Path.GetFileName(archivedPath)}: repos is null — a file with no entries must not exist at all");
+                    return 5;
+                }
+            }
+        }
         var hasDelta = deltaFile is not null && File.Exists(deltaFile);
         Console.Error.WriteLine($"ingest: {allFacts.Count} fact(s) across {repoKeys.Count} repo(s) from {scanDirs.Length} scan dir(s){(hasDelta ? "" : " — no delta (see note)")}");
         Console.Error.WriteLine("ingest: classifying gaps vs compile-health, joining lockfile rows, writing the fixture...");
