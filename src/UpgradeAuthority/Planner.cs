@@ -97,13 +97,26 @@ public sealed class Engine
         _hasDelta = hasDelta;
         _c = hasDelta ? delta.Changes[0] : new DeltaChange(); // sentinel when absent — BuildPlan refuses before reading it
         _pe = pe; _ow = ow; _px = px; _scope = scope;
+        // Mirrors load FIRST (PR6 Codex r1): the producer fold below resolves repos through Norm, so an
+        // alias+canonical pair claiming one id must already map to one identity — and the STATIC map must
+        // be reset before this fixture's producers read it (multi-engine processes never inherit stale mirrors).
+        // Archived identity resolution ALSO waits for mirrors (review r2): an archived alias must resolve
+        // to its canonical identity before the ambiguity check, or aliases never match the normalized
+        // facts and archived repos keep receiving executable wave work.
+        _mirrors.Clear();
+        foreach (var m in ow.Mirrors)
+        {
+            var canonical = NormBasic(m.Canonical);
+            foreach (var a in m.Aliases) _mirrors[NormBasic(a)] = canonical;
+            if (NormBasic(m.Canonical) != canonical) _mirrors[NormBasic(m.Canonical)] = canonical;
+        }
         var allRepoKeys = (pe.Producers.Select(x => Norm(x.Repo))
             .Concat(px.Facts.Select(x => Norm(x.Repo)))
             .Concat(ow.Ownerships.Select(x => Norm(x.Repo))))
             .Distinct(StringComparer.Ordinal).ToList();
         foreach (var a in archived?.Repos ?? new List<string>())
         {
-            var key = Norm(a);
+            var key = Norm(a); // post-mirror: aliases resolve to canonical identities
             _archivedKeys.Add(key);
             if (allRepoKeys.Contains(key)) continue; // an exact fixture key: unambiguous, done
             var leaf = RepoLeaf(a);
@@ -116,16 +129,6 @@ public sealed class Engine
             _archivedLeafs.Add(leaf);
         }
         _pendingFreshness = buildFreshness; // normalized AFTER mirrors load (aliases must resolve like every other input)
-        // Mirrors load FIRST (PR6 Codex r1): the producer fold below resolves repos through Norm, so an
-        // alias+canonical pair claiming one id must already map to one identity — and the STATIC map must
-        // be reset before this fixture's producers read it (multi-engine processes never inherit stale mirrors).
-        _mirrors.Clear();
-        foreach (var m in ow.Mirrors)
-        {
-            var canonical = NormBasic(m.Canonical);
-            foreach (var a in m.Aliases) _mirrors[NormBasic(a)] = canonical;
-            if (NormBasic(m.Canonical) != canonical) _mirrors[NormBasic(m.Canonical)] = canonical;
-        }
         foreach (var e in pe.ExternalPackages) _external.Add(e.PackageId);
         // SPEC-021 §2 typed rejection: ONE sidecar claiming the same (repo, packageId) in two spellings
         // is the sidecar contradicting itself about one package — the SPEC-007 rule applied to producer

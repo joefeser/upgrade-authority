@@ -175,6 +175,7 @@ public static class ScanEstate
         string? ciHintsSnapshot = null;
         if (ciHintsResolved is not null)
         {
+            Directory.CreateDirectory(Path.GetFullPath(outDir)); // fresh --out bootstrap: the snapshot parent must exist before the copy (review r2)
             ciHintsSnapshot = Path.Combine(Path.GetFullPath(outDir), ".ci-hints.snapshot-" + Guid.NewGuid().ToString("N")[..8]);
             File.Copy(ciHintsResolved, ciHintsSnapshot, true);
             ciHintsResolved = ciHintsSnapshot;
