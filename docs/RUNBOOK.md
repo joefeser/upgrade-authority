@@ -34,15 +34,18 @@ Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
   if ($m.tracemapSha256 -ne $dll) { $_.Name }
 } | Measure-Object | ForEach-Object Count
 
-# 3) registry (scan-estate ALREADY built the fixture — never re-ingest manually unless you
-#    change a sidecar: a standalone ingest re-discovers EVERY scan child on disk, silently
-#    resurrecting out-of-scope cached scans from previous scoped runs; if you must re-ingest,
-#    pass the SAME --scope file)
+# 3) registry (scan-estate ALREADY built the fixture — never re-ingest manually: a standalone
+#    ingest drops state in three ways (review receipt): without --scope it re-discovers EVERY scan
+#    child on disk, resurrecting out-of-scope cached scans; without --delta it REMOVES
+#    input/delta.json (plan/report/apply break downstream); without --archived the annotation is
+#    lost and archived repos appear active again)
 dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
-# re-ingest only when a sidecar changed, with the same scope:
+# RE-INGEST only after a sidecar edit, and carry EVERY carrier the original run carried:
 #   dotnet $ua ingest --scans-root C:\ua-estate\scans --scope <repos-root>\repos.txt `
 #     --producer C:\ua-estate\producer-evidence.v0.json `
-#     --ownership C:\ua-estate\ownership.v0.json --out C:\ua-estate\fixture
+#     --ownership C:\ua-estate\ownership.v0.json `
+#     --delta C:\ua-estate\fixture\input\delta.json `
+#     --archived C:\ua-estate\archived.v0.json --out C:\ua-estate\fixture
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).provenanceSummary
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.internalPackages.Count
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.unknownPackages.Count
@@ -59,7 +62,8 @@ dotnet $ua scan-estate --repos-root <repos-root> `
   --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
   --scope C:\ua-estate\one-repo.txt `
   --out C:\ua-estate --parallel 1 --worktree
-# then step 3 (ingest + registry)
+# then registry directly (scan-estate rebuilt the fixture); re-ingest ONLY after sidecar
+# changes, carrying EVERY carrier per step 3's receipt
 ```
 
 ## The ci-hints sidecar (census-derived — its only sanctioned birth)
