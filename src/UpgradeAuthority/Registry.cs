@@ -120,9 +120,12 @@ public static class Registry
         consumed.UnionWith(pinSpellings.Keys); consumed.UnionWith(factSpellings.Keys);
 
         report.InternalPackages = produced.Select(SpellingOf).ToList();
-        report.ExternalPackages = declared.Except(produced).Select(SpellingOf).ToList();
-        report.UnknownPackages = consumed.Except(produced).Except(declared).Select(SpellingOf).ToList();
-        report.ProducedAndDeclaredExternal = produced.Intersect(declared).Select(SpellingOf).ToList();
+        // OrdinalIgnoreCase on every set operation (review: LINQ Except/Intersect default to the
+        // case-SENSITIVE comparer regardless of the HashSets' own comparers — a producer of
+        // Contoso.Core and a consumer of contoso.core landed in BOTH internal and unknown)
+        report.ExternalPackages = declared.Except(produced, StringComparer.OrdinalIgnoreCase).Select(SpellingOf).ToList();
+        report.UnknownPackages = consumed.Except(produced, StringComparer.OrdinalIgnoreCase).Except(declared, StringComparer.OrdinalIgnoreCase).Select(SpellingOf).ToList();
+        report.ProducedAndDeclaredExternal = produced.Intersect(declared, StringComparer.OrdinalIgnoreCase).Select(SpellingOf).ToList();
         report.InternalPackages.Sort(StringComparer.Ordinal);
         report.ExternalPackages.Sort(StringComparer.Ordinal);
         report.UnknownPackages.Sort(StringComparer.Ordinal);

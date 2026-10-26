@@ -101,6 +101,8 @@ public static class ScanEstate
         bool noFetch = false, string? rescanOnly = null)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
+        if (updateCheckouts && noFetch)
+        { Console.Error.WriteLine("error: --no-fetch and --update-checkouts are mutually exclusive — refresh mode MUST fetch (SPEC-019: fast-forwarding against a last-known trunk would record a stale commit as a normal scan)"); return 1; }
         if (updateCheckouts && worktreeMode)
         { Console.Error.WriteLine("error: --update-checkouts and --worktree are mutually exclusive refresh modes — pick in-place refresh or isolated worktree scans"); return 1; }
         if (parallel < 1 || parallel > 64)
@@ -122,25 +124,28 @@ public static class ScanEstate
             scope = parsedScope;
         }
         // --rescan-only <repo>: THE one-repo fast path (the review-caught --scope trap, done right —
-        // a scoped run alone rebuilds the fixture from one repo and drops the estate's other evidence;
-        // rescanOnly scopes the FETCH+SCAN to one repo but the fixture build below reads the WHOLE
-        // scans tree, so the ledger stays whole and one repo refreshes in seconds)
-        if (rescanOnly is not null)
+        // a scoped run alone rebuilds the fixture from one repo and drops the estate's other evidence).
+        // The rescan target is tracked SEPARATELY from `scope` (review r1: hijacking scope mislabeled
+        // every other checkout out-of-scope, fired the INCOMPLETE warning, and lost the operator's
+        // real --scope — the estate scope and the refresh selection are different concerns). Pass 1
+        // gates fetch/scan eligibility on the target; the fixture phase collects the WHOLE scans tree
+        // filtered by the REAL scope, with swap leftovers excluded and cache conditions validated.
+        string? rescanTarget = rescanOnly;
+        if (rescanTarget is not null)
         {
-            var rescanRepoDir = Path.Combine(Path.GetFullPath(reposRoot), rescanOnly);
+            if (scopePath is not null && !Scope.IsInScope(rescanTarget, scope!))
+            { Console.Error.WriteLine($"error: --rescan-only {rescanTarget} is out of scope by the --scope file — the refresh target must be inside the estate scope"); return 1; }
+            var rescanRepoDir = Path.Combine(Path.GetFullPath(reposRoot), rescanTarget);
             if (!Directory.Exists(rescanRepoDir))
-            { Console.Error.WriteLine($"error: --rescan-only repo not found under --repos-root: {rescanOnly}"); return 1; }
-            var scansTree = Path.Combine(Path.GetFullPath(outDir), "scans");
-            if (Directory.Exists(scansTree))
+            { Console.Error.WriteLine($"error: --rescan-only repo not found under --repos-root: {rescanTarget}"); return 1; }
+            var scansTreeProbe = Path.Combine(Path.GetFullPath(outDir), "scans");
+            if (Directory.Exists(scansTreeProbe))
             {
-                var existingNames = Directory.GetDirectories(scansTree).Select(d => Path.GetFileName(d)).ToHashSet(StringComparer.Ordinal);
-                if (!existingNames.Contains(rescanOnly))
-                    Console.Error.WriteLine($"warning: --rescan-only {rescanOnly} has no cached scan yet — this pass scans it fresh; the fixture holds whatever the scans tree contains after");
+                var existingNames = Directory.GetDirectories(scansTreeProbe).Select(d => Path.GetFileName(d)).ToHashSet(StringComparer.Ordinal);
+                if (!existingNames.Contains(rescanTarget))
+                    Console.Error.WriteLine($"warning: --rescan-only {rescanTarget} has no cached scan yet — this pass scans it fresh; the fixture holds whatever the scans tree contains after");
             }
-            var (rescanScope, rescanErr) = Scope.ParseAndValidate(JsonSerializer.Serialize(new { schemaVersion = "estate-scope.v0", include = new[] { rescanOnly } }, WriteOpts), "rescan-only");
-            if (rescanErr is not null) { Console.Error.WriteLine($"error: internal: rescan-only scope malformed: {rescanErr}"); return 1; }
-            scope = rescanScope;
-            Console.Error.WriteLine($"note: --rescan-only {rescanOnly} — fetching and scanning ONLY this repo; the fixture below builds from the WHOLE scans tree (the estate stays whole)");
+            Console.Error.WriteLine($"note: --rescan-only {rescanTarget} — fetching and scanning ONLY this repo; the fixture below builds from the WHOLE scoped scans tree (the estate stays whole)");
         }
         if (tracemapDll is not null && !File.Exists(tracemapDll))
         { Console.Error.WriteLine($"error: --tracemap dll not found: {tracemapDll} (build tracemap once, pass bin/Release/net10.0/tracemap.dll)"); return 1; }
@@ -304,6 +309,7 @@ public static class ScanEstate
             if (new DirectoryInfo(repoPath).LinkTarget is not null)
             { entries.Add(Skip("symlinked directory — pass the real checkout's parent (or the scan dir to ingest explicitly)")); continue; }
             if (!Scope.IsInScope(name, scope)) { Console.Error.WriteLine($"scope  {name} (out of scope by config)"); entries.Add(new ManifestEntry { Name = name, Status = "out-of-scope" }); continue; }
+            if (rescanTarget is not null && name != rescanTarget) { entries.Add(new ManifestEntry { Name = name, Status = "rescan-bypassed" }); continue; } // --rescan-only: everything else rides its cache untouched (review: never mislabeled out-of-scope)
             if (GitT(repoPath, "rev-parse HEAD", out var headOut, out _) != 0)
             { entries.Add(Skip("not a git repository or no commits")); continue; }
             var headSha = headOut.Trim();
@@ -829,12 +835,37 @@ public static class ScanEstate
         // fresh dir — the estate stays whole (one repo refreshed, the rest read from their cached scans)
         if (rescanOnly is not null)
         {
-            var allScanDirs = Directory.GetDirectories(Path.Combine(Path.GetFullPath(outDir), "scans"))
-                .Where(d => File.Exists(Path.Combine(d, "facts.ndjson")) && File.Exists(Path.Combine(d, "scan-manifest.json")))
-                .OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).ToList();
+            // whole scans tree, REAL-scope filtered, swap leftovers excluded, cache conditions
+            // validated per repo (review r1: the bypassed dirs must pass the same option check
+            // pass 1 applies — a stale-condition cache would publish a mixed-condition fixture)
+            var freshSet = freshDirs.ToHashSet(StringComparer.Ordinal);
+            var allScanDirs = new List<string>();
+            var staleCondition = new List<string>();
+            foreach (var d in Directory.GetDirectories(Path.Combine(Path.GetFullPath(outDir), "scans"))
+                .Where(d => !IsSwapDir(Path.GetFileName(d)))
+                .OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal))
+            {
+                var fname = Path.GetFileName(d);
+                if (scope is not null && !Scope.IsInScope(fname, scope)) continue; // the operator's real scope governs the fixture (review)
+                if (!File.Exists(Path.Combine(d, "facts.ndjson")) || !File.Exists(Path.Combine(d, "scan-manifest.json"))) continue;
+                if (freshSet.Contains(d)) { allScanDirs.Add(d); continue; }
+                CacheMeta? cachedMeta = null;
+                try { cachedMeta = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(d, "scan-estate.json")), JsonOpts); } catch { }
+                var conditionOk = cachedMeta is not null
+                    && cachedMeta.Exclude.SequenceEqual(tracemapExcludes)
+                    && (tracemapDll is null || CacheKeyMatches(cachedMeta, versionsKey, dllHash))
+                    && cachedMeta.IndexDepsJson == indexDepsJson
+                    && cachedMeta.IndexCiProducers == indexCiProducers
+                    && Ord(cachedMeta.CiHintsSha256) == Ord(ciHintsSha)
+                    && cachedMeta.ScanMode == (worktreeMode ? "worktree" : "in-place");
+                if (!conditionOk) { staleCondition.Add(fname); continue; }
+                allScanDirs.Add(d);
+            }
+            if (staleCondition.Count > 0)
+                Console.Error.WriteLine($"warning: {staleCondition.Count} cached scan(s) skipped from the --rescan-only fixture (cache conditions differ from this run's options — a full pass re-keys them): {string.Join(", ", staleCondition.Take(3))}{(staleCondition.Count > 3 ? $" (+{staleCondition.Count - 3} more)" : "")}");
             if (allScanDirs.Count > freshDirs.Count)
             {
-                Console.Error.WriteLine($"note: --rescan-only fixture build — {freshDirs.Count} fresh + {allScanDirs.Count - freshDirs.Count} cached scan dir(s) = {allScanDirs.Count} repos in the fixture (the estate stays whole)");
+                Console.Error.WriteLine($"note: --rescan-only fixture build — {freshDirs.Count} fresh + {allScanDirs.Count - freshDirs.Count} cached = {allScanDirs.Count} repos in the fixture (the estate stays whole)");
                 freshDirs = allScanDirs;
             }
         }
@@ -1214,6 +1245,15 @@ public static class ScanEstate
     }
 
     // stale .tmp/.old swap siblings for one repo — an interrupted run must not strand discoverable garbage
+    // dot-prefixed swap siblings (.name.tmp-<8hex> / .name.old-<8hex>) — the exact forms
+    // ClearLeftovers removes for scanned repos; rescan-only's fixture collection must never
+    // read them as scan dirs (review: interrupted passes leave both files present)
+    static bool IsSwapDir(string folderName)
+    {
+        if (!folderName.StartsWith('.')) return false;
+        return folderName.Contains(".tmp-") || folderName.Contains(".old-");
+    }
+
     static void ClearLeftovers(string scansDir, string name)
     {
         // EXACT forms .{name}.tmp-<8hex> / .{name}.old-<8hex> — the marker sits immediately after the
