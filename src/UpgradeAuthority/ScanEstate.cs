@@ -918,17 +918,21 @@ public static class ScanEstate
                     // origin/main available is COMPATIBLE when https folds to the same repository as
                     // origin — compare the BRANCH exactly + the cached remote's repository identity,
                     // never the transport name (the live SSH-blocked shape)
-                    var cachedParts = cachedTrunk.Split('/', 2);
-                    var autoParts = autoTrunk.Split('/', 2);
-                    if (cachedParts.Length == 2 && autoParts.Length == 2)
+                    // strip the CONFIGURED remote name, not "everything before the first slash" —
+                    // a remote named upstream/team stores upstream/team/main (git accepts slash
+                    // remote names; Split('/',2) compared "team/main" against "main": review r8)
+                    var cachedBranch = remotesB.FirstOrDefault(r => cachedTrunk.StartsWith(r + "/", StringComparison.Ordinal)) is { } cr ? cachedTrunk[(cr.Length + 1)..] : null;
+                    var autoBranch = autoTrunk.StartsWith(effRemoteB + "/", StringComparison.Ordinal) ? autoTrunk[(effRemoteB.Length + 1)..] : autoTrunk;
+                    if (cachedBranch is not null)
                     {
-                        var branchMatches = cachedParts[1] == autoParts[1];
-                        var sameRepo = cachedParts[0] == autoParts[0];
-                        if (!sameRepo && remotesB.Contains(cachedParts[0]))
+                        var branchMatches = cachedBranch == autoBranch;
+                        var cachedRemote = remotesB.FirstOrDefault(r => cachedTrunk.StartsWith(r + "/", StringComparison.Ordinal))!;
+                        var sameRepo = cachedRemote == effRemoteB;
+                        if (!sameRepo)
                         {
                             // fold the cached remote's identity against the auto remote's URL
-                            if (GitT(bypassRepo, $"config --get remote.{cachedParts[0]}.url", out var cachedUrl, out _) == 0
-                                && GitT(bypassRepo, $"config --get remote.{autoParts[0]}.url", out var autoUrl, out _) == 0)
+                            if (GitT(bypassRepo, $"config --get remote.{cachedRemote}.url", out var cachedUrl, out _) == 0
+                                && GitT(bypassRepo, $"config --get remote.{effRemoteB}.url", out var autoUrl, out _) == 0)
                                 sameRepo = SameRepository(cachedUrl.Trim(), autoUrl.Trim());
                         }
                         if (!branchMatches || !sameRepo)
