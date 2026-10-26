@@ -890,7 +890,10 @@ public static class ScanEstate
                     && cachedMeta.IndexCiProducers == indexCiProducers
                     && Ord(cachedMeta.CiHintsSha256) == Ord(ciHintsSha)
                     && cachedMeta.ScanMode == (worktreeMode ? "worktree" : "in-place")
-                    && (trunkOverride is null || Ord(cachedMeta.Trunk).EndsWith("/" + trunkOverride, StringComparison.Ordinal)); // RESOLVED form "<remote>/<branch>" — the bare --trunk value is its suffix (review r4: the equality form rejected every same-trunk cache on refresh)
+                    && (trunkOverride is null || (Ord(cachedMeta.Trunk).Split('/', 2) is { Length: 2 } parts && parts[1] == trunkOverride)); // RESOLVED form "<remote>/<branch>": strip the remote, compare the WHOLE branch (review r5: suffix form accepted feature/release for --trunk release; equality form rejected same-trunk — both wrong, exact-branch is right)
+                    // stale-waiver parity with pass-1 reuse (review r5): a cache recorded under --allow-stale
+                    // (dirty/behind checkout) never rides a rescan-only fixture unless THIS run waives too
+                    if (cachedMeta is { StaleScan: true } && !allowStale) { staleCondition.Add(fname); continue; } // null-safe pattern (cachedMeta may be null; conditionOk below handles that case too)
                 if (!conditionOk) { staleCondition.Add(fname); continue; }
                 // (review r3) dedup against the refreshed repo: two checkouts of one origin — the
                 // full pass cached only the name-ordinal first; a --rescan-only on the OTHER
