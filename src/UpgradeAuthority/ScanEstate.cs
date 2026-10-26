@@ -900,6 +900,21 @@ public static class ScanEstate
                 // refreshes it, and the OLD first-checkout cache would ride alongside it (both
                 // ingest to one repo key — conflicting evidence). The fresh scan wins; same-key
                 // cached dirs are skipped loudly.
+                // auto-selection parity (review r6): an estate cached with --trunk release refreshed
+                // WITHOUT the flag must not ride release caches while the target auto-resolves main/dev.
+                // Resolve the bypassed repo's trunk the normal way and compare against the cached one.
+                if (trunkOverride is null && cachedMeta is { Trunk: { } cachedTrunk })
+                {
+                    var bypassRepo = Path.Combine(Path.GetFullPath(reposRoot), fname);
+                    var remotesB = RemotesOf(bypassRepo);
+                    var effRemoteB = remotesB.Contains("origin") ? "origin" : remotesB.Length == 1 ? remotesB[0] : "";
+                    var autoTrunk = "";
+                    if (GitT(bypassRepo, $"rev-parse --verify {effRemoteB}/main", out _, out _) == 0) autoTrunk = $"{effRemoteB}/main";
+                    else if (GitT(bypassRepo, $"rev-parse --verify {effRemoteB}/dev", out _, out _) == 0) autoTrunk = $"{effRemoteB}/dev";
+                    if (effRemoteB.Length == 0) { staleCondition.Add(fname); continue; } // no/ambiguous remote: cannot prove the trunk — skip rather than guess
+                    if (autoTrunk.Length > 0 && cachedTrunk != autoTrunk)
+                    { staleCondition.Add(fname); continue; }
+                }
                 if (rescanTarget is not null && fname != rescanTarget && RepoKeysOfScanDir(d) is { } keys && freshKeys.Overlaps(keys))
                 { Console.Error.WriteLine($"warning: {fname}: cached scan resolves to the same repository as the refreshed {rescanTarget} (two checkouts of one origin) — fresh evidence wins, the sibling cache is skipped"); continue; }
                 allScanDirs.Add(d);
@@ -913,6 +928,9 @@ public static class ScanEstate
             foreach (var ent in entries)
                 if (ent.Status == "rescan-bypassed" && !inFixture.Contains(ent.Name))
                     ent.Status = "rescan-bypassed-no-cache";
+            WriteManifest(); // persist the RECONCILED statuses (review r6: the last write predates the
+                             // downgrades, leaving scan-estate.v1.json claiming bypassed entries the
+                             // fixture actually rejected)
             if (allScanDirs.Count > freshDirs.Count)
             {
                 Console.Error.WriteLine($"note: --rescan-only fixture build — {freshDirs.Count} fresh + {allScanDirs.Count - freshDirs.Count} cached = {allScanDirs.Count} repos in the fixture (the estate stays whole)");
