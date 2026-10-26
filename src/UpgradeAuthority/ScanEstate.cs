@@ -97,9 +97,12 @@ public static class ScanEstate
         string? selfTeam, bool allowStale, string[] tracemapExcludes,
         string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
         bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
-        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false, string? ciHintsPath = null)
+        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false, string? ciHintsPath = null,
+        bool noFetch = false, string? rescanOnly = null)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
+        if (updateCheckouts && noFetch)
+        { Console.Error.WriteLine("error: --no-fetch and --update-checkouts are mutually exclusive — refresh mode MUST fetch (SPEC-019: fast-forwarding against a last-known trunk would record a stale commit as a normal scan)"); return 1; }
         if (updateCheckouts && worktreeMode)
         { Console.Error.WriteLine("error: --update-checkouts and --worktree are mutually exclusive refresh modes — pick in-place refresh or isolated worktree scans"); return 1; }
         if (parallel < 1 || parallel > 64)
@@ -119,6 +122,30 @@ public static class ScanEstate
             var (parsedScope, scopeErr) = Scope.ParseAndValidate(scopeText, Path.GetFileName(scopePath));
             if (scopeErr is not null) { Console.Error.WriteLine($"error: {scopeErr}"); return 5; }
             scope = parsedScope;
+        }
+        // --rescan-only <repo>: THE one-repo fast path (the review-caught --scope trap, done right —
+        // a scoped run alone rebuilds the fixture from one repo and drops the estate's other evidence).
+        // The rescan target is tracked SEPARATELY from `scope` (review r1: hijacking scope mislabeled
+        // every other checkout out-of-scope, fired the INCOMPLETE warning, and lost the operator's
+        // real --scope — the estate scope and the refresh selection are different concerns). Pass 1
+        // gates fetch/scan eligibility on the target; the fixture phase collects the WHOLE scans tree
+        // filtered by the REAL scope, with swap leftovers excluded and cache conditions validated.
+        string? rescanTarget = rescanOnly;
+        if (rescanTarget is not null)
+        {
+            if (scopePath is not null && !Scope.IsInScope(rescanTarget, scope!))
+            { Console.Error.WriteLine($"error: --rescan-only {rescanTarget} is out of scope by the --scope file — the refresh target must be inside the estate scope"); return 1; }
+            var rescanRepoDir = Path.Combine(Path.GetFullPath(reposRoot), rescanTarget);
+            if (!Directory.Exists(rescanRepoDir))
+            { Console.Error.WriteLine($"error: --rescan-only repo not found under --repos-root: {rescanTarget}"); return 1; }
+            var scansTreeProbe = Path.Combine(Path.GetFullPath(outDir), "scans");
+            if (Directory.Exists(scansTreeProbe))
+            {
+                var existingNames = Directory.GetDirectories(scansTreeProbe).Select(d => Path.GetFileName(d)).ToHashSet(StringComparer.Ordinal);
+                if (!existingNames.Contains(rescanTarget))
+                    Console.Error.WriteLine($"warning: --rescan-only {rescanTarget} has no cached scan yet — this pass scans it fresh; the fixture holds whatever the scans tree contains after");
+            }
+            Console.Error.WriteLine($"note: --rescan-only {rescanTarget} — fetching and scanning ONLY this repo; the fixture below builds from the WHOLE scoped scans tree (the estate stays whole)");
         }
         if (tracemapDll is not null && !File.Exists(tracemapDll))
         { Console.Error.WriteLine($"error: --tracemap dll not found: {tracemapDll} (build tracemap once, pass bin/Release/net10.0/tracemap.dll)"); return 1; }
@@ -229,12 +256,15 @@ public static class ScanEstate
             }
             return false;
         }
-        if (!updateCheckouts && !worktreeMode && parallel > 1)
+        if (noFetch)
+            Console.Error.WriteLine("note: --no-fetch — trusting locally-known remote state (no origin contacted). Freshness is judged against the LAST-KNOWN trunk; a moved trunk reads as fresh until the next real fetch. Dev-loop flag, not an estate-truth pass.");
+        if (!updateCheckouts && !worktreeMode && parallel > 1 && !noFetch)
         {
             var fetchUnits = Directory.GetDirectories(Path.GetFullPath(reposRoot))
                 .Where(d => !Path.GetFileName(d).StartsWith('.'))
                 .Where(d => new DirectoryInfo(d).LinkTarget is null) // C31 r10: a symlinked child is never fetched (the eligibility loop rejects it for the same reason)
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
+                .Where(d => rescanTarget is null || Path.GetFileName(d) == rescanTarget) // --rescan-only: ONLY the target contacts its origin (review — the fast path was estate-wide)
                 .Where(d => GitT(d, "rev-parse HEAD", out _, out _) == 0 && RemotesOf(d).Length > 0)
                 .Where(d => UsableRemoteUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
                 .GroupBy(d => GitT(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.Ordinal) // case-EXACT like seenOrigins (fetch-optimization only — the sequential loop fetches inline anyone this phase skipped, so grouping differences can never drop a scan)
@@ -280,6 +310,29 @@ public static class ScanEstate
             if (new DirectoryInfo(repoPath).LinkTarget is not null)
             { entries.Add(Skip("symlinked directory — pass the real checkout's parent (or the scan dir to ingest explicitly)")); continue; }
             if (!Scope.IsInScope(name, scope)) { Console.Error.WriteLine($"scope  {name} (out of scope by config)"); entries.Add(new ManifestEntry { Name = name, Status = "out-of-scope" }); continue; }
+            if (rescanTarget is not null && name != rescanTarget)
+            {
+                // --rescan-only: everything else rides its cache untouched (review: never mislabeled
+                // out-of-scope). A bypassed repo with NO valid cached scan is MISSING evidence — the
+                // INCOMPLETE check counts it, so a one-repo refresh can never silently publish less
+                // estate than the last full pass (review r2)
+                var cachedScan = Path.Combine(scansDir, name);
+                // the SAME validation the fixture loop applies (review r3): files present AND the meta
+                // parses AND the schema is current — a both-files-but-invalid-meta sibling is NOT
+                // evidence; it counts missing so the INCOMPLETE gate can see it
+                var hasCache = false;
+                if (File.Exists(Path.Combine(cachedScan, "facts.ndjson")) && File.Exists(Path.Combine(cachedScan, "scan-manifest.json")) && !IsSwapDir(name))
+                {
+                    try
+                    {
+                        var probeMeta = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(cachedScan, "scan-estate.json")), JsonOpts);
+                        hasCache = probeMeta is not null && probeMeta.SchemaVersion == "scan-estate-cache.v2" && probeMeta.Exclude is not null;
+                    }
+                    catch { /* invalid meta = not evidence */ }
+                }
+                entries.Add(new ManifestEntry { Name = name, Status = hasCache ? "rescan-bypassed" : "rescan-bypassed-no-cache" });
+                continue;
+            }
             if (GitT(repoPath, "rev-parse HEAD", out var headOut, out _) != 0)
             { entries.Add(Skip("not a git repository or no commits")); continue; }
             var headSha = headOut.Trim();
@@ -317,7 +370,7 @@ public static class ScanEstate
             { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree (checked before fetch)")); continue; } // Baz r13: before ANY mutation, fetch included
             if (fetchFailures.TryGetValue(name, out var fetchErr))
             { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
-            if (!fetched.Contains(name))
+            if (!fetched.Contains(name) && !noFetch)
             {
                 if (!FetchRepo(repoPath, name, out var ferrS, out var viaS))
                 { entries.Add(Skip($"fetch failed: {TrimReason(ferrS)}")); continue; }
@@ -801,6 +854,124 @@ public static class ScanEstate
             Console.Error.WriteLine("note: existing producer-evidence.v0 reused — edit externalPackages if the delta target changed");
 
         var ownershipPath = Path.Combine(Path.GetFullPath(outDir), "ownership.v0.json");
+        // --rescan-only: the sidecar + fixture phases see the WHOLE scans tree, not just this run's
+        // fresh dir — the estate stays whole (one repo refreshed, the rest read from their cached scans)
+        if (rescanOnly is not null)
+        {
+            // whole scans tree, REAL-scope filtered, swap leftovers excluded, cache conditions
+            // validated per repo (review r1: the bypassed dirs must pass the same option check
+            // pass 1 applies — a stale-condition cache would publish a mixed-condition fixture)
+            var freshSet = freshDirs.ToHashSet(StringComparer.Ordinal);
+            var freshKeys = new HashSet<string>(StringComparer.Ordinal);
+            var acceptedKeys = new HashSet<string>(StringComparer.Ordinal); // repo keys already riding the fixture (accepted-cache dedup, review r7)
+            foreach (var fd in freshDirs) foreach (var k in Ingest.EnumerateRepoKeys(new[] { fd })) freshKeys.Add(k);
+            static string[]? RepoKeysOfScanDir(string dir)
+            {
+                try { var ks = Ingest.EnumerateRepoKeys(new[] { dir }); return ks.Count > 0 ? ks.ToArray() : null; }
+                catch { return null; }
+            }
+            var allScanDirs = new List<string>();
+            var staleCondition = new List<string>();
+            foreach (var d in Directory.GetDirectories(Path.Combine(Path.GetFullPath(outDir), "scans"))
+                .Where(d => !IsSwapDir(Path.GetFileName(d)))
+                .OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal))
+            {
+                var fname = Path.GetFileName(d);
+                if (scope is not null && !Scope.IsInScope(fname, scope)) continue; // the operator's real scope governs the fixture (review)
+                if (!File.Exists(Path.Combine(d, "facts.ndjson")) || !File.Exists(Path.Combine(d, "scan-manifest.json"))) continue;
+                if (freshSet.Contains(d)) { allScanDirs.Add(d); continue; }
+                CacheMeta? cachedMeta = null;
+                try { cachedMeta = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(d, "scan-estate.json")), JsonOpts); } catch { }
+                var conditionOk = cachedMeta is not null
+                    && cachedMeta.SchemaVersion == "scan-estate-cache.v2" // the pass-1 reader's checks, replayed (review r2: a v1/unknown cache or null Exclude must SKIP, never throw)
+                    && cachedMeta.Exclude is not null
+                    && cachedMeta.Exclude.SequenceEqual(tracemapExcludes)
+                    && (tracemapDll is null || CacheKeyMatches(cachedMeta, versionsKey, dllHash))
+                    && cachedMeta.IndexDepsJson == indexDepsJson
+                    && cachedMeta.IndexCiProducers == indexCiProducers
+                    && Ord(cachedMeta.CiHintsSha256) == Ord(ciHintsSha)
+                    && cachedMeta.ScanMode == (worktreeMode ? "worktree" : "in-place")
+                    && (trunkOverride is null || (Ord(cachedMeta.Trunk).Split('/', 2) is { Length: 2 } parts && parts[1] == trunkOverride)); // RESOLVED form "<remote>/<branch>": strip the remote, compare the WHOLE branch (review r5: suffix form accepted feature/release for --trunk release; equality form rejected same-trunk — both wrong, exact-branch is right)
+                    // stale-waiver parity with pass-1 reuse (review r5): a cache recorded under --allow-stale
+                    // (dirty/behind checkout) never rides a rescan-only fixture unless THIS run waives too
+                    if (cachedMeta is { StaleScan: true } && !allowStale) { staleCondition.Add(fname); continue; } // null-safe pattern (cachedMeta may be null; conditionOk below handles that case too)
+                if (!conditionOk) { staleCondition.Add(fname); continue; }
+                // (review r3) dedup against the refreshed repo: two checkouts of one origin — the
+                // full pass cached only the name-ordinal first; a --rescan-only on the OTHER
+                // refreshes it, and the OLD first-checkout cache would ride alongside it (both
+                // ingest to one repo key — conflicting evidence). The fresh scan wins; same-key
+                // cached dirs are skipped loudly.
+                // auto-selection parity (review r6): an estate cached with --trunk release refreshed
+                // WITHOUT the flag must not ride release caches while the target auto-resolves main/dev.
+                // Resolve the bypassed repo's trunk the normal way and compare against the cached one.
+                if (trunkOverride is null && cachedMeta is { Trunk: { } cachedTrunk })
+                {
+                    var bypassRepo = Path.Combine(Path.GetFullPath(reposRoot), fname);
+                    var remotesB = RemotesOf(bypassRepo);
+                    var effRemoteB = remotesB.Contains("origin") ? "origin" : remotesB.Length == 1 ? remotesB[0] : "";
+                    if (effRemoteB.Length == 0) { staleCondition.Add(fname); continue; } // no/ambiguous remote: cannot prove the trunk — skip rather than guess
+                    var autoTrunk = "";
+                    if (GitT(bypassRepo, $"rev-parse --verify {effRemoteB}/main", out _, out _) == 0) autoTrunk = $"{effRemoteB}/main";
+                    else if (GitT(bypassRepo, $"rev-parse --verify {effRemoteB}/dev", out _, out _) == 0) autoTrunk = $"{effRemoteB}/dev";
+                    if (autoTrunk.Length == 0) { staleCondition.Add(fname); continue; }
+                    // same-repository fallback remotes (review r7): a cache stored as https/main with
+                    // origin/main available is COMPATIBLE when https folds to the same repository as
+                    // origin — compare the BRANCH exactly + the cached remote's repository identity,
+                    // never the transport name (the live SSH-blocked shape)
+                    // strip the CONFIGURED remote name, not "everything before the first slash" —
+                    // a remote named upstream/team stores upstream/team/main (git accepts slash
+                    // remote names; Split('/',2) compared "team/main" against "main": review r8)
+                    var cachedBranch = remotesB.FirstOrDefault(r => cachedTrunk.StartsWith(r + "/", StringComparison.Ordinal)) is { } cr ? cachedTrunk[(cr.Length + 1)..] : null;
+                    var autoBranch = autoTrunk.StartsWith(effRemoteB + "/", StringComparison.Ordinal) ? autoTrunk[(effRemoteB.Length + 1)..] : autoTrunk;
+                    if (cachedBranch is not null)
+                    {
+                        var branchMatches = cachedBranch == autoBranch;
+                        var cachedRemote = remotesB.FirstOrDefault(r => cachedTrunk.StartsWith(r + "/", StringComparison.Ordinal))!;
+                        var sameRepo = cachedRemote == effRemoteB;
+                        if (!sameRepo)
+                        {
+                            // fold the cached remote's identity against the auto remote's URL
+                            if (GitT(bypassRepo, $"config --get remote.{cachedRemote}.url", out var cachedUrl, out _) == 0
+                                && GitT(bypassRepo, $"config --get remote.{effRemoteB}.url", out var autoUrl, out _) == 0)
+                                sameRepo = SameRepository(cachedUrl.Trim(), autoUrl.Trim());
+                        }
+                        if (!branchMatches || !sameRepo)
+                        { staleCondition.Add(fname); continue; }
+                    }
+                    else if (cachedTrunk != autoTrunk)
+                    { staleCondition.Add(fname); continue; }
+                }
+                if (rescanTarget is not null && fname != rescanTarget && RepoKeysOfScanDir(d) is { } keys)
+                {
+                    if (freshKeys.Overlaps(keys))
+                    { Console.Error.WriteLine($"warning: {fname}: cached scan resolves to the same repository as the refreshed {rescanTarget} (two checkouts of one origin) — fresh evidence wins, the sibling cache is skipped"); continue; }
+                    // accepted-cache dedup (review r7): two BYPASSED caches of one repository would
+                    // both ride (conflicting facts in ingest) — the name-ordinal FIRST wins (the
+                    // pass-1 seenOrigins precedent); later same-key caches skip loudly
+                    if (keys.Any(k => acceptedKeys.Contains(k)))
+                    { Console.Error.WriteLine($"warning: {fname}: cached scan resolves to a repository already accepted from another checkout — the first (name-ordinal) wins, this cache is skipped"); continue; }
+                    foreach (var k in keys) acceptedKeys.Add(k);
+                }
+                allScanDirs.Add(d);
+            }
+            if (staleCondition.Count > 0)
+                Console.Error.WriteLine($"warning: {staleCondition.Count} cached scan(s) skipped from the --rescan-only fixture (cache conditions differ from this run's options — a full pass re-keys them): {string.Join(", ", staleCondition.Take(3))}{(staleCondition.Count > 3 ? $" (+{staleCondition.Count - 3} more)" : "")}");
+            // downgrade manifest entries whose cache the collection REJECTED (condition mismatch,
+            // same-origin dup): they are NOT evidence and the tally must count them missing —
+            // otherwise "N reused" includes ghosts and INCOMPLETE stays silent (review r4)
+            var inFixture = allScanDirs.Select(d => Path.GetFileName(d)).ToHashSet(StringComparer.Ordinal);
+            foreach (var ent in entries)
+                if (ent.Status == "rescan-bypassed" && !inFixture.Contains(ent.Name))
+                    ent.Status = "rescan-bypassed-no-cache";
+            WriteManifest(); // persist the RECONCILED statuses (review r6: the last write predates the
+                             // downgrades, leaving scan-estate.v1.json claiming bypassed entries the
+                             // fixture actually rejected)
+            if (allScanDirs.Count > freshDirs.Count)
+            {
+                Console.Error.WriteLine($"note: --rescan-only fixture build — {freshDirs.Count} fresh + {allScanDirs.Count - freshDirs.Count} cached = {allScanDirs.Count} repos in the fixture (the estate stays whole)");
+                freshDirs = allScanDirs;
+            }
+        }
         if (File.Exists(ownershipPath))
         {
             OwnershipFile existing;
@@ -903,8 +1074,8 @@ public static class ScanEstate
         }
 
         var nScan = entries.Count(e => e.Status == "scanned");
-        var nReuse = entries.Count(e => e.Status == "reused");
-        var nSkip = entries.Count(e => e.Status == "skipped");
+        var nReuse = entries.Count(e => e.Status == "reused" || e.Status == "rescan-bypassed"); // rescan-bypassed = valid cache riding the fixture — EVIDENCE for the completeness gate (review r3)
+        var nSkip = entries.Count(e => e.Status == "skipped" || e.Status == "rescan-bypassed-no-cache"); // a rescan-bypassed repo with no cached scan is MISSING evidence — the INCOMPLETE warning must see it (review r2)
         var nOos2 = entries.Count(e => e.Status == "out-of-scope");
         var nIgn2 = entries.Count(e => e.Status == "ignored");
         var tail = hasDelta ? Path.Combine(Path.GetFullPath(outDir), "report.md") : fixtureDir;
@@ -1177,6 +1348,15 @@ public static class ScanEstate
     }
 
     // stale .tmp/.old swap siblings for one repo — an interrupted run must not strand discoverable garbage
+    // dot-prefixed swap siblings (.name.tmp-<8hex> / .name.old-<8hex>) — the exact forms
+    // ClearLeftovers removes for scanned repos; rescan-only's fixture collection must never
+    // read them as scan dirs (review: interrupted passes leave both files present)
+    static bool IsSwapDir(string folderName)
+    {
+        if (!folderName.StartsWith('.')) return false;
+        return folderName.Contains(".tmp-") || folderName.Contains(".old-");
+    }
+
     static void ClearLeftovers(string scansDir, string name)
     {
         // EXACT forms .{name}.tmp-<8hex> / .{name}.old-<8hex> — the marker sits immediately after the
