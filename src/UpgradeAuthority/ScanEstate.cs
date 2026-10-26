@@ -863,6 +863,7 @@ public static class ScanEstate
             // pass 1 applies — a stale-condition cache would publish a mixed-condition fixture)
             var freshSet = freshDirs.ToHashSet(StringComparer.Ordinal);
             var freshKeys = new HashSet<string>(StringComparer.Ordinal);
+            var acceptedKeys = new HashSet<string>(StringComparer.Ordinal); // repo keys already riding the fixture (accepted-cache dedup, review r7)
             foreach (var fd in freshDirs) foreach (var k in Ingest.EnumerateRepoKeys(new[] { fd })) freshKeys.Add(k);
             static string[]? RepoKeysOfScanDir(string dir)
             {
@@ -908,15 +909,45 @@ public static class ScanEstate
                     var bypassRepo = Path.Combine(Path.GetFullPath(reposRoot), fname);
                     var remotesB = RemotesOf(bypassRepo);
                     var effRemoteB = remotesB.Contains("origin") ? "origin" : remotesB.Length == 1 ? remotesB[0] : "";
+                    if (effRemoteB.Length == 0) { staleCondition.Add(fname); continue; } // no/ambiguous remote: cannot prove the trunk — skip rather than guess
                     var autoTrunk = "";
                     if (GitT(bypassRepo, $"rev-parse --verify {effRemoteB}/main", out _, out _) == 0) autoTrunk = $"{effRemoteB}/main";
                     else if (GitT(bypassRepo, $"rev-parse --verify {effRemoteB}/dev", out _, out _) == 0) autoTrunk = $"{effRemoteB}/dev";
-                    if (effRemoteB.Length == 0) { staleCondition.Add(fname); continue; } // no/ambiguous remote: cannot prove the trunk — skip rather than guess
-                    if (autoTrunk.Length > 0 && cachedTrunk != autoTrunk)
+                    if (autoTrunk.Length == 0) { staleCondition.Add(fname); continue; }
+                    // same-repository fallback remotes (review r7): a cache stored as https/main with
+                    // origin/main available is COMPATIBLE when https folds to the same repository as
+                    // origin — compare the BRANCH exactly + the cached remote's repository identity,
+                    // never the transport name (the live SSH-blocked shape)
+                    var cachedParts = cachedTrunk.Split('/', 2);
+                    var autoParts = autoTrunk.Split('/', 2);
+                    if (cachedParts.Length == 2 && autoParts.Length == 2)
+                    {
+                        var branchMatches = cachedParts[1] == autoParts[1];
+                        var sameRepo = cachedParts[0] == autoParts[0];
+                        if (!sameRepo && remotesB.Contains(cachedParts[0]))
+                        {
+                            // fold the cached remote's identity against the auto remote's URL
+                            if (GitT(bypassRepo, $"config --get remote.{cachedParts[0]}.url", out var cachedUrl, out _) == 0
+                                && GitT(bypassRepo, $"config --get remote.{autoParts[0]}.url", out var autoUrl, out _) == 0)
+                                sameRepo = SameRepository(cachedUrl.Trim(), autoUrl.Trim());
+                        }
+                        if (!branchMatches || !sameRepo)
+                        { staleCondition.Add(fname); continue; }
+                    }
+                    else if (cachedTrunk != autoTrunk)
                     { staleCondition.Add(fname); continue; }
                 }
-                if (rescanTarget is not null && fname != rescanTarget && RepoKeysOfScanDir(d) is { } keys && freshKeys.Overlaps(keys))
-                { Console.Error.WriteLine($"warning: {fname}: cached scan resolves to the same repository as the refreshed {rescanTarget} (two checkouts of one origin) — fresh evidence wins, the sibling cache is skipped"); continue; }
+                if (rescanTarget is not null && fname != rescanTarget && RepoKeysOfScanDir(d) is { } keys)
+                {
+                    if (freshKeys.Overlaps(keys))
+                    { Console.Error.WriteLine($"warning: {fname}: cached scan resolves to the same repository as the refreshed {rescanTarget} (two checkouts of one origin) — fresh evidence wins, the sibling cache is skipped"); continue; }
+                    // accepted-cache dedup (review r7): two BYPASSED caches of one repository would
+                    // both ride (conflicting facts in ingest) — the name-ordinal FIRST wins (the
+                    // pass-1 seenOrigins precedent); later same-key caches skip loudly
+                    if (keys.Any(k => acceptedKeys.Contains(k)))
+                    { Console.Error.WriteLine($"warning: {fname}: cached scan resolves to a repository already accepted from another checkout — the first (name-ordinal) wins, this cache is skipped"); continue; }
+                    foreach (var k in keys) acceptedKeys.Add(k);
+                }
                 allScanDirs.Add(d);
             }
             if (staleCondition.Count > 0)
