@@ -97,7 +97,8 @@ public static class ScanEstate
         string? selfTeam, bool allowStale, string[] tracemapExcludes,
         string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
         bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
-        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false, string? ciHintsPath = null)
+        int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false, string? ciHintsPath = null,
+        bool noFetch = false, string? rescanOnly = null)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
         if (updateCheckouts && worktreeMode)
@@ -119,6 +120,27 @@ public static class ScanEstate
             var (parsedScope, scopeErr) = Scope.ParseAndValidate(scopeText, Path.GetFileName(scopePath));
             if (scopeErr is not null) { Console.Error.WriteLine($"error: {scopeErr}"); return 5; }
             scope = parsedScope;
+        }
+        // --rescan-only <repo>: THE one-repo fast path (the review-caught --scope trap, done right —
+        // a scoped run alone rebuilds the fixture from one repo and drops the estate's other evidence;
+        // rescanOnly scopes the FETCH+SCAN to one repo but the fixture build below reads the WHOLE
+        // scans tree, so the ledger stays whole and one repo refreshes in seconds)
+        if (rescanOnly is not null)
+        {
+            var rescanRepoDir = Path.Combine(Path.GetFullPath(reposRoot), rescanOnly);
+            if (!Directory.Exists(rescanRepoDir))
+            { Console.Error.WriteLine($"error: --rescan-only repo not found under --repos-root: {rescanOnly}"); return 1; }
+            var scansTree = Path.Combine(Path.GetFullPath(outDir), "scans");
+            if (Directory.Exists(scansTree))
+            {
+                var existingNames = Directory.GetDirectories(scansTree).Select(d => Path.GetFileName(d)).ToHashSet(StringComparer.Ordinal);
+                if (!existingNames.Contains(rescanOnly))
+                    Console.Error.WriteLine($"warning: --rescan-only {rescanOnly} has no cached scan yet — this pass scans it fresh; the fixture holds whatever the scans tree contains after");
+            }
+            var (rescanScope, rescanErr) = Scope.ParseAndValidate(JsonSerializer.Serialize(new { schemaVersion = "estate-scope.v0", include = new[] { rescanOnly } }, WriteOpts), "rescan-only");
+            if (rescanErr is not null) { Console.Error.WriteLine($"error: internal: rescan-only scope malformed: {rescanErr}"); return 1; }
+            scope = rescanScope;
+            Console.Error.WriteLine($"note: --rescan-only {rescanOnly} — fetching and scanning ONLY this repo; the fixture below builds from the WHOLE scans tree (the estate stays whole)");
         }
         if (tracemapDll is not null && !File.Exists(tracemapDll))
         { Console.Error.WriteLine($"error: --tracemap dll not found: {tracemapDll} (build tracemap once, pass bin/Release/net10.0/tracemap.dll)"); return 1; }
@@ -229,7 +251,9 @@ public static class ScanEstate
             }
             return false;
         }
-        if (!updateCheckouts && !worktreeMode && parallel > 1)
+        if (noFetch)
+            Console.Error.WriteLine("note: --no-fetch — trusting locally-known remote state (no origin contacted). Freshness is judged against the LAST-KNOWN trunk; a moved trunk reads as fresh until the next real fetch. Dev-loop flag, not an estate-truth pass.");
+        if (!updateCheckouts && !worktreeMode && parallel > 1 && !noFetch)
         {
             var fetchUnits = Directory.GetDirectories(Path.GetFullPath(reposRoot))
                 .Where(d => !Path.GetFileName(d).StartsWith('.'))
@@ -317,7 +341,7 @@ public static class ScanEstate
             { entries.Add(Skip("git status unreadable — refresh refused rather than mutate an unverifiable tree (checked before fetch)")); continue; } // Baz r13: before ANY mutation, fetch included
             if (fetchFailures.TryGetValue(name, out var fetchErr))
             { entries.Add(Skip($"fetch failed: {TrimReason(fetchErr)}")); continue; }
-            if (!fetched.Contains(name))
+            if (!fetched.Contains(name) && !noFetch)
             {
                 if (!FetchRepo(repoPath, name, out var ferrS, out var viaS))
                 { entries.Add(Skip($"fetch failed: {TrimReason(ferrS)}")); continue; }
@@ -801,6 +825,19 @@ public static class ScanEstate
             Console.Error.WriteLine("note: existing producer-evidence.v0 reused — edit externalPackages if the delta target changed");
 
         var ownershipPath = Path.Combine(Path.GetFullPath(outDir), "ownership.v0.json");
+        // --rescan-only: the sidecar + fixture phases see the WHOLE scans tree, not just this run's
+        // fresh dir — the estate stays whole (one repo refreshed, the rest read from their cached scans)
+        if (rescanOnly is not null)
+        {
+            var allScanDirs = Directory.GetDirectories(Path.Combine(Path.GetFullPath(outDir), "scans"))
+                .Where(d => File.Exists(Path.Combine(d, "facts.ndjson")) && File.Exists(Path.Combine(d, "scan-manifest.json")))
+                .OrderBy(d => Path.GetFileName(d), StringComparer.Ordinal).ToList();
+            if (allScanDirs.Count > freshDirs.Count)
+            {
+                Console.Error.WriteLine($"note: --rescan-only fixture build — {freshDirs.Count} fresh + {allScanDirs.Count - freshDirs.Count} cached scan dir(s) = {allScanDirs.Count} repos in the fixture (the estate stays whole)");
+                freshDirs = allScanDirs;
+            }
+        }
         if (File.Exists(ownershipPath))
         {
             OwnershipFile existing;
