@@ -317,7 +317,19 @@ public static class ScanEstate
                 // INCOMPLETE check counts it, so a one-repo refresh can never silently publish less
                 // estate than the last full pass (review r2)
                 var cachedScan = Path.Combine(scansDir, name);
-                var hasCache = File.Exists(Path.Combine(cachedScan, "facts.ndjson")) && File.Exists(Path.Combine(cachedScan, "scan-manifest.json")) && !IsSwapDir(name);
+                // the SAME validation the fixture loop applies (review r3): files present AND the meta
+                // parses AND the schema is current — a both-files-but-invalid-meta sibling is NOT
+                // evidence; it counts missing so the INCOMPLETE gate can see it
+                var hasCache = false;
+                if (File.Exists(Path.Combine(cachedScan, "facts.ndjson")) && File.Exists(Path.Combine(cachedScan, "scan-manifest.json")) && !IsSwapDir(name))
+                {
+                    try
+                    {
+                        var probeMeta = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(cachedScan, "scan-estate.json")), JsonOpts);
+                        hasCache = probeMeta is not null && probeMeta.SchemaVersion == "scan-estate-cache.v2" && probeMeta.Exclude is not null;
+                    }
+                    catch { /* invalid meta = not evidence */ }
+                }
                 entries.Add(new ManifestEntry { Name = name, Status = hasCache ? "rescan-bypassed" : "rescan-bypassed-no-cache" });
                 continue;
             }
@@ -850,6 +862,13 @@ public static class ScanEstate
             // validated per repo (review r1: the bypassed dirs must pass the same option check
             // pass 1 applies — a stale-condition cache would publish a mixed-condition fixture)
             var freshSet = freshDirs.ToHashSet(StringComparer.Ordinal);
+            var freshKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var fd in freshDirs) foreach (var k in Ingest.EnumerateRepoKeys(new[] { fd })) freshKeys.Add(k);
+            static string[]? RepoKeysOfScanDir(string dir)
+            {
+                try { var ks = Ingest.EnumerateRepoKeys(new[] { dir }); return ks.Count > 0 ? ks.ToArray() : null; }
+                catch { return null; }
+            }
             var allScanDirs = new List<string>();
             var staleCondition = new List<string>();
             foreach (var d in Directory.GetDirectories(Path.Combine(Path.GetFullPath(outDir), "scans"))
@@ -870,8 +889,16 @@ public static class ScanEstate
                     && cachedMeta.IndexDepsJson == indexDepsJson
                     && cachedMeta.IndexCiProducers == indexCiProducers
                     && Ord(cachedMeta.CiHintsSha256) == Ord(ciHintsSha)
-                    && cachedMeta.ScanMode == (worktreeMode ? "worktree" : "in-place");
+                    && cachedMeta.ScanMode == (worktreeMode ? "worktree" : "in-place")
+                    && (trunkOverride is null || Ord(cachedMeta.Trunk) == Ord(trunkOverride)); // an explicit --trunk governs the WHOLE fixture: mixing a main-cached estate into a release refresh publishes cross-branch evidence (review r3)
                 if (!conditionOk) { staleCondition.Add(fname); continue; }
+                // (review r3) dedup against the refreshed repo: two checkouts of one origin — the
+                // full pass cached only the name-ordinal first; a --rescan-only on the OTHER
+                // refreshes it, and the OLD first-checkout cache would ride alongside it (both
+                // ingest to one repo key — conflicting evidence). The fresh scan wins; same-key
+                // cached dirs are skipped loudly.
+                if (rescanTarget is not null && fname != rescanTarget && RepoKeysOfScanDir(d) is { } keys && freshKeys.Overlaps(keys))
+                { Console.Error.WriteLine($"warning: {fname}: cached scan resolves to the same repository as the refreshed {rescanTarget} (two checkouts of one origin) — fresh evidence wins, the sibling cache is skipped"); continue; }
                 allScanDirs.Add(d);
             }
             if (staleCondition.Count > 0)
@@ -984,7 +1011,7 @@ public static class ScanEstate
         }
 
         var nScan = entries.Count(e => e.Status == "scanned");
-        var nReuse = entries.Count(e => e.Status == "reused");
+        var nReuse = entries.Count(e => e.Status == "reused" || e.Status == "rescan-bypassed"); // rescan-bypassed = valid cache riding the fixture — EVIDENCE for the completeness gate (review r3)
         var nSkip = entries.Count(e => e.Status == "skipped" || e.Status == "rescan-bypassed-no-cache"); // a rescan-bypassed repo with no cached scan is MISSING evidence — the INCOMPLETE warning must see it (review r2)
         var nOos2 = entries.Count(e => e.Status == "out-of-scope");
         var nIgn2 = entries.Count(e => e.Status == "ignored");
