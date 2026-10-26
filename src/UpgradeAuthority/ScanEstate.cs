@@ -264,6 +264,7 @@ public static class ScanEstate
                 .Where(d => !Path.GetFileName(d).StartsWith('.'))
                 .Where(d => new DirectoryInfo(d).LinkTarget is null) // C31 r10: a symlinked child is never fetched (the eligibility loop rejects it for the same reason)
                 .Where(d => Scope.IsInScope(Path.GetFileName(d), scope)) // out-of-scope repos never contact their origins
+                .Where(d => rescanTarget is null || Path.GetFileName(d) == rescanTarget) // --rescan-only: ONLY the target contacts its origin (review — the fast path was estate-wide)
                 .Where(d => GitT(d, "rev-parse HEAD", out _, out _) == 0 && RemotesOf(d).Length > 0)
                 .Where(d => UsableRemoteUrl(d)) // C34 r11: URL-less checkouts skip at eligibility, not as fetch failures
                 .GroupBy(d => GitT(d, "config --get remote.origin.url", out var u34, out _) == 0 ? NormalizeOriginUrl(u34) : d, StringComparer.Ordinal) // case-EXACT like seenOrigins (fetch-optimization only — the sequential loop fetches inline anyone this phase skipped, so grouping differences can never drop a scan)
@@ -309,7 +310,17 @@ public static class ScanEstate
             if (new DirectoryInfo(repoPath).LinkTarget is not null)
             { entries.Add(Skip("symlinked directory — pass the real checkout's parent (or the scan dir to ingest explicitly)")); continue; }
             if (!Scope.IsInScope(name, scope)) { Console.Error.WriteLine($"scope  {name} (out of scope by config)"); entries.Add(new ManifestEntry { Name = name, Status = "out-of-scope" }); continue; }
-            if (rescanTarget is not null && name != rescanTarget) { entries.Add(new ManifestEntry { Name = name, Status = "rescan-bypassed" }); continue; } // --rescan-only: everything else rides its cache untouched (review: never mislabeled out-of-scope)
+            if (rescanTarget is not null && name != rescanTarget)
+            {
+                // --rescan-only: everything else rides its cache untouched (review: never mislabeled
+                // out-of-scope). A bypassed repo with NO valid cached scan is MISSING evidence — the
+                // INCOMPLETE check counts it, so a one-repo refresh can never silently publish less
+                // estate than the last full pass (review r2)
+                var cachedScan = Path.Combine(scansDir, name);
+                var hasCache = File.Exists(Path.Combine(cachedScan, "facts.ndjson")) && File.Exists(Path.Combine(cachedScan, "scan-manifest.json")) && !IsSwapDir(name);
+                entries.Add(new ManifestEntry { Name = name, Status = hasCache ? "rescan-bypassed" : "rescan-bypassed-no-cache" });
+                continue;
+            }
             if (GitT(repoPath, "rev-parse HEAD", out var headOut, out _) != 0)
             { entries.Add(Skip("not a git repository or no commits")); continue; }
             var headSha = headOut.Trim();
@@ -852,6 +863,8 @@ public static class ScanEstate
                 CacheMeta? cachedMeta = null;
                 try { cachedMeta = JsonSerializer.Deserialize<CacheMeta>(File.ReadAllText(Path.Combine(d, "scan-estate.json")), JsonOpts); } catch { }
                 var conditionOk = cachedMeta is not null
+                    && cachedMeta.SchemaVersion == "scan-estate-cache.v2" // the pass-1 reader's checks, replayed (review r2: a v1/unknown cache or null Exclude must SKIP, never throw)
+                    && cachedMeta.Exclude is not null
                     && cachedMeta.Exclude.SequenceEqual(tracemapExcludes)
                     && (tracemapDll is null || CacheKeyMatches(cachedMeta, versionsKey, dllHash))
                     && cachedMeta.IndexDepsJson == indexDepsJson
@@ -972,7 +985,7 @@ public static class ScanEstate
 
         var nScan = entries.Count(e => e.Status == "scanned");
         var nReuse = entries.Count(e => e.Status == "reused");
-        var nSkip = entries.Count(e => e.Status == "skipped");
+        var nSkip = entries.Count(e => e.Status == "skipped" || e.Status == "rescan-bypassed-no-cache"); // a rescan-bypassed repo with no cached scan is MISSING evidence — the INCOMPLETE warning must see it (review r2)
         var nOos2 = entries.Count(e => e.Status == "out-of-scope");
         var nIgn2 = entries.Count(e => e.Status == "ignored");
         var tail = hasDelta ? Path.Combine(Path.GetFullPath(outDir), "report.md") : fixtureDir;
