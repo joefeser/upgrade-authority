@@ -890,7 +890,7 @@ public static class ScanEstate
                     && cachedMeta.IndexCiProducers == indexCiProducers
                     && Ord(cachedMeta.CiHintsSha256) == Ord(ciHintsSha)
                     && cachedMeta.ScanMode == (worktreeMode ? "worktree" : "in-place")
-                    && (trunkOverride is null || Ord(cachedMeta.Trunk) == Ord(trunkOverride)); // an explicit --trunk governs the WHOLE fixture: mixing a main-cached estate into a release refresh publishes cross-branch evidence (review r3)
+                    && (trunkOverride is null || Ord(cachedMeta.Trunk).EndsWith("/" + trunkOverride, StringComparison.Ordinal)); // RESOLVED form "<remote>/<branch>" — the bare --trunk value is its suffix (review r4: the equality form rejected every same-trunk cache on refresh)
                 if (!conditionOk) { staleCondition.Add(fname); continue; }
                 // (review r3) dedup against the refreshed repo: two checkouts of one origin — the
                 // full pass cached only the name-ordinal first; a --rescan-only on the OTHER
@@ -903,6 +903,13 @@ public static class ScanEstate
             }
             if (staleCondition.Count > 0)
                 Console.Error.WriteLine($"warning: {staleCondition.Count} cached scan(s) skipped from the --rescan-only fixture (cache conditions differ from this run's options — a full pass re-keys them): {string.Join(", ", staleCondition.Take(3))}{(staleCondition.Count > 3 ? $" (+{staleCondition.Count - 3} more)" : "")}");
+            // downgrade manifest entries whose cache the collection REJECTED (condition mismatch,
+            // same-origin dup): they are NOT evidence and the tally must count them missing —
+            // otherwise "N reused" includes ghosts and INCOMPLETE stays silent (review r4)
+            var inFixture = allScanDirs.Select(d => Path.GetFileName(d)).ToHashSet(StringComparer.Ordinal);
+            foreach (var ent in entries)
+                if (ent.Status == "rescan-bypassed" && !inFixture.Contains(ent.Name))
+                    ent.Status = "rescan-bypassed-no-cache";
             if (allScanDirs.Count > freshDirs.Count)
             {
                 Console.Error.WriteLine($"note: --rescan-only fixture build — {freshDirs.Count} fresh + {allScanDirs.Count - freshDirs.Count} cached = {allScanDirs.Count} repos in the fixture (the estate stays whole)");
