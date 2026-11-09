@@ -3728,6 +3728,36 @@ public static class Program
                     }
                     finally { if (Directory.Exists(scanF)) Directory.Delete(scanF, true); if (Directory.Exists(outF)) Directory.Delete(outF, true); } // PR7 Codex r7: failure paths clean up too
                 }
+                // the both-versionless seam (2026-11-09 live estate finding, DoorCodes): a versionless
+                // ci claim AND a versionless project claim for one package — ci wins the class rank and
+                // the project shadow must NOT surface (the winner already dominates it; a second row
+                // read the package as both ci-defined AND project-declared). The inversion shadow above
+                // is the only legitimate shadow: the HIGHER-class loser kept visible.
+                {
+                    string? scanG = null, outG = null;
+                    try
+                    {
+                    scanG = Path.Combine(Path.GetTempPath(), "ua-ci21-dual-" + Guid.NewGuid().ToString("N")[..8]);
+                    Directory.CreateDirectory(scanG);
+                    File.WriteAllText(Path.Combine(scanG, "facts.ndjson"),
+                        CiFact("contoso.dual", null) + "\n" + CiFact("Contoso.Dual", null, "build-file") + "\n");
+                    File.Copy(Path.Combine(richD, "..", "sidecars-estate2", "delta.json"), Path.Combine(scanG, "delta.json"));
+                    outG = Path.Combine(Path.GetTempPath(), "ua-ci21-dualo-" + Guid.NewGuid().ToString("N")[..8]);
+                    var errPrevG = Console.Error;
+                    var swG = new System.IO.StringWriter();
+                    int rcG;
+                    try { Console.SetError(swG); rcG = Ingest.Run(new[] { scanG }, outG, null, null, null); }
+                    finally { Console.SetError(errPrevG); }
+                    if (rcG != 0) throw new Exception($"dual ingest exited {rcG}");
+                    var peG = JsonDocument.Parse(File.ReadAllText(Path.Combine(outG, "input", "producer-evidence.v0.json"))).RootElement;
+                    var dualRows = peG.GetProperty("producers").EnumerateArray()
+                        .Where(r2 => r2.GetProperty("packageId").GetString()!.Equals("Contoso.Dual", StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (dualRows.Count != 1) throw new Exception($"both-versionless claims must fuse to ONE boundary row, got {dualRows.Count}: {peG.GetRawText()}");
+                    if (dualRows[0].GetProperty("provenance").GetString() != "ci-defined")
+                        throw new Exception("ci must win the class rank on equal (versionless) evidence: " + dualRows[0].GetRawText());
+                    }
+                    finally { if (Directory.Exists(scanG)) Directory.Delete(scanG, true); if (Directory.Exists(outG)) Directory.Delete(outG, true); }
+                }
                 var peE = JsonDocument.Parse(File.ReadAllText(Path.Combine(outE, "input", "producer-evidence.v0.json"))).RootElement;
                 var mixE = peE.GetProperty("producers").EnumerateArray().Single();
                 if (mixE.GetProperty("producedVersion").GetString() != "3.0.0" || mixE.GetProperty("provenance").GetString() != "ci-defined")

@@ -632,7 +632,14 @@ public static class Ingest
             // survives into the registry's ciDefined count instead of reading as absent. Conflicting
             // (versioned) losers are still dropped with their warning; the one-entry-per-package model
             // holds exactly where versions actually conflict.
-            foreach (var shadow in g.Where(p => p != winner && p.Provenance != winner.Provenance && Ord(p.ProducedVersion) == "")
+            // PR7 Codex r7 + the 2026-11-09 live seam: the shadow exists to keep the HIGHER-class
+            // source visible when it lost on EVIDENCE (a versioned project claim beating a versionless
+            // ci claim — the registry must not read the ci source as absent). A LOWER-class versionless
+            // loser adds nothing — the winner already dominates it by class — and surfacing it as a
+            // second boundary row misrepresented the outcome (the package read as BOTH ci-defined AND
+            // project-declared; live estate finding, DoorCodes).
+            foreach (var shadow in g.Where(p => p != winner && p.Provenance != winner.Provenance && Ord(p.ProducedVersion) == ""
+                                                && ProvRank(p.Provenance) < ProvRank(winner.Provenance))
                                     .GroupBy(p => p.Provenance).Select(grp => grp.First()))
                 // PR7 Codex r8: the shadow adopts the WINNER's identity spelling — the group is one
                 // package (case-folded), and a variant-spelled shadow would trip the loader's own
