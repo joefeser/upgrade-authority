@@ -2123,6 +2123,67 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-scope-list: {ex.Message}"); }
 
+        // 7d. absence receipts — the end-of-run summary must join the ownership file against the run
+        // manifest so an operator never joins the two lists by hand (live 2026-11-08: one tracemap
+        // exit-1 skip surfaced in BOTH the skip tally and the "assigned but absent" warning with no
+        // linkage). Pins: run-1 (all evidenced) prints NO absent lines; run-2 exercises all three
+        // absence shapes — skipped-with-receipt (the tail rides the line), URL-form ownership key
+        // joined by last segment, and a stale entry with no scan-set entry at all. The scanner-retry
+        // seam (ScanRetryDelaysMs) makes the skip path real-time; this is also the retry armor's
+        // first-ever coverage.
+        try
+        {
+            var savedDelays = ScanEstate.ScanRetryDelaysMs;
+            ScanEstate.ScanRetryDelaysMs = Array.Empty<int>();
+            var root7d = Path.Combine(Path.GetTempPath(), "ua-se7d-" + Guid.NewGuid().ToString("N")[..8]);
+            var out7d = Path.Combine(Path.GetTempPath(), "ua-se7d-out-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(root7d);
+            EstateRepo(root7d, "alpha");
+            EstateRepo(root7d, "beta");
+            EstateRepo(root7d, "gamma");
+            var savedErr7d = Console.Error; var cap7d = new System.IO.StringWriter();
+            Console.SetError(cap7d);
+            var rc7d = ScanEstate.Run(Path.Combine(root7d, "repos"), out7d, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner);
+            Console.SetError(savedErr7d);
+            if (rc7d != 0) throw new Exception($"run-1 exited {rc7d}");
+            if (cap7d.ToString().Contains("absent ")) throw new Exception("run-1: every assigned repo was evidenced — an absent line must not print");
+            var own7d = File.ReadAllText(Path.Combine(out7d, "ownership.v0.json"));
+            if (!own7d.Contains("\"repo\": \"beta\""))
+                throw new Exception("run-1 ownership bootstrap wrong");
+            // the human-edit path (assignments sacred — the tool never prunes): alpha gets a URL-form
+            // key (last-segment join), ghost-repo is added (stale — not in the repos root at all)
+            var ownPath7d = Path.Combine(out7d, "ownership.v0.json");
+            var own7dEd = File.ReadAllText(ownPath7d)
+                .Replace("\"repo\": \"alpha\"", "\"repo\": \"https://ghe.acme/acme/alpha\"")
+                .Replace("\"ownerships\": [", "\"ownerships\": [\n    {\"repo\": \"https://ghe.old/old-org/ghost-repo\", \"team\": \"team-a\"},");
+            File.WriteAllText(ownPath7d, own7dEd);
+            // beta's HEAD must MOVE so run-2 cannot ride run-1's cache — the skip must come from a
+            // REAL scan attempt (the scanner exiting 1), the exact shape the live estate produced
+            File.WriteAllText(Path.Combine(root7d, "repos", "beta", "moved.txt"), "moved");
+            Push.Git(Path.Combine(root7d, "repos", "beta"), "add -A", out _, out _);
+            Push.Git(Path.Combine(root7d, "repos", "beta"), "commit -q -m \"move beta forward\"", out _, out _);
+            Push.Git(Path.Combine(root7d, "repos", "beta"), "push -q origin HEAD", out _, out _); // at-trunk rule: a local-only commit reads as behind/ahead-tip and skips before any scan runs
+            int SelectiveScanner7d(ScanEstate.ScanRequest r) => r.RepoPath.Replace('\\', '/').EndsWith("/beta", StringComparison.Ordinal) ? 1 : StubScanner(r); // beta dies on attempt 1 (seam: no backoff sleeps)
+            var cap7d2 = new System.IO.StringWriter();
+            Console.SetError(cap7d2);
+            var rc7d2 = ScanEstate.Run(Path.Combine(root7d, "repos"), out7d, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", SelectiveScanner7d);
+            Console.SetError(savedErr7d);
+            if (rc7d2 != 0) throw new Exception($"run-2 exited {rc7d2}");
+            var err7d2 = cap7d2.ToString();
+            if (!err7d2.Contains("skip reasons: 1x tracemap exited 1")) throw new Exception("skip tally line missing");
+            if (!err7d2.Contains($"  skipped beta — tracemap exited 1 after 1 attempt(s)")) throw new Exception("skip receipt line missing (name + reason must ride the summary)");
+            if (!err7d2.Contains("absent beta: SKIPPED this run — tracemap exited 1 after 1 attempt(s) — re-run to recover (assignment kept)"))
+                throw new Exception("cause-bearing absence line for the skipped repo missing");
+            if (!err7d2.Contains("absent https://ghe.old/old-org/ghost-repo: NOT discovered this run"))
+                throw new Exception("stale-entry absence line missing");
+            if (err7d2.Contains("absent alpha")) throw new Exception("alpha was evidenced (reused/scanned) — an absent line must not print despite the URL-form key");
+            if (!err7d2.Contains("note: 2 ownership-assigned repo(s) had no evidence this run")) throw new Exception("absence count note missing");
+            Console.WriteLine("ok   scan-estate-absence-receipts (skip tally + per-repo receipts; absent lines name the cause: skipped/stale; evidenced repos stay silent)"); pass++;
+            ScanEstate.ScanRetryDelaysMs = savedDelays;
+            ForceDelete(root7d); ForceDelete(out7d);
+        }
+        catch (Exception ex) { fail++; ScanEstate.ScanRetryDelaysMs = new[] { 5000, 15000 }; Console.WriteLine($"FAIL scan-estate-absence-receipts: {ex.Message}"); }
+
         // 8. alternates: two checkouts of one origin -> the later is visibly skipped; no-origin always skipped
         try
         {

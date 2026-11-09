@@ -123,7 +123,14 @@ compiles each checkout, which restores from your configured NuGet feeds and **ex
 build scripts with your privileges — only point it at repos you trust**), `--worktree` (scan
 isolated worktrees, never touching your checkout), `--parallel <N>` (parallel fetches). Repos
 must be clean and at their origin trunk tip, or they are visibly skipped — that precondition is
-the point.
+the point. The end of every run reconciles coverage for you: the skip tally is followed by one
+line per skipped repo carrying its **full receipt** (tracemap's dying words, redacted), and every
+ownership-assigned repo that produced no evidence this run gets an `absent <repo>: <cause>` line —
+`SKIPPED this run — <receipt> — re-run to recover` for a scanner failure, `NOT discovered this
+run` for an entry whose repo no longer exists under the repos root (stale — prune by hand if
+dead; the tool never removes assignments), plus out-of-scope/ignored shapes. A skipped repo and
+an "assigned but absent" warning are the same event seen from two sides; the run summary now says
+so in one place, so you never join the two lists by hand.
 
 ### Scoping a repos root you don't fully control
 

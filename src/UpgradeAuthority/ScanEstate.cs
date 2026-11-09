@@ -19,6 +19,12 @@ public static class ScanEstate
     // 0 disables the timer. Override with --git-timeout <seconds>.
     public static int GitTimeoutSeconds = 120;
 
+    // scanner-retry backoff (5s/15s: transients die on the second try without hammering the machine).
+    // Test seam: the selftest replaces this with an empty array so skip/retry paths run in real time —
+    // the 2026-11-08 absence-receipts case is the first coverage the retry armor ever had (the 20s
+    // stall made it untestable before). Production default restored by every non-test entry point.
+    internal static int[] ScanRetryDelaysMs = { 5000, 15000 };
+
     // every git call here is unattended: prompts disabled (fail fast) + bounded by the kill timer
     static int GitT(string cwd, string args, out string o, out string e) =>
         Push.Git(cwd, args, out o, out e, GitTimeoutSeconds, nonInteractive: true);
@@ -632,7 +638,7 @@ public static class ScanEstate
                 // worktree-add already has, applied to the scan itself). Satellite stays across attempts;
                 // every attempt's stderr tail is kept — the skip line names the last dying words.
                 var rc = 0; string? lastTail = null; var scanAttempts = 0;
-                var scanDelays = new[] { 5000, 15000 };
+                var scanDelays = ScanRetryDelaysMs; // test seam: the selftest zeroes this to exercise skip/retry paths without real-time stalls
                 while (true)
                 {
                     request.ScannerStderrTail = null;
@@ -1082,16 +1088,68 @@ public static class ScanEstate
         Console.Error.WriteLine($"estate: {nScan} scanned, {nReuse} reused, {nSkip} skipped, {nOos2} out-of-scope, {nIgn2} ignored → {tail}");
         if (nSkip > 0)
         {
-            // a skip tally, not a list: 89 scattered one-liners hide the shape that "37/126 scanned" makes obvious
-            // (live 2026-10-21: an active estate fetched fresh tips, in-place mode skipped every behind-tip/dirty checkout)
-            var reasons = entries.Where(e => e.Status == "skipped")
-                .GroupBy(e => (e.Reason ?? "unknown").Split('(')[0].Trim())
+            // a skip tally, not a bare list: 89 scattered one-liners hide the shape that "37/126 scanned" makes obvious
+            // (live 2026-10-21: an active estate fetched fresh tips, in-place mode skipped every behind-tip/dirty checkout).
+            // The tally is followed by ONE line per skipped repo carrying the FULL reason — the stderr tail rides it
+            // (redacted + bounded by TrimReason). Live 2026-11-08: the estate summary tallied "1x tracemap exited 1"
+            // while the dying words lived only in the manifest — a summary that drops the receipt sends the operator digging.
+            var skipped = entries.Where(e => e.Status == "skipped")
+                .OrderBy(e => e.Name, StringComparer.Ordinal).ToList();
+            var reasons = skipped.GroupBy(e => (e.Reason ?? "unknown").Split('(')[0].Trim())
                 .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal);
             Console.Error.WriteLine("skip reasons: " + string.Join("; ", reasons.Select(g => $"{g.Count()}x {g.Key}")));
-            Console.Error.WriteLine($"note: skipped repos are listed in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
+            foreach (var s in skipped.Take(15))
+                Console.Error.WriteLine($"  skipped {s.Name} — {s.Reason ?? "no reason recorded"}");
+            if (skipped.Count > 15)
+                Console.Error.WriteLine($"  …and {skipped.Count - 15} more skipped — full receipts in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
+            else
+                Console.Error.WriteLine($"note: full receipts in {Path.Combine(Path.GetFullPath(outDir), "scan-estate.v1.json")}");
         }
         if (nScan + nReuse < nSkip + nOos2 + nIgn2) // most of the estate did NOT make it in — an incomplete fixture must never read as success
             Console.Error.WriteLine($"warning: only {nScan + nReuse}/{entries.Count} repos have fresh evidence — the fixture is INCOMPLETE; fix the skip reasons above (behind-tip or dirty checkouts rescan cleanly under --worktree)");
+
+        // ---- coverage reconciliation: assigned-but-absent repos, WITH their causes (2026-11-08) ----
+        // Ownership.Update's "assigned but absent" warning fires mid-run with no cause attached;
+        // the manifest knows WHY each repo is missing. A skipped repo is recoverable (re-run);
+        // a repo with no manifest entry at all is stale (moved/renamed/retired). The operator must
+        // never join the two lists by hand (live 2026-11-08: one tracemap-exit-1 skip surfaced in
+        // BOTH lists with no linkage). Join identity: ownership keys are NormBasic(remoteUrl) forms
+        // (host/org/name) whose last segment is the repo folder name the manifest entry carries;
+        // mirror aliases keep the repo segment. Best-effort diagnostic — never evidence, never fails a run.
+        try
+        {
+            var own = File.Exists(ownershipPath)
+                ? JsonSerializer.Deserialize<OwnershipFile>(File.ReadAllText(ownershipPath), JsonOpts)
+                : null;
+            if (own is not null && own.Ownerships.Count > 0)
+            {
+                var absent = new List<string>();
+                foreach (var o in own.Ownerships)
+                {
+                    var key = Ingest.NormalizeRepoBasic(o.Repo);
+                    var entry = entries.FirstOrDefault(e =>
+                        key == e.Name || key.EndsWith("/" + e.Name, StringComparison.Ordinal));
+                    if (entry is null)
+                    {
+                        absent.Add($"absent {o.Repo}: NOT discovered this run — no scan-set entry (repo moved/renamed/retired, or outside the repos root) — assignment kept; prune by hand if dead (the tool never removes assignments)");
+                        continue;
+                    }
+                    if (entry.Status is "scanned" or "reused" or "rescan-bypassed") continue; // evidenced this run — nothing to reconcile
+                    absent.Add(entry.Status switch
+                    {
+                        "skipped" => $"absent {entry.Name}: SKIPPED this run — {entry.Reason ?? "no reason recorded"} — re-run to recover (assignment kept)",
+                        "out-of-scope" => $"absent {entry.Name}: out-of-scope this run — named+counted, never scanned (assignment kept)",
+                        "ignored" => $"absent {entry.Name}: ignored this run (assignment kept)",
+                        "rescan-bypassed-no-cache" => $"absent {entry.Name}: rescan-only bypass with NO cached scan — re-run without --rescan-only to recover (assignment kept)",
+                        _ => $"absent {entry.Name}: status '{entry.Status}' this run (assignment kept)",
+                    });
+                }
+                foreach (var line in absent.OrderBy(l => l, StringComparer.Ordinal)) Console.Error.WriteLine(line);
+                if (absent.Count > 0)
+                    Console.Error.WriteLine($"note: {absent.Count} ownership-assigned repo(s) had no evidence this run — each 'absent' line names its cause");
+            }
+        }
+        catch { /* ownership is optional; a failed reconciliation must never fail the run */ }
         if (ciHintsSnapshot is not null) { try { File.Delete(ciHintsSnapshot); } catch { /* best-effort */ } }
         return 0;
     }
