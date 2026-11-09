@@ -104,7 +104,7 @@ public static class ScanEstate
         string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
         bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
         int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false, string? ciHintsPath = null,
-        bool noFetch = false, string? rescanOnly = null)
+        bool noFetch = false, string? rescanOnly = null, bool neverFfOrPull = false)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
         if (updateCheckouts && noFetch)
@@ -290,6 +290,7 @@ public static class ScanEstate
             Console.Error.WriteLine($"estate: fetch phase done in {swFetch.ElapsedMilliseconds / 1000.0:0.#}s — {fetched.Count} fetched, {fetchFailures.Count} failed; next: freshness per repo, then scan-or-reuse (cached scans reuse instantly; movers rescan for real)");
         }
         var rescuedTo = new Dictionary<string, string>(StringComparer.Ordinal); // Baz r2: rescue provenance rides the single canonical entry
+        var pulledTo = new Dictionary<string, string>(StringComparer.Ordinal); // safe-pull provenance: name -> trunk fast-forwarded to (2026-11-08)
         void WriteManifest()
         {
             // Baz r3/r4: rescue provenance rides EVERY terminal state (reused entries, failure paths,
@@ -396,18 +397,61 @@ public static class ScanEstate
             else if (GitT(repoPath, $"rev-parse --verify {remoteRef}/dev", out _, out _) == 0) trunk = $"{remoteRef}/dev";
             else { entries.Add(Skip($"no {remoteRef}/main or {remoteRef}/dev branch (pass --trunk <branch> to override)")); continue; }
 
+            // ---- the safe-pull gates, one place (2026-11-08, Joe's ask) ----
+            // A checkout already ON the trunk branch and CLEAN fast-forwards in place by default:
+            // behind checkouts stop drifting, and a pulled repo scans IN PLACE (no satellite churn —
+            // the satellite it would have rebuilt every run was the symptom). Fail-closed: the flag,
+            // a feature branch, detached HEAD, a dirty tree, local commits ahead (non-ff), or an
+            // unreadable status all decline and fall back to today's path unchanged. Never rescues,
+            // never merges (ff-only), never touches a dirty tree — rescue stays --update-checkouts's
+            // explicit contract. Returns: null = PULLED (HEAD now at trunk, clean by construction);
+            // "" = already at tip (nothing to do — no note, no provenance); otherwise = decline reason.
+            string? TrySafePull()
+            {
+                if (neverFfOrPull) return "--never-ff-or-pull"; // the default does not exist; callers treat this as silent
+                GitT(repoPath, "rev-parse --abbrev-ref HEAD", out var brOut, out _);
+                var localTrunk = trunk[(remoteRef.Length + 1)..];
+                if (brOut.Trim() != localTrunk)
+                    return $"on '{brOut.Trim()}', trunk is '{localTrunk}'";
+                if (GitT(repoPath, "status --porcelain", out var pullDirty, out _) != 0)
+                    return "git status unreadable — pull refused rather than mutate an unverifiable tree";
+                if (pullDirty.Trim().Length > 0)
+                    return "working tree dirty";
+                GitT(repoPath, $"rev-list --count HEAD..{trunk}", out var behindOut, out _);
+                if (!int.TryParse(behindOut.Trim(), out var behind) || behind <= 0)
+                    return ""; // already at tip (or the count is unreadable — F5/F6 / ff-only decide the rest)
+                if (GitT(repoPath, $"merge --ff-only {trunk}", out _, out var pullFfErr) != 0)
+                    return $"fast-forward refused: {TrimReason(pullFfErr)}";
+                GitT(repoPath, "rev-parse HEAD", out var pulledHead, out _);
+                headSha = pulledHead.Trim();
+                return null;
+            }
+
             if (worktreeMode)
             {
-                // isolated scan: a satellite at the trunk tip — the operator's checkout is never touched.
-                // All worktrees live under <worktreeRoot>/ua/ (the shared-root namespace; SPEC-019 §3.2).
-                var wtRoot = Path.Combine(Path.GetFullPath(worktreeRoot ?? Path.Combine(outDir, ".worktrees")), "ua");
-                SweepWorktreeLeftovers(repoPath, wtRoot, name);
-                // The satellite is created INSIDE the bounded worker (Codex P1): materializing N worktrees
-                // in the sequential pass would defeat --parallel's disk bound. The sha needs no satellite:
-                GitT(repoPath, $"rev-parse {trunk}", out var tipWt, out _);
-                headSha = tipWt.Trim(); // the scanned sha is the trunk tip, not the checkout HEAD
-                worktreePath = Path.Combine(wtRoot, $"{name}-PENDING"); // real path minted by the worker
-                // F5/F6 do not apply: the satellite is pristine by construction; staleScan stays false
+                var pullNote = TrySafePull();
+                if (pullNote is null)
+                {
+                    pulledTo[name] = trunk;
+                    Console.Error.WriteLine($"pull   {name}: clean on-trunk checkout fast-forwarded to {trunk} — scanning in place (no satellite)");
+                    // in-place semantics from here: headSha == HEAD == tip, worktreePath stays null,
+                    // F5/F6 satisfied by construction (pulled = clean + at tip)
+                }
+                else
+                {
+                    if (pullNote.Length > 0 && pullNote != "--never-ff-or-pull") // "" = at tip: silent; the flag is the operator's own global choice: silent
+                        Console.Error.WriteLine($"note   {name}: no in-place pull ({pullNote}) — scanning a satellite worktree at {trunk}");
+                    // isolated scan: a satellite at the trunk tip — the operator's checkout is never touched.
+                    // All worktrees live under <worktreeRoot>/ua/ (the shared-root namespace; SPEC-019 §3.2).
+                    var wtRoot = Path.Combine(Path.GetFullPath(worktreeRoot ?? Path.Combine(outDir, ".worktrees")), "ua");
+                    SweepWorktreeLeftovers(repoPath, wtRoot, name);
+                    // The satellite is created INSIDE the bounded worker (Codex P1): materializing N worktrees
+                    // in the sequential pass would defeat --parallel's disk bound. The sha needs no satellite:
+                    GitT(repoPath, $"rev-parse {trunk}", out var tipWt, out _);
+                    headSha = tipWt.Trim(); // the scanned sha is the trunk tip, not the checkout HEAD
+                    worktreePath = Path.Combine(wtRoot, $"{name}-PENDING"); // real path minted by the worker
+                    // F5/F6 do not apply: the satellite is pristine by construction; staleScan stays false
+                }
             }
             else if (updateCheckouts)
             {
@@ -454,13 +498,27 @@ public static class ScanEstate
             }
             else
             {
-                // F5/F6, always evaluated: the outcome feeds the staleScan cache rule under --allow-stale
-                GitT(repoPath, $"rev-parse {trunk}", out var tipOut, out _);
-                var tip = tipOut.Trim();
-                if (tip != headSha)
-                    fail = $"HEAD {Sha7(headSha)} is not at {trunk} tip {Sha7(tip)}";
-                else if (GitT(repoPath, "status --porcelain", out var statusOut, out _) != 0 || statusOut.Trim().Length > 0)
-                    fail = "working tree not clean (uncommitted or untracked changes; --allow-stale to scan anyway)";
+                // the safe-pull default: behind + clean + on-trunk fast-forwards in place, converting
+                // the 2026-10-21 "in-place skipped every behind-tip checkout" pain into a fresh scan
+                var pullNote = TrySafePull();
+                if (pullNote is null)
+                {
+                    pulledTo[name] = trunk;
+                    Console.Error.WriteLine($"pull   {name}: clean on-trunk checkout fast-forwarded to {trunk} — scanning in place");
+                }
+                else if (pullNote.Length > 0)
+                {
+                    // F5/F6, always evaluated: the outcome feeds the staleScan cache rule under --allow-stale
+                    GitT(repoPath, $"rev-parse {trunk}", out var tipOut, out _);
+                    var tip = tipOut.Trim();
+                    if (tip != headSha)
+                        fail = $"HEAD {Sha7(headSha)} is not at {trunk} tip {Sha7(tip)}";
+                    else if (GitT(repoPath, "status --porcelain", out var statusOut, out _) != 0 || statusOut.Trim().Length > 0)
+                        fail = "working tree not clean (uncommitted or untracked changes; --allow-stale to scan anyway)";
+                }
+                // "" = at tip AND clean (both verified inside TrySafePull before it returns ""):
+                // fail stays null exactly as F5/F6 would have concluded — fresh by construction.
+                // The "--never-ff-or-pull" decline lands in the F5/F6 branch above, unchanged.
             }
             var staleWaived = fail is not null;
             if (fail is not null)
@@ -505,7 +563,8 @@ public static class ScanEstate
                 && meta.IndexDepsJson == indexDepsJson
                 && meta.IndexCiProducers == indexCiProducers
                 && Ord(meta.CiHintsSha256) == Ord(ciHintsSha)
-                && meta.ScanMode == (worktreeMode ? "worktree" : "in-place")
+                && ((meta.ScanMode == (worktreeMode && !pulledTo.ContainsKey(name) ? "worktree" : "in-place")) // a pulled repo scans in place THIS run; unpulled worktree repos expect satellite caches (2026-11-08 safe-pull)
+                    || (!staleWaived && meta.ScanMode is "worktree" or "in-place")) // clean-tip caches speak across production modes: a pulled repo's in-place cache must reuse on later worktree runs (content is identical at a clean tip — satellite-pristine vs clean-at-tip checkout; the StaleScan clause below already gates staleness, and stale-waived runs keep the exact-mode rule, review r5 parity)
                 && meta.Trunk == trunk
                 && Ord(meta.BuildFreshness) == Ord(freshnessNow)
                 && (worktreeMode || Ord(meta.DepsFingerprint) == Ord(fingerprintNow)) // in-place: a rebuild with same HEAD changes the fingerprint ⇒ rescan (SPEC-019 §6)
@@ -514,12 +573,17 @@ public static class ScanEstate
             if (reuse)
             {
                 Console.Error.WriteLine($"reuse  {name} (HEAD unchanged: {Sha7(headSha)})");
-                entries.Add(new ManifestEntry { Name = name, Status = "reused", CommitSha = headSha, BuildFreshness = meta!.BuildFreshness });
+                entries.Add(new ManifestEntry
+                {
+                    Name = name, Status = "reused", CommitSha = headSha, BuildFreshness = meta!.BuildFreshness,
+                    Reason = pulledTo.TryGetValue(name, out var ptR) ? $"checkout fast-forwarded to {ptR} in place (clean on-trunk pull)" : null, // pull provenance rides even a reused entry — the checkout MOVED this run
+                });
                 freshDirs.Add(scanDir);
                 continue;
             }
             var pending = new ManifestEntry { Name = name, Status = "scanned", CommitSha = headSha, BuildFreshness = freshnessNow }; // confirmed (or skipped) in pass 2
-            if (rescuedTo.TryGetValue(name, out var rb)) pending.Reason = $"dirty tree rescued to {rb} before refresh";
+            if (pulledTo.TryGetValue(name, out var ptP)) pending.Reason = $"checkout fast-forwarded to {ptP} in place (clean on-trunk pull)";
+            if (rescuedTo.TryGetValue(name, out var rb)) pending.Reason = pending.Reason is null ? $"dirty tree rescued to {rb} before refresh" : $"{pending.Reason}; dirty tree rescued to {rb} before refresh";
             entries.Add(pending);
             plannedScans.Add((pending, repoPath, headSha, staleWaived, worktreePath, freshnessNow, fingerprintNow, trunk));
         }

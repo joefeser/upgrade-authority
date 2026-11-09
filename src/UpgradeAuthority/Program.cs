@@ -272,15 +272,18 @@ public static class Program
                 if (reposRoot is null) { Console.Error.WriteLine("error: --repos-root <dir> is required"); return 1; }
                 if (outDirE is null) { Console.Error.WriteLine("error: --out <dir> is required (the estate working dir: scans/, sidecars, fixture/, plan.json, report.md)"); return 1; }
                 var noFetchFlag = Array.IndexOf(args, "--no-fetch") >= 0;
+                var neverFfOrPull = Array.IndexOf(args, "--never-ff-or-pull") >= 0;
                 var rescanOnlyOpt = GetOpt(args, "--rescan-only");
                 if (rescanOnlyOpt is null && Array.IndexOf(args, "--rescan-only") >= 0)
                 { Console.Error.WriteLine("error: --rescan-only requires a value (<repo folder name>)"); return 1; }
                 if (noFetchFlag && rescanOnlyOpt is not null)
                 { Console.Error.WriteLine("error: --no-fetch and --rescan-only are mutually exclusive — a one-repo refresh must fetch that repo's origin to know its trunk"); return 1; }
-                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson, GetOpt(args, "--archived"), indexCiProducers, GetOpt(args, "--ci-hints"), noFetchFlag, rescanOnlyOpt);
+                if (neverFfOrPull && updateCheckouts)
+                { Console.Error.WriteLine("error: --never-ff-or-pull and --update-checkouts are contradictory — one never touches the checkout, the other rescues and fast-forwards it in place"); return 1; }
+                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson, GetOpt(args, "--archived"), indexCiProducers, GetOpt(args, "--ci-hints"), noFetchFlag, rescanOnlyOpt, neverFfOrPull);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--index-ci-producers] [--ci-hints <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--never-ff-or-pull] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--index-ci-producers] [--ci-hints <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -1892,30 +1895,48 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-incremental: {ex.Message}"); }
 
-        // 3. freshness: behind repo skipped with reason; --allow-stale scans it
+        // 3. freshness: the safe-pull default rescues a behind+clean+on-trunk checkout (scanned in place);
+        // under --never-ff-or-pull the skip path is preserved exactly (skip reason, no scan, --allow-stale)
         try
         {
             var root3 = Path.Combine(Path.GetTempPath(), "ua-se3-" + Guid.NewGuid().ToString("N")[..8]);
             var out3 = Path.Combine(Path.GetTempPath(), "ua-se3-out-" + Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(root3);
             var gamma = EstateRepo(root3, "gamma");
-            // push ahead, then move the checkout back -> behind without dirtying
-            File.WriteAllText(Path.Combine(gamma, "ahead.txt"), "x");
-            Push.Git(gamma, "add -A", out _, out _);
-            Push.Git(gamma, "-c user.email=ua@test -c user.name=ua commit -qm ahead", out _, out _);
-            Push.Git(gamma, "push -q origin main", out _, out _);
-            Push.Git(gamma, "reset -q --hard HEAD~1", out _, out _);
-            if (ScanEstate.Run(Path.Combine(root3, "repos"), out3, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner) != 1) throw new Exception("all-skipped single-repo run must exit 1 (0 fresh)");
+            void MoveGammaBack()
+            {
+                // push ahead, then move the checkout back -> behind without dirtying
+                File.WriteAllText(Path.Combine(gamma, "ahead.txt"), "x");
+                Push.Git(gamma, "add -A", out _, out _);
+                Push.Git(gamma, "-c user.email=ua@test -c user.name=ua commit -qm ahead", out _, out _);
+                Push.Git(gamma, "push -q origin main", out _, out _);
+                Push.Git(gamma, "reset -q --hard HEAD~1", out _, out _);
+            }
+            MoveGammaBack();
+            var cap3 = new System.IO.StringWriter(); var savedErr3 = Console.Error;
+            Console.SetError(cap3);
+            var rc3 = ScanEstate.Run(Path.Combine(root3, "repos"), out3, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner);
+            Console.SetError(savedErr3);
+            if (rc3 != 0) throw new Exception($"behind+clean+on-trunk must be PULLED and scanned under the safe-pull default (exited {rc3})");
+            if (!cap3.ToString().Contains("pull   gamma")) throw new Exception("the safe-pull line must print for the rescued repo");
+            if (!File.Exists(Path.Combine(out3, "scans", "gamma", "facts.ndjson"))) throw new Exception("the pulled repo must be scanned");
+            // move gamma behind again; the flag restores the untouched-checkout contract: skip, not pull
+            MoveGammaBack();
+            var cap3b = new System.IO.StringWriter();
+            Console.SetError(cap3b);
+            var rc3b = ScanEstate.Run(Path.Combine(root3, "repos"), out3, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner, neverFfOrPull: true);
+            Console.SetError(savedErr3);
+            if (rc3b != 1) throw new Exception($"all-skipped single-repo run must exit 1 (0 fresh); got {rc3b}");
             using (var m3 = SEManifest(out3))
             {
                 var e3 = m3.RootElement.GetProperty("repos")[0];
                 if (e3.GetProperty("status").GetString() != "skipped" || !e3.GetProperty("reason").GetString()!.Contains("is not at origin/main tip"))
                     throw new Exception($"stale skip wrong: {e3.GetRawText()}");
             }
-            if (File.Exists(Path.Combine(out3, "scans", "gamma", "facts.ndjson"))) throw new Exception("stale repo must not be scanned");
-            if (ScanEstate.Run(Path.Combine(root3, "repos"), out3, null, null, "team-a", true, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner) != 0) throw new Exception("allow-stale run failed");
-            if (!File.Exists(Path.Combine(out3, "scans", "gamma", "facts.ndjson"))) throw new Exception("--allow-stale must scan the behind repo");
-            Console.WriteLine("ok   scan-estate-stale-skip (behind skipped w/ reason; --allow-stale scans)"); pass++;
+            if (cap3b.ToString().Contains("pull   gamma")) throw new Exception("--never-ff-or-pull must not pull");
+            var rc3c = ScanEstate.Run(Path.Combine(root3, "repos"), out3, null, null, "team-a", true, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner, neverFfOrPull: true);
+            if (rc3c != 0) throw new Exception("allow-stale run failed");
+            Console.WriteLine("ok   scan-estate-stale-skip (safe-pull rescues behind+clean by default; flag preserves the skip + --allow-stale path)"); pass++;
             ForceDelete(root3); ForceDelete(out3);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-stale-skip: {ex.Message}"); }
@@ -2183,6 +2204,87 @@ public static class Program
             ForceDelete(root7d); ForceDelete(out7d);
         }
         catch (Exception ex) { fail++; ScanEstate.ScanRetryDelaysMs = new[] { 5000, 15000 }; Console.WriteLine($"FAIL scan-estate-absence-receipts: {ex.Message}"); }
+
+        // 7e. the safe-pull default (2026-11-08, Joe's ask): a checkout already ON the trunk branch and
+        // CLEAN fast-forwards in place instead of churning a satellite worktree every run. Pins: pulled
+        // repo scans IN PLACE (ScanMode in-place, pull provenance on the entry, checkout at tip after);
+        // a dirty repo declines loudly and takes the satellite; an at-tip repo is never touched; the
+        // flag run pulls nothing; and run-2 REUSES the pulled repo's in-place cache on a worktree run
+        // (the cross-mode clean-tip rule — without it the pulled repo would rescan forever).
+        try
+        {
+            var root7e = Path.Combine(Path.GetTempPath(), "ua-se7e-" + Guid.NewGuid().ToString("N")[..8]);
+            var out7e = Path.Combine(Path.GetTempPath(), "ua-se7e-out-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(root7e);
+            EstateRepo(root7e, "alpha");
+            EstateRepo(root7e, "beta");
+            EstateRepo(root7e, "gamma");
+            void MakeBehind(string n, bool dirty)
+            {
+                var d = Path.Combine(root7e, "repos", n);
+                File.WriteAllText(Path.Combine(d, "forward.txt"), "advance the trunk");
+                Push.Git(d, "add -A", out _, out _);
+                Push.Git(d, "commit -q -m \"advance\"", out _, out _);
+                Push.Git(d, "push -q origin HEAD", out _, out _);
+                Push.Git(d, "reset -q --hard HEAD~1", out _, out _); // behind the trunk by one, clean
+                if (dirty) File.WriteAllText(Path.Combine(d, "stray.txt"), "untracked dirt"); // porcelain non-empty
+            }
+            MakeBehind("alpha", dirty: false);
+            MakeBehind("beta", dirty: true);
+            var cap7e = new System.IO.StringWriter(); var savedErr7e = Console.Error;
+            Console.SetError(cap7e);
+            var rc7e = ScanEstate.Run(Path.Combine(root7e, "repos"), out7e, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner, worktreeMode: true);
+            Console.SetError(savedErr7e);
+            if (rc7e != 0) throw new Exception($"run-1 exited {rc7e}");
+            var err7e = cap7e.ToString();
+            if (!err7e.Contains("pull   alpha: clean on-trunk checkout fast-forwarded to")) throw new Exception("alpha pull line missing");
+            if (!err7e.Contains("note   beta: no in-place pull (working tree dirty)")) throw new Exception("beta dirty-decline note missing");
+            if (err7e.Contains("pull   gamma")) throw new Exception("gamma is at tip — a pull line must not print");
+            if (err7e.Contains("note   gamma")) throw new Exception("gamma is at tip — no satellite note either");
+            Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse HEAD", out var alphaHead, out _);
+            Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse origin/main", out var alphaTip, out _); // trunk resolution: origin/main first
+            if (alphaHead.Trim() != alphaTip.Trim()) throw new Exception($"alpha checkout must sit at tip after the pull ({alphaHead.Trim()} vs {alphaTip.Trim()})");
+            var alphaMode = File.ReadAllText(Path.Combine(out7e, "scans", "alpha", "scan-estate.json"));
+            var betaMode = File.ReadAllText(Path.Combine(out7e, "scans", "beta", "scan-estate.json"));
+            if (!alphaMode.Contains("\"scanMode\":\"in-place\"")) throw new Exception($"pulled alpha must scan IN PLACE (satellite churn was the symptom): {alphaMode[..Math.Min(200, alphaMode.Length)]}");
+            if (!betaMode.Contains("\"scanMode\":\"worktree\"")) throw new Exception("declined beta must scan via satellite");
+            using (var m7e = SEManifest(out7e))
+            {
+                var r7e = m7e.RootElement.GetProperty("repos").EnumerateArray().ToDictionary(e => e.GetProperty("name").GetString(), e => (e.GetProperty("status").GetString(), e.TryGetProperty("reason", out var rr) ? rr.GetString() : null));
+                if (r7e["alpha"].Item1 != "scanned" || r7e["alpha"].Item2 is null || !r7e["alpha"].Item2.Contains("checkout fast-forwarded to")) throw new Exception("alpha manifest entry must carry pull provenance");
+                if (r7e["beta"].Item1 != "scanned") throw new Exception("beta (dirty, satellite) must still scan");
+            }
+            // run 2: alpha sits at tip now — its in-place cache must REUSE on this worktree run
+            var cap7e2 = new System.IO.StringWriter();
+            Console.SetError(cap7e2);
+            var rc7e2 = ScanEstate.Run(Path.Combine(root7e, "repos"), out7e, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner, worktreeMode: true);
+            Console.SetError(savedErr7e);
+            if (rc7e2 != 0) throw new Exception($"run-2 exited {rc7e2}");
+            if (!cap7e2.ToString().Contains("reuse  alpha")) throw new Exception("the pulled repo's in-place cache must reuse on the next worktree run (cross-mode clean-tip rule)");
+            // run 3: alpha behind AGAIN, --never-ff-or-pull — nothing pulls, satellite takes it
+            MakeBehind("alpha", dirty: false);
+            var cap7e3 = new System.IO.StringWriter();
+            Console.SetError(cap7e3);
+            var rc7e3 = ScanEstate.Run(Path.Combine(root7e, "repos"), out7e, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner, worktreeMode: true, neverFfOrPull: true);
+            Console.SetError(savedErr7e);
+            if (rc7e3 != 0) throw new Exception($"run-3 exited {rc7e3}");
+            if (cap7e3.ToString().Contains("pull   alpha")) throw new Exception("--never-ff-or-pull must suppress the in-place pull");
+            Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse HEAD", out var alphaHead3, out _);
+            if (alphaHead3.Trim() == alphaTip.Trim()) throw new Exception("the flag run must leave the behind checkout untouched");
+            // the contradictory pair is a typed refusal — at the CLI parse layer (ScanEstate.Run never sees it)
+            var exe7e = Environment.ProcessPath ?? throw new Exception("ProcessPath unavailable");
+            var psi7e = new System.Diagnostics.ProcessStartInfo(exe7e) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
+            psi7e.ArgumentList.Add("scan-estate"); psi7e.ArgumentList.Add("--repos-root"); psi7e.ArgumentList.Add(Path.Combine(root7e, "repos"));
+            psi7e.ArgumentList.Add("--out"); psi7e.ArgumentList.Add(Path.Combine(Path.GetTempPath(), "ua-se7e-refused-" + Guid.NewGuid().ToString("N")[..8]));
+            psi7e.ArgumentList.Add("--update-checkouts"); psi7e.ArgumentList.Add("--never-ff-or-pull");
+            string err7e4;
+            using (var p = System.Diagnostics.Process.Start(psi7e)!)
+            { p.StandardOutput.ReadToEnd(); err7e4 = p.StandardError.ReadToEnd(); p.WaitForExit(30000); }
+            if (!err7e4.Contains("contradictory")) throw new Exception("--never-ff-or-pull + --update-checkouts must refuse at the CLI layer");
+            Console.WriteLine("ok   scan-estate-safe-pull (clean on-trunk behind checkout fast-forwards in place; dirty declines to satellite; at-tip untouched; flag suppresses; contradictory pair refuses; pulled cache reuses cross-mode)"); pass++;
+            ForceDelete(root7e); ForceDelete(out7e);
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-safe-pull: {ex.Message}"); }
 
         // 8. alternates: two checkouts of one origin -> the later is visibly skipped; no-origin always skipped
         try

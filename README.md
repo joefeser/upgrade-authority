@@ -117,13 +117,20 @@ dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign    #
 ```
 
 Useful `scan-estate` flags the short form omits: `--update-checkouts` (fetch + fast-forward to
-trunk tip first — a behind checkout makes evidence stale twice over), `--index-deps-json --build`
+trunk tip first — a behind checkout makes evidence stale twice over; dirty trees are rescued to a
+`ua/rescue-*` branch, never dropped), `--worktree` (scan isolated worktrees, never touching your
+checkout), `--never-ff-or-pull` (restore that untouched-checkout contract; incompatible with
+`--update-checkouts`), `--index-deps-json --build`
 (closure evidence from build-output `deps.json` — converts "unknown" repos into answers; `--build`
 compiles each checkout, which restores from your configured NuGet feeds and **executes the repo's
-build scripts with your privileges — only point it at repos you trust**), `--worktree` (scan
-isolated worktrees, never touching your checkout), `--parallel <N>` (parallel fetches). Repos
-must be clean and at their origin trunk tip, or they are visibly skipped — that precondition is
-the point. The end of every run reconciles coverage for you: the skip tally is followed by one
+build scripts with your privileges — only point it at repos you trust**), `--parallel <N>`
+(parallel fetches). Repos must be clean and at their origin trunk tip, or they are visibly
+skipped — that precondition is the point. One default softens it: a checkout **already on the
+trunk branch and clean** that is merely behind is fast-forwarded in place (`merge --ff-only`,
+never a merge commit, never a rebase) and scanned in place — behind checkouts stop drifting and
+stop churning satellite worktrees every run. Anything else (dirty tree, feature branch, detached
+HEAD, local commits ahead) declines with a one-line note and takes the old path; every pull is
+recorded in the run manifest as `checkout fast-forwarded to <trunk> in place`. The end of every run reconciles coverage for you: the skip tally is followed by one
 line per skipped repo carrying its **full receipt** (tracemap's dying words, redacted), and every
 ownership-assigned repo that produced no evidence this run gets an `absent <repo>: <cause>` line —
 `SKIPPED this run — <receipt> — re-run to recover` for a scanner failure, `NOT discovered this
