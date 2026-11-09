@@ -134,7 +134,13 @@ trunk branch and clean** scans in place — fast-forwarded first if it is merely
 Behind checkouts stop drifting and stop churning satellite worktrees every run; a satellite is
 materialized only for repos the gates actually decline (dirty tree, feature branch, detached
 HEAD, local commits ahead) — each with a one-line note why. Every pull is recorded in the run
-manifest as `checkout fast-forwarded to <trunk> in place`. The end of every run reconciles coverage for you: the skip tally is followed by one
+manifest as `checkout fast-forwarded to <trunk> in place`. **The one exposed path, learned live
+(2026-11-09): in-place mode without `--worktree` scans YOUR CHECKOUT AS-IS — a local branch ahead
+of origin, working-tree edits, experiment changes, all of it. Evidence reads LOCAL HEAD, not
+origin** (with `--allow-stale` a behind/dirty checkout is scanned rather than skipped, same rule).
+If the checkout carries anything origin doesn't, the registry describes your workbench, not the
+estate. `--worktree` (or `--always-worktree`) is the protection: the scan always runs on a
+satellite frozen at the origin tip, and local state is invisible by construction. The end of every run reconciles coverage for you: the skip tally is followed by one
 line per skipped repo carrying its **full receipt** (tracemap's dying words, redacted), and every
 ownership-assigned repo that produced no evidence this run gets an `absent <repo>: <cause>` line —
 `SKIPPED this run — <receipt> — re-run to recover` for a scanner failure, `NOT discovered this

@@ -21,6 +21,10 @@ dotnet $ua scan-estate --repos-root <repos-root> `
   --tracemap C:\tracemap\src\dotnet\TraceMap.Cli\bin\Release\net10.0\tracemap.dll `
   --scope <repos-root>\repos.txt `
   --out C:\ua-estate --parallel 8 --worktree *> C:\ua-estate\scan-run-log.txt
+# WARNING (live 2026-11-09): WITHOUT --worktree, in-place scans YOUR CHECKOUT AS-IS —
+#        local commits ahead of origin, working-tree edits, experiment changes: the evidence
+#        reads LOCAL HEAD, not origin (and --allow-stale turns would-be skips into exactly
+#        these scans). Run the loop in --worktree mode so evidence always means origin tip.
 # notes: a ci-hints.v1.json sidecar in the OUT DIR enables the ci producer lane by itself
 #        (loud notes both ways); a non-zero tracemap exit retries 3x with backoff, and the
 #        skip line carries tracemap's stderr tail — silence is never the answer shape;
