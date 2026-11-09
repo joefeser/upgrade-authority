@@ -273,6 +273,8 @@ public static class Program
                 if (outDirE is null) { Console.Error.WriteLine("error: --out <dir> is required (the estate working dir: scans/, sidecars, fixture/, plan.json, report.md)"); return 1; }
                 var noFetchFlag = Array.IndexOf(args, "--no-fetch") >= 0;
                 var neverFfOrPull = Array.IndexOf(args, "--never-ff-or-pull") >= 0;
+                var alwaysWorktree = Array.IndexOf(args, "--always-worktree") >= 0;
+                if (alwaysWorktree) worktreeMode = true; // the flag means what it says: implies worktree mode (the worktree+update-checkouts refusal then covers the contradictory pair)
                 var rescanOnlyOpt = GetOpt(args, "--rescan-only");
                 if (rescanOnlyOpt is null && Array.IndexOf(args, "--rescan-only") >= 0)
                 { Console.Error.WriteLine("error: --rescan-only requires a value (<repo folder name>)"); return 1; }
@@ -280,10 +282,10 @@ public static class Program
                 { Console.Error.WriteLine("error: --no-fetch and --rescan-only are mutually exclusive — a one-repo refresh must fetch that repo's origin to know its trunk"); return 1; }
                 if (neverFfOrPull && updateCheckouts)
                 { Console.Error.WriteLine("error: --never-ff-or-pull and --update-checkouts are contradictory — one never touches the checkout, the other rescues and fast-forwards it in place"); return 1; }
-                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson, GetOpt(args, "--archived"), indexCiProducers, GetOpt(args, "--ci-hints"), noFetchFlag, rescanOnlyOpt, neverFfOrPull);
+                return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson, GetOpt(args, "--archived"), indexCiProducers, GetOpt(args, "--ci-hints"), noFetchFlag, rescanOnlyOpt, neverFfOrPull, alwaysWorktree);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--never-ff-or-pull] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--index-ci-producers] [--ci-hints <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--always-worktree] [--never-ff-or-pull] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--index-ci-producers] [--ci-hints <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -2222,7 +2224,7 @@ public static class Program
             void MakeBehind(string n, bool dirty)
             {
                 var d = Path.Combine(root7e, "repos", n);
-                File.WriteAllText(Path.Combine(d, "forward.txt"), "advance the trunk");
+                File.WriteAllText(Path.Combine(d, "forward.txt"), "advance " + Guid.NewGuid().ToString("N")); // unique content: the commit must actually happen or the tip never moves and later runs reuse instead of rescan
                 Push.Git(d, "add -A", out _, out _);
                 Push.Git(d, "commit -q -m \"advance\"", out _, out _);
                 Push.Git(d, "push -q origin HEAD", out _, out _);
@@ -2238,7 +2240,7 @@ public static class Program
             if (rc7e != 0) throw new Exception($"run-1 exited {rc7e}");
             var err7e = cap7e.ToString();
             if (!err7e.Contains("pull   alpha: clean on-trunk checkout fast-forwarded to")) throw new Exception("alpha pull line missing");
-            if (!err7e.Contains("note   beta: no in-place pull (working tree dirty)")) throw new Exception("beta dirty-decline note missing");
+            if (!err7e.Contains("note   beta: no in-place scan (working tree dirty)")) throw new Exception("beta dirty-decline note missing");
             if (err7e.Contains("pull   gamma")) throw new Exception("gamma is at tip — a pull line must not print");
             if (err7e.Contains("note   gamma")) throw new Exception("gamma is at tip — no satellite note either");
             Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse HEAD", out var alphaHead, out _);
@@ -2263,6 +2265,7 @@ public static class Program
             if (!cap7e2.ToString().Contains("reuse  alpha")) throw new Exception("the pulled repo's in-place cache must reuse on the next worktree run (cross-mode clean-tip rule)");
             // run 3: alpha behind AGAIN, --never-ff-or-pull — nothing pulls, satellite takes it
             MakeBehind("alpha", dirty: false);
+            Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse HEAD", out var alphaHeadBefore3, out _);
             var cap7e3 = new System.IO.StringWriter();
             Console.SetError(cap7e3);
             var rc7e3 = ScanEstate.Run(Path.Combine(root7e, "repos"), out7e, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner, worktreeMode: true, neverFfOrPull: true);
@@ -2270,7 +2273,18 @@ public static class Program
             if (rc7e3 != 0) throw new Exception($"run-3 exited {rc7e3}");
             if (cap7e3.ToString().Contains("pull   alpha")) throw new Exception("--never-ff-or-pull must suppress the in-place pull");
             Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse HEAD", out var alphaHead3, out _);
-            if (alphaHead3.Trim() == alphaTip.Trim()) throw new Exception("the flag run must leave the behind checkout untouched");
+            if (alphaHead3.Trim() != alphaHeadBefore3.Trim()) throw new Exception("the flag run must leave the behind checkout untouched (HEAD must not move)");
+            // run 5: --always-worktree — the pull still fires (default posture freshens the checkout)
+            // but EVERY scan runs on a frozen satellite: snapshot atomicity on demand (Joe, 2026-11-09)
+            MakeBehind("alpha", dirty: false);
+            var cap7e5 = new System.IO.StringWriter();
+            Console.SetError(cap7e5);
+            var rc7e5 = ScanEstate.Run(Path.Combine(root7e, "repos"), out7e, null, null, "team-a", false, Array.Empty<string>(), "Newtonsoft.Json", "12.0.3", "13.0.3", StubScanner, worktreeMode: true, alwaysWorktree: true);
+            Console.SetError(savedErr7e);
+            if (rc7e5 != 0) throw new Exception($"always-worktree run exited {rc7e5}");
+            if (!cap7e5.ToString().Contains("pull   alpha")) throw new Exception("--always-worktree must keep the safe-pull (it only changes where the scan runs)");
+            var alphaMode5 = File.ReadAllText(Path.Combine(out7e, "scans", "alpha", "scan-estate.json"));
+            if (!alphaMode5.Contains("\"scanMode\":\"worktree\"")) throw new Exception("--always-worktree must scan every repo on a satellite (alpha was clean and eligible)");
             // the contradictory pair is a typed refusal — at the CLI parse layer (ScanEstate.Run never sees it)
             var exe7e = Environment.ProcessPath ?? throw new Exception("ProcessPath unavailable");
             var psi7e = new System.Diagnostics.ProcessStartInfo(exe7e) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };
@@ -2281,7 +2295,7 @@ public static class Program
             using (var p = System.Diagnostics.Process.Start(psi7e)!)
             { p.StandardOutput.ReadToEnd(); err7e4 = p.StandardError.ReadToEnd(); p.WaitForExit(30000); }
             if (!err7e4.Contains("contradictory")) throw new Exception("--never-ff-or-pull + --update-checkouts must refuse at the CLI layer");
-            Console.WriteLine("ok   scan-estate-safe-pull (clean on-trunk behind checkout fast-forwards in place; dirty declines to satellite; at-tip untouched; flag suppresses; contradictory pair refuses; pulled cache reuses cross-mode)"); pass++;
+            Console.WriteLine("ok   scan-estate-safe-pull (clean on-trunk repo scans in place — pulled if behind, silent if at tip; dirty declines to satellite; flag suppresses; --always-worktree keeps pulls but freezes every scan; contradictory pair refuses; pulled cache reuses cross-mode)"); pass++;
             ForceDelete(root7e); ForceDelete(out7e);
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL scan-estate-safe-pull: {ex.Message}"); }

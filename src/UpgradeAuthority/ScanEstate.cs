@@ -104,7 +104,7 @@ public static class ScanEstate
         string? deltaPackage, string? deltaOld, string? deltaNew, Func<ScanRequest, int>? scanner = null,
         bool updateCheckouts = false, bool worktreeMode = false, string? worktreeRoot = null, string? trunkOverride = null,
         int parallel = 2, bool build = false, bool indexDepsJson = false, string? archivedPath = null, bool indexCiProducers = false, string? ciHintsPath = null,
-        bool noFetch = false, string? rescanOnly = null, bool neverFfOrPull = false)
+        bool noFetch = false, string? rescanOnly = null, bool neverFfOrPull = false, bool alwaysWorktree = false)
     {
         if (!Directory.Exists(reposRoot)) { Console.Error.WriteLine($"error: --repos-root directory not found: {reposRoot}"); return 1; }
         if (updateCheckouts && noFetch)
@@ -429,18 +429,31 @@ public static class ScanEstate
 
             if (worktreeMode)
             {
+                // TWO INDEPENDENT DECISIONS: (1) the safe-pull — pull iff eligible (the default
+                // posture freshens the checkout; --never-ff-or-pull suppresses it entirely); the pull
+                // prints regardless of where the scan runs. (2) where the scan runs — in place iff the
+                // checkout is verified tip content AND --always-worktree didn't claim snapshot
+                // atomicity (Joe, 2026-11-09: an editor or agent touching the checkout mid-scan must
+                // not mix states into the facts — the flag sends EVERY repo to a satellite, silently,
+                // like the never-flag); the satellite is pristine by construction, so a scan is always
+                // a point-in-time snapshot of exactly the recorded tip.
                 var pullNote = TrySafePull();
+                var scanInPlace = !alwaysWorktree && (pullNote is null || pullNote.Length == 0);
                 if (pullNote is null)
                 {
                     pulledTo[name] = trunk;
-                    Console.Error.WriteLine($"pull   {name}: clean on-trunk checkout fast-forwarded to {trunk} — scanning in place (no satellite)");
-                    // in-place semantics from here: headSha == HEAD == tip, worktreePath stays null,
-                    // F5/F6 satisfied by construction (pulled = clean + at tip)
+                    Console.Error.WriteLine(alwaysWorktree
+                        ? $"pull   {name}: clean on-trunk checkout fast-forwarded to {trunk} (scan frozen on a satellite by --always-worktree)"
+                        : $"pull   {name}: clean on-trunk checkout fast-forwarded to {trunk} — scanning in place (no satellite)");
                 }
-                else
+                if (!scanInPlace)
                 {
-                    if (pullNote.Length > 0 && pullNote != "--never-ff-or-pull") // "" = at tip: silent; the flag is the operator's own global choice: silent
-                        Console.Error.WriteLine($"note   {name}: no in-place pull ({pullNote}) — scanning a satellite worktree at {trunk}");
+                    if (!alwaysWorktree && pullNote is not null && pullNote != "--never-ff-or-pull")
+                        Console.Error.WriteLine($"note   {name}: no in-place scan ({pullNote}) — scanning a satellite worktree at {trunk}");
+                    // at-tip ("") under the default posture: silent — it's the common case, and the
+                    // scanning line itself shows the in-place shape; narrating every clean repo every
+                    // run would be the noise the estate-visibility rule warns against. Declines and
+                    // global flags are likewise silent-by-choice or note-with-reason above.
                     // isolated scan: a satellite at the trunk tip — the operator's checkout is never touched.
                     // All worktrees live under <worktreeRoot>/ua/ (the shared-root namespace; SPEC-019 §3.2).
                     var wtRoot = Path.Combine(Path.GetFullPath(worktreeRoot ?? Path.Combine(outDir, ".worktrees")), "ua");
@@ -452,6 +465,8 @@ public static class ScanEstate
                     worktreePath = Path.Combine(wtRoot, $"{name}-PENDING"); // real path minted by the worker
                     // F5/F6 do not apply: the satellite is pristine by construction; staleScan stays false
                 }
+                // in-place: headSha == HEAD == tip (pulled or verified at-tip), worktreePath stays
+                // null, F5/F6 satisfied by construction (clean + at tip, both verified by TrySafePull)
             }
             else if (updateCheckouts)
             {
