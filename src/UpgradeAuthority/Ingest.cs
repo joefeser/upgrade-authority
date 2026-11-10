@@ -568,6 +568,7 @@ public static class Ingest
         // the SAME package even at the same version (the loser is noted, never silently dropped); two
         // versions inside ONE source remain the scan contradicting itself.
         var dedupedScan = new List<ProducerEntry>();
+        var conventionPrecedenceCount = 0; // the parallel-claims norm: both claims versionless, ci wins the class rank (2026-11-10 — counted, not warned: the wall was the noise)
         foreach (var g in producedProducers.GroupBy(p => (NormBasic(p.Repo), p.PackageId.ToLowerInvariant())))
         {
             int ProvRank(string? prov) => prov switch { "ci-defined" => 0, _ => 1 }; // ci-defined first AMONG CONFLICTS (equal evidence)
@@ -595,6 +596,15 @@ public static class Ingest
                     : loser.ProducedVersion is null && ProvRank(loser.Provenance) > ProvRank(winner.Provenance)
                         ? "the losing project claim carries no version (not a conflict)"
                         : "operator sidecar still wins over both at merge (SPEC-020 §2)";
+                if (loser.ProducedVersion is null && ProvRank(loser.Provenance) > ProvRank(winner.Provenance))
+                {
+                    // the parallel-claims NORM (2026-11-10): every hinted repo's package carries both
+                    // claims, ci wins the class rank — warning each one was a wall of the expected
+                    // outcome (live: Joe's ingest log). Counted once below; the genuinely notable
+                    // shapes (the inversion, operator wins) stay loud per-package.
+                    conventionPrecedenceCount++;
+                    continue;
+                }
                 Console.Error.WriteLine($"warning: producer precedence for {Esc(NormBasic(winner.Repo))}/{Esc(winner.PackageId)} — {Esc(winner.Provenance!)} '{Esc(winner.ProducedVersion ?? "unevidenced")}' kept over {Esc(loser.Provenance!)} '{Esc(loser.ProducedVersion ?? "unevidenced")}'; {why}");
             }
             // the self-contradiction check runs PER SOURCE CLASS (PR7 Codex r1): a losing provenance that is
@@ -647,6 +657,8 @@ public static class Ingest
                 dedupedScan.Add(new ProducerEntry { Repo = winner.Repo, PackageId = winner.PackageId, ProducedVersion = null, EvidenceNote = shadow.EvidenceNote, Provenance = shadow.Provenance });
         }
         producedProducers = dedupedScan;
+        if (conventionPrecedenceCount > 0)
+            Console.Error.WriteLine($"note: {conventionPrecedenceCount} package(s) resolved ci-defined over project-declared per class precedence (both claims versionless — the parallel-claims norm; no information lost, the losers are absorbed)");
 
         if (multiDirMissing.Count > 0 || !producerSatisfiedByScan)
         {
