@@ -8,6 +8,9 @@ iteration — see the traps at the bottom).
 ## The loop (RUN ORDER)
 
 ```powershell
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8   # FIRST — PS 5.1 without this decodes UTF-8
+$OutputEncoding = [System.Text.Encoding]::UTF8             #   tool output as legacy OEM codepage and
+                                                           #   mangles →/—/box chars into odd glyphs
 $ua = "src/UpgradeAuthority/bin/Release/net10.0/ua.dll"   # build first: dotnet build src/UpgradeAuthority -c Release
 
 # 0) tracemap — pull dev, rebuild, PROVE the dll is fresh (a stale dll re-scans nothing and lies)
@@ -171,6 +174,12 @@ you don't know the configuration — the honest refusal stands.
 
 ## PowerShell 5.1 traps (all paid for live)
 
+- Encoding: PS 5.1 redirects (`>`, `*>`) and the console decode UTF-8 tool output with
+  the legacy OEM codepage — arrows, dashes, and box-drawing chars arrive as mojibake
+  (the "odd chars" in captured logs and census output). Fix at session start:
+  `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8`.
+  Better: prefer the tool's `--out` (canonical bytes, encoding-independent) over
+  redirection wherever one exists.
 - `(no-match).Line` is `$null` — a collected array of results contains nulls
   that explode on method calls. Guard: `if ($m) { $m.Line }`.
 - An array's `.Length` is its ELEMENT COUNT, not characters —
