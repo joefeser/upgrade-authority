@@ -56,6 +56,44 @@ dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json
 (Get-Content C:\ua-estate\registry.json -Raw | ConvertFrom-Json).boundary.unknownPackages.Count
 ```
 
+## Part 2 — the campaign (after the registry reads true)
+
+The scan loop proves the estate; the campaign moves it. Both halves read the same
+`C:\ua-estate\fixture` — no re-scan between them. Steps 1–3 above keep the evidence
+current; steps 4–7 execute one upgrade at a time (V0 plans ONE package delta).
+
+# 4) the delta — the ONE upgrade the campaign plans around. Three sources (README
+#    "Where the delta comes from"): hand-write the six lines into C:\ua-estate\delta.json,
+#    --delta-package/--delta-old/--delta-new bootstrapped the template on first run (swap in
+#    real values), or drift --emit-deltas generates candidates from feed truth.
+#    With the delta in place, RE-RUN the ingest so the fixture carries it (seconds —
+#    the original full-run carriers, every one):
+dotnet $ua ingest --scans-root C:\ua-estate\scans --scope <repos-root>\repos.txt `
+  --producer C:\ua-estate\producer-evidence.v0.json `
+  --ownership C:\ua-estate\ownership.v0.json `
+  --archived C:\ua-estate\archived.v0.json --out C:\ua-estate\fixture
+# (omit --delta / --archived only if the estate genuinely has none — an explicit path
+#  that does not exist is refused)
+
+# 5) plan + report — who moves, in what order, uncertainty visible. READ the report before
+#    anything touches a repo: waves, affected/unknown split, per-repo findings.
+dotnet $ua plan C:\ua-estate\fixture --out C:\ua-estate\plan.json
+dotnet $ua report C:\ua-estate\fixture --out C:\ua-estate\report.md
+
+# 6) apply — plan edit sites → verified patches. EVERY site is re-checked against the
+#    actual checkout (package id + attribute + old version must match, in one place);
+#    drifted evidence refuses rather than overwrites. Run it for the checkout you point at:
+dotnet $ua apply C:\ua-estate\fixture --repo <repo-checkout> --out C:\ua-estate\patches
+
+# 7) push — branch + gated commit per edit-bearing wave, optional PR. ONE REPO CHECKOUT
+#    PER PUSH RUN: a plan whose edits span multiple repos is split by running apply/push
+#    per repo (per-repo plan filtering is not yet a command). ua NEVER merges — a human does.
+#    --dry-run shows the push plan without touching git:
+dotnet $ua push C:\ua-estate\fixture --repo <repo-checkout> --base main --dry-run
+dotnet $ua push C:\ua-estate\fixture --repo <repo-checkout> --base main --pr
+# waves execute in the plan's order (producer before consumer); report-only waves carry
+# plan-level information in the PR body and have nothing to commit in that repo.
+
 ## One-repo refresh (the fast path)
 
 Refresh exactly one repo's scan, then rebuild the FULL estate fixture. The other
