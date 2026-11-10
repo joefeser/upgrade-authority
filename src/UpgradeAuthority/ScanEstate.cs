@@ -115,6 +115,12 @@ public static class ScanEstate
         { Console.Error.WriteLine("error: --parallel requires a value in 1..64"); return 1; }
         if (GitT(reposRoot, "--version", out _, out _) != 0)
         { Console.Error.WriteLine("error: git not found on PATH (required for freshness checks)"); return 1; }
+        // the run header: start time + a stopwatch, so every log carries WHEN it ran and the
+        // footer can state HOW LONG (live 2026-11-10, Joe: "a start time in the beginning and
+        // time stats at the end along with things that are bad")
+        var runStart = DateTime.UtcNow;
+        var runClock = System.Diagnostics.Stopwatch.StartNew();
+        Console.Error.WriteLine($"estate: scan started {runStart:u} — repos {Path.GetFullPath(reposRoot)}, out {Path.GetFullPath(outDir)}");
         // scope is read ONCE, here: the parsed form filters this run and the exact bytes are
         // snapshotted for ingest (§4.4) — a file replaced mid-run can never split the evidence
         string? scopeText = null;
@@ -1187,6 +1193,7 @@ public static class ScanEstate
         if (nScan + nReuse < nSkip + nOos2 + nIgn2) // most of the estate did NOT make it in — an incomplete fixture must never read as success
             Console.Error.WriteLine($"warning: only {nScan + nReuse}/{entries.Count} repos have fresh evidence — the fixture is INCOMPLETE; fix the skip reasons above (behind-tip or dirty checkouts rescan cleanly under --worktree)");
 
+        var absentReconciledCount = 0; // feeds the footer's attention line (the reconciliation fills it)
         // ---- coverage reconciliation: assigned-but-absent repos, WITH their causes (2026-11-08) ----
         // Ownership.Update's "assigned but absent" warning fires mid-run with no cause attached;
         // the manifest knows WHY each repo is missing. A skipped repo is recoverable (re-run);
@@ -1224,11 +1231,21 @@ public static class ScanEstate
                     });
                 }
                 foreach (var line in absent.OrderBy(l => l, StringComparer.Ordinal)) Console.Error.WriteLine(line);
+                absentReconciledCount = absent.Count;
                 if (absent.Count > 0)
                     Console.Error.WriteLine($"note: {absent.Count} ownership-assigned repo(s) had no evidence this run — each 'absent' line names its cause");
             }
         }
         catch { /* ownership is optional; a failed reconciliation must never fail the run */ }
+        // the footer: elapsed + the consolidated attention line — the LAST thing the operator reads
+        // (live 2026-11-10, Joe: "things that are bad" gathered in one place; details live above)
+        var attention = new List<string>();
+        if (nSkip > 0) attention.Add($"{nSkip} skipped");
+        if (absentReconciledCount > 0) attention.Add($"{absentReconciledCount} assigned-but-absent");
+        if (nScan + nReuse < nSkip + nOos2 + nIgn2) attention.Add("fixture INCOMPLETE");
+        Console.Error.WriteLine(runClock.Elapsed.TotalSeconds < 1
+            ? $"estate: scan finished in {runClock.ElapsedMilliseconds}ms — " + (attention.Count > 0 ? $"{attention.Count} thing(s) need attention: {string.Join("; ", attention)} (details above)" : "nothing needs attention")
+            : $"estate: scan finished in {runClock.Elapsed.TotalSeconds:0.#}s — " + (attention.Count > 0 ? $"{attention.Count} thing(s) need attention: {string.Join("; ", attention)} (details above)" : "nothing needs attention"));
         if (ciHintsSnapshot is not null) { try { File.Delete(ciHintsSnapshot); } catch { /* best-effort */ } }
         return 0;
     }

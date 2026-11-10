@@ -110,7 +110,7 @@ public static class Report
             if (p.Uncertainty.Contradictions.Count > 0)
             {
                 sb.Append('\n').Append("### Contradictions").Append('\n');
-                foreach (var c in p.Uncertainty.Contradictions)
+                foreach (var c in p.Uncertainty.Contradictions.OrderBy(c => c.Id, StringComparer.Ordinal))
                 {
                     sb.Append("- ").Append(c.Id).Append(" (").Append(Text(c.Subject)).Append("): claims by ")
                       .Append(string.Join(", ", c.Claims.Select(x => $"{Text(x.Repo)} ({Text(x.PackageId)})"))).Append("; downstream provisional: ")
@@ -120,13 +120,15 @@ public static class Report
             if (p.Uncertainty.Gaps.Count > 0)
             {
                 sb.Append('\n').Append("### Gaps").Append('\n');
-                foreach (var g in p.Uncertainty.Gaps)
+                // alphabetical by subject then detail: the section must be byte-stable across runs so
+                // an operator's diff tool shows only REAL changes (live 2026-11-10, Joe's Beyond Compare)
+                foreach (var g in p.Uncertainty.Gaps.OrderBy(g => g.Subject, StringComparer.Ordinal).ThenBy(g => g.Detail, StringComparer.Ordinal))
                     sb.Append("- **").Append(Text(g.Subject)).Append("**: ").Append(Text(g.Detail)).Append('\n');
             }
             if (p.Uncertainty.Findings is { Count: > 0 })
             {
                 sb.Append('\n').Append("### Findings").Append('\n');
-                foreach (var f in p.Uncertainty.Findings)
+                foreach (var f in p.Uncertainty.Findings.OrderBy(f => f.Subject, StringComparer.Ordinal).ThenBy(f => f.Detail, StringComparer.Ordinal))
                     sb.Append("- **").Append(Text(f.Subject)).Append("**: ").Append(Text(f.Detail)).Append('\n');
             }
         }
