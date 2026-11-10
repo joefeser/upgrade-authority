@@ -23,6 +23,36 @@ Expected after 0.4.7/0.4.8:
   (0.4.7's one-project-one-identity).
 - An UNFAMILIAR kind = a finding — bring the kind name and one repo.
 
+## CI-LANE GAP DETAILS — repo + kind + reason, the validity read (2026-11-10)
+
+What it answers: for the two actionable ci-lane families, WHICH repo, WHICH refusal
+shape, and the workflow file — so the operator can judge each gap valid or a hole.
+Read back per line: the repo name + the message's leading clause (the refusal family).
+Employer paths in the output stay on your screen — read me the family, not the paths.
+
+```powershell
+Get-ChildItem C:\ua-estate\scans -Directory | ForEach-Object {
+  $repo = $_.Name
+  $f = Join-Path $_.FullName 'facts.ndjson'
+  if (-not (Test-Path $f)) { return }
+  $m = Select-String $f -Pattern '"gapKind":\s*"(ci-hint-id-unevidenced|ci-producer-id-unevidenced)"'
+  if ($m) {
+    foreach ($line in @($m)) {
+      try {
+        $j = $line.Line | ConvertFrom-Json
+        "$repo | $($j.properties.gapKind) | $($j.properties.workflowPath) | $($j.properties.message)"
+      } catch { "$repo | unparseable gap line" }
+    }
+  }
+}
+```
+
+Verdicts so far:
+- ci-producer-id-unevidenced (2x): targetless pack calls — the hint-flags spec
+  (`pack: "solution"`) is the designed fix; not a bug.
+- ci-hint-id-unevidenced (5x): per-repo refusal families unknown until this script runs.
+  Valid refusals = permanent honest gaps; a shared unexpected shape = a derivation hole.
+
 ## The estate scan loop
 
 docs/RUNBOOK.md (Part 1: scan → census → registry; Part 2: delta → plan → report →
