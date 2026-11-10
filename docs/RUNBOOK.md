@@ -147,6 +147,15 @@ $j = Get-Content C:\ua-estate\ci-hints.v1.json -Raw | ConvertFrom-Json
 The file enables the ci producer lane automatically when present in the scan
 out dir; `--index-ci-producers` forces it on with no sidecar.
 
+**Optional per-entry field — `configuration` (tracemap 0.4.10+):** if a repo's
+conditioned identity group (e.g. an Alt.* variant under a `ReleaseBench` condition) is
+hiding an otherwise-resolvable head identity, add `"configuration": "Release"` to that
+workflow's entry — the operator assertion of the configuration the shared workflow packs
+at (the shared workflow itself lives in another repo, so the scanner cannot read it).
+tracemap 0.4.10 then releases provably-false branches and resolves the head identity
+(the direct `-c` pack argument works with no flag at all). Leave the field OFF where
+you don't know the configuration — the honest refusal stands.
+
 ## Failure reading
 
 - `skip <repo> (tracemap exited N after M attempt(s): <stderr tail>)` — the
