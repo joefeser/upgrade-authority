@@ -110,7 +110,7 @@ dotnet $ua scan-estate --repos-root C:\repos --out C:\ua-estate `
 
 # 3) the boundary and the extras (each is optional, each reads the fixture dir; each needs a
 #    truth file YOU provide — ua never fetches):
-dotnet $ua registry C:\ua-estate\fixture                 # internal / external / unknown boundary (no inputs needed)
+dotnet $ua registry C:\ua-estate\fixture                 # internal / external / unknown boundary (no inputs needed; --out <file> writes registry.v1 to a file, stdout without it)
 dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json     # YOU write/export this: the versions your feed serves
 dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json   # YOU write/export this: operator rows or an OSV/GHSA export
 dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign    # per-wave packets + campaign manifest
@@ -210,7 +210,7 @@ dotnet $ua ingest --scans-root C:\ua-estate\scans `
 # plan/report PRINT to the console by default; --out writes the file:
 dotnet $ua plan C:\ua-estate\fixture --out C:\ua-estate\plan.json
 dotnet $ua report C:\ua-estate\fixture --out C:\ua-estate\report.md
-dotnet $ua registry C:\ua-estate\fixture
+dotnet $ua registry C:\ua-estate\fixture --out C:\ua-estate\registry.json   # or omit --out to print to stdout
 dotnet $ua drift C:\ua-estate\fixture --feed feed-versions.v1.json --out C:\ua-estate\drift.json
 dotnet $ua audit C:\ua-estate\fixture --advisories advisory-versions.v1.json --out C:\ua-estate\audit.json
 dotnet $ua export-campaign C:\ua-estate\fixture --out C:\ua-estate\campaign
@@ -260,7 +260,7 @@ missing. Three ways to get a `delta.json`:
 | `ua ingest` | Converts tracemap scan output (facts.ndjson + scan-manifest.json) into planner inputs. Multi-repo; `--scans-root <dir>` ingests a whole scans tree in one command; `--scope <file>` filters discovery with a visible scope statement in the plan. |
 | `ua ownership init/update` | Generates and maintains the ownership file (which team owns each repo) from the scan set — the last hand-maintained input. `scan-estate` bootstraps and maintains it for you on first run; the standalone command exists for the piecewise path. |
 | `ua drift` | Outdated discovery: compares the estate's installed versions (lockfile rows + exact pins) against feed truth — a `feed-versions.v1` file or a flat folder feed of `*.nupkg` names — and emits a canonical `drift.v1` report (behind / current / ahead / unclassified / unknown-feed) plus single-change delta candidates (`--emit-deltas`). Never fetches live ("stated, not verified live"); classification shares apply's comparer, so drift can never disagree with the upgrade-only policy. |
-| `ua registry` | The producer registry: assembles every package the estate produces (with provenance — `project-declared` from scan `PackageProduced` facts, `operator-declared` from the sidecar override layer, `ci-defined` from CI-workflow pack definitions) and cross-references everything the estate consumes against it — canonical `registry.v1` output: `internalPackages` / `externalPackages` / `unknownPackages` (consumed but neither produced nor declared — the honest residue, never defaulted) plus `anomalies.producedAndDeclaredExternal` (both at once — surfaced, never silently resolved). No feed lookups: "not-in-registry = not-ours" is stated, not verified live. |
+| `ua registry` | The producer registry: assembles every package the estate produces (with provenance — `project-declared` from scan `PackageProduced` facts, `operator-declared` from the sidecar override layer, `ci-defined` from CI-workflow pack definitions) and cross-references everything the estate consumes against it — canonical `registry.v1` output: `internalPackages` / `externalPackages` / `unknownPackages` (consumed but neither produced nor declared — the honest residue, never defaulted) plus `anomalies.producedAndDeclaredExternal` (both at once — surfaced, never silently resolved). No feed lookups: "not-in-registry = not-ours" is stated, not verified live. Supports `--out <file>` / `-o` to write the canonical `registry.v1` JSON to a file instead of stdout. |
 `ua plan` | The impact plan: three-state repo classification (affected / not-affected / unknown), waves with statuses and prerequisites, findings (evidenced version disagreements inside a repo). Byte-deterministic; `--out <file>` writes canonical bytes directly (PowerShell 5.1-safe). |
 | `ua report` | Markdown rendering of the plan — waves, gates, evidence, gaps, findings, scan-health notes. `--out <file>` writes canonical bytes directly. |
 | `ua apply` | Derives edit sites from evidence (direct pins, CPM central pins, `VersionOverride`, packages.config), applies the upgrade-only policy (never downgrades), verifies each site against a checkout, emits per-wave unified diffs. |
