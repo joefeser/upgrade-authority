@@ -2246,10 +2246,10 @@ public static class Program
             Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse HEAD", out var alphaHead, out _);
             Push.Git(Path.Combine(root7e, "repos", "alpha"), "rev-parse origin/main", out var alphaTip, out _); // trunk resolution: origin/main first
             if (alphaHead.Trim() != alphaTip.Trim()) throw new Exception($"alpha checkout must sit at tip after the pull ({alphaHead.Trim()} vs {alphaTip.Trim()})");
-            var alphaMode = File.ReadAllText(Path.Combine(out7e, "scans", "alpha", "scan-estate.json"));
-            var betaMode = File.ReadAllText(Path.Combine(out7e, "scans", "beta", "scan-estate.json"));
-            if (!alphaMode.Contains("\"scanMode\":\"in-place\"")) throw new Exception($"pulled alpha must scan IN PLACE (satellite churn was the symptom): {alphaMode[..Math.Min(200, alphaMode.Length)]}");
-            if (!betaMode.Contains("\"scanMode\":\"worktree\"")) throw new Exception("declined beta must scan via satellite");
+            var alphaMode = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(out7e, "scans", "alpha", "scan-estate.json"))); // parse, never raw-text: the per-repo files are now indented (operator-opened)
+            var betaMode = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(out7e, "scans", "beta", "scan-estate.json")));
+            if (alphaMode?["scanMode"]?.GetValue<string>() != "in-place") throw new Exception($"pulled alpha must scan IN PLACE (satellite churn was the symptom): {alphaMode?["scanMode"]?.GetValue<string>()}");
+            if (betaMode?["scanMode"]?.GetValue<string>() != "worktree") throw new Exception("declined beta must scan via satellite");
             using (var m7e = SEManifest(out7e))
             {
                 var r7e = m7e.RootElement.GetProperty("repos").EnumerateArray().ToDictionary(e => e.GetProperty("name").GetString(), e => (e.GetProperty("status").GetString(), e.TryGetProperty("reason", out var rr) ? rr.GetString() : null));
@@ -2283,8 +2283,8 @@ public static class Program
             Console.SetError(savedErr7e);
             if (rc7e5 != 0) throw new Exception($"always-worktree run exited {rc7e5}");
             if (!cap7e5.ToString().Contains("pull   alpha")) throw new Exception("--always-worktree must keep the safe-pull (it only changes where the scan runs)");
-            var alphaMode5 = File.ReadAllText(Path.Combine(out7e, "scans", "alpha", "scan-estate.json"));
-            if (!alphaMode5.Contains("\"scanMode\":\"worktree\"")) throw new Exception("--always-worktree must scan every repo on a satellite (alpha was clean and eligible)");
+            var alphaMode5 = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(out7e, "scans", "alpha", "scan-estate.json")));
+            if (alphaMode5?["scanMode"]?.GetValue<string>() != "worktree") throw new Exception("--always-worktree must scan every repo on a satellite (alpha was clean and eligible)");
             // the contradictory pair is a typed refusal — at the CLI parse layer (ScanEstate.Run never sees it)
             var exe7e = Environment.ProcessPath ?? throw new Exception("ProcessPath unavailable");
             var psi7e = new System.Diagnostics.ProcessStartInfo(exe7e) { RedirectStandardOutput = true, UseShellExecute = false, RedirectStandardError = true };

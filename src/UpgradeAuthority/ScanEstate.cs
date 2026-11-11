@@ -784,7 +784,11 @@ public static class ScanEstate
                         {
                             var mNode = JsonNode.Parse(File.ReadAllText(manifestPathW));
                             if (mNode?["repoName"]?.GetValue<string>() == leaf) mNode["repoName"] = entry.Name;
-                            File.WriteAllText(manifestPathW, mNode?.ToJsonString() ?? File.ReadAllText(manifestPathW));
+                            // the per-repo manifest is an operator-opened file (one-repo debugging): indent it —
+                            // ToJsonString() defaults to single-line (review 2026-11-10: "pretty print scan-estate
+                            // and any other you missed"). Readers parse; nothing digests these bytes.
+                            File.WriteAllText(manifestPathW, mNode?.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
+                                ?? File.ReadAllText(manifestPathW));
                         }
                         catch (JsonException) { /* unparseable manifest is the scanner's problem; left as-is */ }
                     }
@@ -797,7 +801,7 @@ public static class ScanEstate
                     Trunk = resolvedTrunk, // recorded RESOLVED so --trunk main == auto-detect (§6)
                 };
                 File.WriteAllText(Path.Combine(tmp, "scan-estate.json"),
-                    JsonSerializer.Serialize(meta, JsonOpts).ReplaceLineEndings("\n") + "\n");
+                    JsonSerializer.Serialize(meta, WriteOpts).ReplaceLineEndings("\n") + "\n"); // WriteOpts (indented): the per-repo CacheMeta is operator-opened (vintage/CacheMeta debugging); readers Deserialize, never byte-compare
                 var old = Path.Combine(scansDir, "." + entry.Name + ".old-" + Guid.NewGuid().ToString("N")[..8]);
                 try
                 {
