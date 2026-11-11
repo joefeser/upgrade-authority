@@ -40,6 +40,19 @@ per package how far it can go **on that TFM**, show the human, let them peg, the
    **Ceiling derivation**: a repo on TFM `t` can take the max version whose TFMs are
    compatible with `t`. The live proof: an internal package shipping 15.0.x (net10.0 only)
    and 13.0.2 (net8.0) caps net8 repos at 13.0.2 while net10 repos take 15.0.4.
+   **Probe selection rule (V1, from the work-proven tool)**: probe latest-per-major + every
+   in-use version + event-driven versions (patch-day targets); `allVersionsSimple` lists the
+   rest cheaply. Per-version records are also the defense against the silent-TFM-bump
+   failure: a package that retargets net10 **without bumping its major** (14.0.4 net10-only
+   while consumers stay net8) is invisible to net8 repos — the ceiling simply stays at the
+   last compatible version, automatically. **V2 backlog: a content hash per cached version**
+   (republish detection — when a version's bytes change underneath its number) **and the
+   internal level-cascade checks** (packages are layered 1–5; the plan flags level
+   misalignment — "level 3 pinned 15.0.2 while its dependency moved to 15.0.4" — and treats
+   pegs on internal packages as a smell: the policy is trust the cascade, don't pin APIs to
+   lower levels). **Patch day is the headline scenario for surface 2**: a .NET security
+   release means the whole chain updates — on the order of a hundred-fifty PRs in two days,
+   which is exactly `update --all-max` + the existing push machinery.
 2. **`pegs.v0`** — master (org-shared) + estate override. Three shapes: **exact** ("pegged at
    13.0.3"), **maxExclusive** (`< 4.20` — Moq), **forceMax** (LiteBus). Estate config may
    tighten a master peg, never loosen one. **No cross-package peer ranges** — not npm's
