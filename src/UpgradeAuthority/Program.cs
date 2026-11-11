@@ -166,6 +166,19 @@ public static class Program
                 else WriteArtifactFile(outFileR2, canonicalR2);
                 return 0;
             }
+            if (args.Length >= 1 && args[0] == "discover-max")
+            {
+                // the compatibility cache: probe .nupkg files (lib/** = the supported TFMs) into
+                // the per-package cache format — docs/UPGRADE-PLAN-DESIGN.md. V1 probe source =
+                // a local folder (the drift folder-feed shape); remote feeds ride later.
+                int? badDm = ValueFlagError(args, "--from-folder", "--out", "--package");
+                if (badDm is not null) { Console.Error.WriteLine($"error: {args[badDm.Value]} requires a value"); return 1; }
+                var folderDm = GetOpt(args, "--from-folder");
+                var outDirDm = GetOpt(args, "--out");
+                if (folderDm is null || outDirDm is null)
+                { Console.Error.WriteLine("error: discover-max requires --from-folder <nupkg-dir> and --out <cache-dir>"); return 1; }
+                return CompatCache.ProbeFolder(folderDm, outDirDm, GetOpt(args, "--package"));
+            }
             if (args.Length >= 2 && args[0] == "export-packet")
             {
                 // SPEC-023: a plan wave as a HACP v0.3-candidate task packet (the seam slice)
@@ -4275,6 +4288,87 @@ public static class Program
             Console.WriteLine("ok   crlf-guard (fixtures + testdata working tree is LF-clean)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL crlf-guard: {ex.Message}"); }
+
+        // ---- the upgrade-plan layer: pegs + the compatibility cache (docs/UPGRADE-PLAN-DESIGN.md) ----
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "ua-upgradeplan-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(root);
+            var pegsDir = Path.Combine(root, "pegs"); Directory.CreateDirectory(pegsDir);
+            File.WriteAllText(Path.Combine(pegsDir, "master.json"),
+                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"maxExclusive","version":"4.20.0","note":"no telemetry"},{"packageName":"UASamples.Messaging","kind":"forceMax","version":"15.0.0"},{"packageName":"Contoso.Paid","kind":"exact","version":"6.5.0"}]}""");
+            File.WriteAllText(Path.Combine(pegsDir, "estate.json"),
+                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"maxExclusive","version":"4.19.2"}]}""");
+            var merged = Pegs.Merge(Pegs.Load(Path.Combine(pegsDir, "master.json")), Pegs.Load(Path.Combine(pegsDir, "estate.json")));
+            var tracking = merged.ByPackage["Contoso.Tracking"];
+            if (tracking.BoundKind != "maxExclusive" || tracking.BoundVersion != "4.19.2")
+                throw new Exception($"estate must tighten the master ceiling (got {tracking.BoundKind} {tracking.BoundVersion})");
+            var paid = merged.ByPackage["Contoso.Paid"];
+            if (paid.BoundKind != "exact" || paid.BoundVersion != "6.5.0") throw new Exception("master exact peg must pass through untouched");
+            var messaging = merged.ByPackage["UASamples.Messaging"];
+            if (messaging.FloorVersion != "15.0.0" || messaging.BoundKind is not null) throw new Exception("forceMax resolves as a floor, not a bound");
+            File.WriteAllText(Path.Combine(pegsDir, "loose.json"),
+                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"maxExclusive","version":"4.25.0"}]}""");
+            var loosened = false;
+            try { Pegs.Merge(Pegs.Load(Path.Combine(pegsDir, "master.json")), Pegs.Load(Path.Combine(pegsDir, "loose.json"))); }
+            catch (InvalidDataException ex) { loosened = ex.Message.Contains("LOOSEN"); }
+            if (!loosened) throw new Exception("an estate peg above the master ceiling must be a typed LOOSEN refusal");
+            File.WriteAllText(Path.Combine(pegsDir, "at-ceiling.json"),
+                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"exact","version":"4.19.2"}]}""");
+            var atCeiling = Pegs.Merge(Pegs.Load(Path.Combine(pegsDir, "master.json")), Pegs.Load(Path.Combine(pegsDir, "at-ceiling.json")));
+            if (atCeiling.ByPackage["Contoso.Tracking"].BoundVersion != "4.19.2") throw new Exception("an exact peg at the ceiling must resolve");
+
+            // the cache: per-TFM ceiling — the silent-TFM-bump defense in miniature
+            var cacheDir = Path.Combine(root, "compat-cache"); Directory.CreateDirectory(cacheDir);
+            var cache = new CompatCacheFile
+            {
+                Id = "UASamples.Component",
+                TotalVersionsAvailable = 4,
+                AllVersionsSimple = ["15.0.4", "15.0.3", "13.0.2", "13.0.1"],
+                Versions =
+                [
+                    new CompatVersion { Version = "15.0.4", TargetFrameworks = ["net10.0"], IsLatestForMajor = true },
+                    new CompatVersion { Version = "15.0.3", TargetFrameworks = ["net10.0"] },
+                    new CompatVersion { Version = "13.0.2", TargetFrameworks = ["net8.0"], IsLatestForMajor = true },
+                ],
+            };
+            Program.WriteArtifactFile(CompatCache.CachePath(cacheDir, "UASamples.Component"), JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true }));
+            var loaded = CompatCache.Load(cacheDir, "UASamples.Component") ?? throw new Exception("cache file must reload");
+            var net8 = CompatCache.Ceiling(loaded, "net8.0", null, null);
+            var net10 = CompatCache.Ceiling(loaded, "net10.0", null, null);
+            if (net8 != "13.0.2" || net10 != "15.0.4")
+                throw new Exception($"per-TFM ceiling wrong: net8={net8} (want 13.0.2), net10={net10} (want 15.0.4)");
+            var pegged = CompatCache.Ceiling(loaded, "net10.0", Pegs.KindMaxExclusive, "15.0.4");
+            if (pegged != "15.0.3") throw new Exception($"maxExclusive must exclude the bound version itself (got {pegged})");
+            var hardCapped = CompatCache.Ceiling(loaded, "net10.0", Pegs.KindMaxExclusive, "15.0.3");
+            if (hardCapped != "13.0.2") throw new Exception($"a bound drops every version at-or-above it, across majors (got {hardCapped})");
+            var (allowedMax, floorBroken, _) = CompatCache.AllowedMax(loaded, "net8.0", new Pegs.Resolved("UASamples.Component", null, null, "15.0.0"));
+            if (allowedMax != "13.0.2" || !floorBroken) throw new Exception($"a forceMax floor above the TFM ceiling must be a typed violation (got max={allowedMax}, broken={floorBroken})");
+            var (stdMax, _, _) = CompatCache.AllowedMax(loaded, "net8.0", null);
+            if (stdMax != "13.0.2") throw new Exception($"peg-less resolution is the plain ceiling (got {stdMax})");
+
+            // discover-max: probe a folder of synthesized nupkgs (lib/** = the TFMs), then read the ceiling back
+            var feedDir = Path.Combine(root, "nupkg-feed"); Directory.CreateDirectory(feedDir);
+            foreach (var (version, tfms) in new[] { ("13.0.2", new[] { "net8.0" }), ("15.0.4", new[] { "net10.0" }) })
+            {
+                var nupkgPath = Path.Combine(feedDir, $"contoso.sample.{version}.nupkg");
+                using (var zip = System.IO.Compression.ZipFile.Open(nupkgPath, System.IO.Compression.ZipArchiveMode.Create))
+                    foreach (var tfm in tfms)
+                    {
+                        zip.CreateEntry($"lib/{tfm}/lib.dll");
+                        zip.CreateEntry($"lib/{tfm}/contoso.sample.xml");
+                    }
+            }
+            var probeCacheDir = Path.Combine(root, "probed-cache"); Directory.CreateDirectory(probeCacheDir);
+            if (CompatCache.ProbeFolder(feedDir, probeCacheDir, null) != 0) throw new Exception("discover-max probe exited non-zero");
+            var probed = CompatCache.Load(probeCacheDir, "Contoso.Sample") ?? throw new Exception("probed cache file missing");
+            if (probed.TotalVersionsAvailable != 2 || probed.Versions.Count != 2) throw new Exception($"probe must inspect both versions (got {probed.Versions.Count}/{probed.TotalVersionsAvailable})");
+            if (CompatCache.Ceiling(probed, "net8.0", null, null) != "13.0.2") throw new Exception("probed ceiling must respect the per-version TFMs from the zip lib/ folders");
+            if (CompatCache.Ceiling(probed, "net10.0", null, null) != "15.0.4") throw new Exception("probed net10 ceiling wrong");
+
+            Console.WriteLine("ok   upgrade-plan-layer (pegs merge tighten/loosen-refuse/forceMax; per-TFM ceiling incl. the silent-TFM-bump defense; peg bounds; discover-max folder probe)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL upgrade-plan-layer: {ex.Message}"); }
 
         Console.WriteLine(fail == 0 ? $"SELFTEST PASS ({pass} cases)" : $"SELFTEST FAIL ({fail} failing)");
         return fail == 0 ? 0 : 1;
