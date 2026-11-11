@@ -171,13 +171,70 @@ public static class Program
                 // the compatibility cache: probe .nupkg files (lib/** = the supported TFMs) into
                 // the per-package cache format — docs/UPGRADE-PLAN-DESIGN.md. V1 probe source =
                 // a local folder (the drift folder-feed shape); remote feeds ride later.
-                int? badDm = ValueFlagError(args, "--from-folder", "--out", "--package");
+                // --join-fixture fills usedVersions/usedByRepos/InUse from the fixture's live
+                // pins (the estate join); probing NEVER destroys those joins, and the join
+                // never rewrites probed records.
+                int? badDm = ValueFlagError(args, "--from-folder", "--out", "--package", "--join-fixture");
                 if (badDm is not null) { Console.Error.WriteLine($"error: {args[badDm.Value]} requires a value"); return 1; }
                 var folderDm = GetOpt(args, "--from-folder");
+                var joinDm = GetOpt(args, "--join-fixture");
                 var outDirDm = GetOpt(args, "--out");
-                if (folderDm is null || outDirDm is null)
-                { Console.Error.WriteLine("error: discover-max requires --from-folder <nupkg-dir> and --out <cache-dir>"); return 1; }
-                return CompatCache.ProbeFolder(folderDm, outDirDm, GetOpt(args, "--package"));
+                if (outDirDm is null || (folderDm is null && joinDm is null))
+                { Console.Error.WriteLine("error: discover-max requires --out <cache-dir> and at least one of --from-folder <nupkg-dir> / --join-fixture <fixture-dir>"); return 1; }
+                if (folderDm is not null)
+                {
+                    var rcProbe = CompatCache.ProbeFolder(folderDm, outDirDm!, GetOpt(args, "--package"));
+                    if (rcProbe != 0) return rcProbe;
+                }
+                if (joinDm is not null) return Upgrade.Join(outDirDm!, joinDm!);
+                return 0;
+            }
+            if (args.Length >= 1 && args[0] == "update")
+            {
+                // surface 1 (the daily driver): every live pin in ONE repo → its allowedMax
+                // (pegs + compat ceiling per the repo's evidenced TFMs, cross-major in scope,
+                // never a downgrade). Plan mode is the default; --apply executes the edits
+                // under the apply law (stale/ambiguous refusals, never a guess).
+                foreach (var f in new[] { "--repo", "--repos-root", "--cache", "--pegs", "--estate-pegs", "--out", "-o" })
+                {
+                    int? badU = ValueFlagError(args, f);
+                    if (badU is not null) { Console.Error.WriteLine($"error: {args[badU.Value]} requires a value"); return 1; }
+                }
+                var fixtureU = args.Length >= 2 ? args[1] : null;
+                var repoU = GetOpt(args, "--repo");
+                var reposRootU = GetOpt(args, "--repos-root");
+                var cacheU = GetOpt(args, "--cache");
+                if (fixtureU is null || repoU is null || cacheU is null)
+                { Console.Error.WriteLine("error: update requires <fixture-dir>, --repo <name>, and --cache <dir> (--repos-root only needed for --apply)"); return 1; }
+                if (args.Contains("-keep-dot-net") || args.Contains("--keep-dot-net"))
+                    Console.Error.WriteLine("note: -keep-dot-net is the only V0 behavior — package pins move, TFMs are never touched");
+                var (rcU, textU) = Upgrade.Update(new Upgrade.UpdateOptions(
+                    fixtureU, repoU, reposRootU ?? "", cacheU, GetOpt(args, "--pegs"), GetOpt(args, "--estate-pegs"),
+                    args.Contains("--apply"), GetOpt(args, "--out") ?? GetOpt(args, "-o"), args.Contains("--update-dot-net"))); // --keep-dot-net IS the V0 behavior; accepted below for muscle memory
+                if (rcU != 0) return rcU;
+                var outWriterU = outWriter;
+                if (GetOpt(args, "--out") is { } outFileU) WriteArtifactFile(outFileU, textU!);
+                else WriteCanonical(() => Console.Write(textU), outWriterU);
+                return 0;
+            }
+            if (args.Length >= 2 && args[0] == "upgrade-plan")
+            {
+                // surface 2 (the estate view): per TFM group × package — pins observed,
+                // potentialMax, allowedMax (pegs + compat), status, license-shift flags.
+                // Read-only; pegs are the only editable artifact in this layer.
+                foreach (var f in new[] { "--cache", "--pegs", "--estate-pegs", "--out", "-o" })
+                {
+                    int? badV = ValueFlagError(args, f);
+                    if (badV is not null) { Console.Error.WriteLine($"error: {args[badV.Value]} requires a value"); return 1; }
+                }
+                var cacheV = GetOpt(args, "--cache");
+                if (cacheV is null)
+                { Console.Error.WriteLine("error: upgrade-plan requires --cache <dir>"); return 1; }
+                var (rcV, textV) = Upgrade.View(new Upgrade.ViewOptions(args[1], cacheV, GetOpt(args, "--pegs"), GetOpt(args, "--estate-pegs"), GetOpt(args, "--out") ?? GetOpt(args, "-o")));
+                if (rcV != 0) return rcV;
+                if (GetOpt(args, "--out") is { } outFileV) WriteArtifactFile(outFileV, textV!);
+                else WriteCanonical(() => Console.Write(textV), outWriter);
+                return 0;
             }
             if (args.Length >= 2 && args[0] == "export-packet")
             {
@@ -298,7 +355,7 @@ public static class Program
                 return ScanEstate.Run(reposRoot, outDirE, tracemap, scopeOpt, selfOpt, allowStale, excludes.ToArray(), dP, dO, dN, null, updateCheckouts, worktreeMode, GetOpt(args, "--worktree-root"), GetOpt(args, "--trunk"), parallel, buildFlag, indexDepsJson, GetOpt(args, "--archived"), indexCiProducers, GetOpt(args, "--ci-hints"), noFetchFlag, rescanOnlyOpt, neverFfOrPull, alwaysWorktree);
             }
             if (args.Length >= 1 && args[0] == "selftest") return SelfTest(args.Length > 1 ? args[1] : FindRepoRoot("fixtures"));
-                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--always-worktree] [--never-ff-or-pull] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--index-ci-producers] [--ci-hints <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
+                Console.Error.WriteLine("usage: ua plan|report <fixture-dir> [--out <file>] | ua registry <fixture-dir> [--out <file>] | ua drift <fixture-dir> (--feed <file> | --folder-feed <dir>) [--emit-deltas <dir>] [--out <file>] | ua audit <fixture-dir> --advisories <file> [--out <file>] | ua export-packet <fixture-dir> --wave <N> [--out <file>] | ua export-campaign <fixture-dir> --out <dir> | ua scan-estate --repos-root <dir> --out <dir> [--tracemap <dll>] [--self <teamId>] [--scope <file>] [--allow-stale] [--update-checkouts] [--worktree [--worktree-root <dir>]] [--always-worktree] [--never-ff-or-pull] [--trunk <branch>] [--index-deps-json] [--build] [--parallel <N>] [--git-timeout <s>] [--archived <file>] [--index-ci-producers] [--ci-hints <file>] [--exclude <glob>]... [--delta-package <id> --delta-old <v> --delta-new <v>] | ua ingest <tracemap-dir>... --out <fixture-dir> [--scans-root <dir>] [--scope <file>] | ua ownership init|update ... [--scope <file>] | ua update <fixture-dir> --repo <name> --cache <dir> [--repos-root <dir>] [--pegs <file>] [--estate-pegs <file>] [--apply] [--out <file>] | ua upgrade-plan <fixture-dir> --cache <dir> [--pegs <file>] [--estate-pegs <file>] [--out <file>] | ua discover-max (--from-folder <dir> | --join-fixture <fixture-dir>) --out <cache-dir> [--package <id>] | ua apply <fixture-dir> [--repo <path>] [--out <dir>] | ua push <fixture-dir> --base <branch> [--repo <path>] [--out <dir>] [--pr] [--dry-run] | ua selftest [fixtures-root]");
             return 2;
         }
         catch (UaException ex) { Console.Error.WriteLine(ex.Message); return 3; }
@@ -4296,9 +4353,9 @@ public static class Program
             Directory.CreateDirectory(root);
             var pegsDir = Path.Combine(root, "pegs"); Directory.CreateDirectory(pegsDir);
             File.WriteAllText(Path.Combine(pegsDir, "master.json"),
-                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"maxExclusive","version":"4.20.0","note":"no telemetry"},{"packageName":"UASamples.Messaging","kind":"forceMax","version":"15.0.0"},{"packageName":"Contoso.Paid","kind":"exact","version":"6.5.0"}]}""");
+                "{\"schemaVersion\":\"pegs.v0\",\"pegs\":[{\"packageName\":\"Contoso.Tracking\",\"kind\":\"maxExclusive\",\"version\":\"4.20.0\",\"note\":\"no telemetry\"},{\"packageName\":\"UASamples.Messaging\",\"kind\":\"forceMax\",\"version\":\"15.0.0\"},{\"packageName\":\"Contoso.Paid\",\"kind\":\"exact\",\"version\":\"6.5.0\"}]}");
             File.WriteAllText(Path.Combine(pegsDir, "estate.json"),
-                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"maxExclusive","version":"4.19.2"}]}""");
+                "{\"schemaVersion\":\"pegs.v0\",\"pegs\":[{\"packageName\":\"Contoso.Tracking\",\"kind\":\"maxExclusive\",\"version\":\"4.19.2\"}]}");
             var merged = Pegs.Merge(Pegs.Load(Path.Combine(pegsDir, "master.json")), Pegs.Load(Path.Combine(pegsDir, "estate.json")));
             var tracking = merged.ByPackage["Contoso.Tracking"];
             if (tracking.BoundKind != "maxExclusive" || tracking.BoundVersion != "4.19.2")
@@ -4308,13 +4365,13 @@ public static class Program
             var messaging = merged.ByPackage["UASamples.Messaging"];
             if (messaging.FloorVersion != "15.0.0" || messaging.BoundKind is not null) throw new Exception("forceMax resolves as a floor, not a bound");
             File.WriteAllText(Path.Combine(pegsDir, "loose.json"),
-                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"maxExclusive","version":"4.25.0"}]}""");
+                "{\"schemaVersion\":\"pegs.v0\",\"pegs\":[{\"packageName\":\"Contoso.Tracking\",\"kind\":\"maxExclusive\",\"version\":\"4.25.0\"}]}");
             var loosened = false;
             try { Pegs.Merge(Pegs.Load(Path.Combine(pegsDir, "master.json")), Pegs.Load(Path.Combine(pegsDir, "loose.json"))); }
             catch (InvalidDataException ex) { loosened = ex.Message.Contains("LOOSEN"); }
             if (!loosened) throw new Exception("an estate peg above the master ceiling must be a typed LOOSEN refusal");
             File.WriteAllText(Path.Combine(pegsDir, "at-ceiling.json"),
-                """{"schemaVersion":"pegs.v0","pegs":[{"packageName":"Contoso.Tracking","kind":"exact","version":"4.19.2"}]}""");
+                "{\"schemaVersion\":\"pegs.v0\",\"pegs\":[{\"packageName\":\"Contoso.Tracking\",\"kind\":\"exact\",\"version\":\"4.19.2\"}]}");
             var atCeiling = Pegs.Merge(Pegs.Load(Path.Combine(pegsDir, "master.json")), Pegs.Load(Path.Combine(pegsDir, "at-ceiling.json")));
             if (atCeiling.ByPackage["Contoso.Tracking"].BoundVersion != "4.19.2") throw new Exception("an exact peg at the ceiling must resolve");
 
@@ -4369,6 +4426,131 @@ public static class Program
             Console.WriteLine("ok   upgrade-plan-layer (pegs merge tighten/loosen-refuse/forceMax; per-TFM ceiling incl. the silent-TFM-bump defense; peg bounds; discover-max folder probe)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL upgrade-plan-layer: {ex.Message}"); }
+
+        // ---- slice 2: the estate join, the update driver, the estate view ----
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "ua-upgradeplan2-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(root);
+            var cacheDir2 = Path.Combine(root, "cache"); Directory.CreateDirectory(cacheDir2);
+            var fixture2 = Path.Combine(root, "fixture"); Directory.CreateDirectory(Path.Combine(fixture2, "input"));
+            var reposRoot = Path.Combine(root, "repos"); Directory.CreateDirectory(reposRoot);
+            var repoA = Path.Combine(reposRoot, "repo-a"); Directory.CreateDirectory(repoA);
+            var repoB = Path.Combine(reposRoot, "repo-b"); Directory.CreateDirectory(repoB);
+            // the two checkouts (LF; the csproj pin sits at line 7 per the fact below)
+            File.WriteAllText(Path.Combine(repoA, "App.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Contoso.Tracking\" Version=\"4.19.0\" />\n    <PackageReference Include=\"UASamples.Component\" Version=\"13.0.1\" />\n  </ItemGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(repoB, "Directory.Packages.props"),
+                "<Project>\n  <ItemGroup>\n    <PackageVersion Include=\"UASamples.Component\" Version=\"15.0.3\" />\n  </ItemGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(fixture2, "input", "package-evidence.v0.json"),
+                "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[ {\"repo\":\"repo-a\",\"packageId\":\"Contoso.Tracking\",\"declaredConstraint\":\"4.19.0\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":6,\"path\":\"App.csproj\",\"projects\":[],\"commitSha\":\"x\"}, {\"repo\":\"repo-a\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":7,\"path\":\"App.csproj\",\"projects\":[],\"commitSha\":\"x\"}, {\"repo\":\"repo-a\",\"packageId\":\"Contoso.Json\",\"declaredConstraint\":\"11.0.2\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":8,\"path\":\"App.csproj\",\"projects\":[],\"commitSha\":\"x\"}, {\"repo\":\"repo-b\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"15.0.3\",\"format\":\"packagereference\",\"constraintSource\":\"Directory.Packages.props\",\"tfm\":\"net10.0\",\"line\":3,\"path\":\"Directory.Packages.props\",\"projects\":[],\"commitSha\":\"x\"}]}");
+            // the caches: Component (13.0.2 net8-only / 15.0.4 net10-only — the per-TFM split),
+            // Tracking (4.19.2 netstandard2.0 probed; feed list carries 4.25.0), none for Contoso.Json
+            Program.WriteArtifactFile(CompatCache.CachePath(cacheDir2, "UASamples.Component"), JsonSerializer.Serialize(new CompatCacheFile
+            {
+                Id = "UASamples.Component", TotalVersionsAvailable = 4,
+                AllVersionsSimple = ["13.0.1", "13.0.2", "15.0.3", "15.0.4"],
+                Versions =
+                [
+                    new CompatVersion { Version = "13.0.2", TargetFrameworks = ["net8.0"], IsLatestForMajor = true, License = "MIT" },
+                    new CompatVersion { Version = "15.0.4", TargetFrameworks = ["net10.0"], IsLatestForMajor = true, License = "Apache-2.0" },
+                ],
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            Program.WriteArtifactFile(CompatCache.CachePath(cacheDir2, "Contoso.Tracking"), JsonSerializer.Serialize(new CompatCacheFile
+            {
+                Id = "Contoso.Tracking", TotalVersionsAvailable = 9,
+                AllVersionsSimple = ["4.19.0", "4.19.2", "4.20.0", "4.25.0"],
+                Versions = [new CompatVersion { Version = "4.19.2", TargetFrameworks = ["netstandard2.0"], IsLatestForMajor = true }],
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            var pegsMaster2 = Path.Combine(root, "pegs-master.json");
+            File.WriteAllText(pegsMaster2, "{\"schemaVersion\":\"pegs.v0\",\"pegs\":[{\"packageName\":\"Contoso.Tracking\",\"kind\":\"maxExclusive\",\"version\":\"4.20.0\",\"note\":\"no telemetry\"}]}");
+
+            // 1) the estate join fills the back-references and marks InUse (stub for the unprobed pin)
+            if (Upgrade.Join(cacheDir2, fixture2) != 0) throw new Exception("join exited non-zero");
+            var joined = CompatCache.Load(cacheDir2, "UASamples.Component") ?? throw new Exception("joined cache missing");
+            if (joined.UsedByRepos.Count != 2 || !joined.UsedByRepos.Contains("repo-a") || !joined.UsedByRepos.Contains("repo-b"))
+                throw new Exception("usedByRepos must carry both consumers");
+            if (joined.UsedVersions["13.0.1"].Single() != "repo-a" || joined.UsedVersions["15.0.3"].Single() != "repo-b")
+                throw new Exception("usedVersions must map pinned versions to consumers");
+            var stub = joined.Versions.FirstOrDefault(v => v.Version == "13.0.1") ?? throw new Exception("pinned-but-unprobed version must gain a stub record");
+            if (!stub.InUse || stub.TargetFrameworks.Count != 0) throw new Exception("the stub must be InUse with undetermined TFMs");
+            if (joined.Versions.First(v => v.Version == "13.0.2").InUse) throw new Exception("13.0.2 is not pinned by anyone — InUse must stay false");
+
+            // 2) update PLAN for repo-a: Component 13.0.1 → 13.0.2 (per-TFM ceiling), Tracking pegged to 4.19.2
+            var (rcPlan, planText) = Upgrade.Update(new Upgrade.UpdateOptions(fixture2, "repo-a", reposRoot, cacheDir2, pegsMaster2, null, Apply: false, OutPath: null, UpdateDotNet: false));
+            if (rcPlan != 0) throw new Exception("update plan exited non-zero");
+            var plan = JsonSerializer.Deserialize<JsonElement>(planText!);
+            var pkgs = plan.GetProperty("packages").EnumerateArray().ToDictionary(p2 => p2.GetProperty("packageName").GetString()!, StringComparer.OrdinalIgnoreCase);
+            var comp = pkgs["UASamples.Component"];
+            if (comp.GetProperty("status").GetString() != "would-update" || comp.GetProperty("allowedMax").GetString() != "13.0.2")
+                throw new Exception($"net8 ceiling must be 13.0.2 with would-update (got {comp.GetProperty("allowedMax").GetString()}/{comp.GetProperty("status").GetString()})");
+            var compEdit = comp.GetProperty("edits").EnumerateArray().Single();
+            if (compEdit.GetProperty("fromVersion").GetString() != "13.0.1" || compEdit.GetProperty("toVersion").GetString() != "13.0.2" || compEdit.GetProperty("line").GetInt32() != 7)
+                throw new Exception("the Component edit must cite the evidenced site (line 7, 13.0.1 → 13.0.2)");
+            var tracking = pkgs["Contoso.Tracking"];
+            if (tracking.GetProperty("potentialMax").GetString() != "4.25.0" || tracking.GetProperty("allowedMax").GetString() != "4.19.2" || !tracking.GetProperty("pegged").GetBoolean())
+                throw new Exception($"the peg must cap Tracking below the feed (got {tracking.GetProperty("allowedMax").GetString()}, potential {tracking.GetProperty("potentialMax").GetString()})");
+            var unknown = pkgs["Contoso.Json"];
+            // the join already created this package's cache entry (it is CONSUMED — the join records
+            // estate knowledge for every consumed package), so pre-probe it reads compat-blocked,
+            // never unknown-package (that status exists only before the join)
+            if (unknown.GetProperty("status").GetString() != "compat-blocked" || unknown.GetProperty("allowedMax").ValueKind != JsonValueKind.Null)
+                throw new Exception($"a consumed-but-unprobed package must read compat-blocked (got {unknown.GetProperty("status").GetString()})");
+            var (rcDotNet, _) = Upgrade.Update(new Upgrade.UpdateOptions(fixture2, "repo-a", reposRoot, cacheDir2, pegsMaster2, null, Apply: false, OutPath: null, UpdateDotNet: true));
+            if (rcDotNet == 0) throw new Exception("--update-dot-net must be a reserved refusal in V0");
+
+            // 3) APPLY: the csproj bytes change on exactly the two pinned attributes
+            var before = File.ReadAllText(Path.Combine(repoA, "App.csproj"));
+            var (rcApply, _) = Upgrade.Update(new Upgrade.UpdateOptions(fixture2, "repo-a", reposRoot, cacheDir2, pegsMaster2, null, Apply: true, OutPath: null, UpdateDotNet: false));
+            if (rcApply != 0) throw new Exception("update --apply exited non-zero");
+            var after = File.ReadAllText(Path.Combine(repoA, "App.csproj"));
+            if (!after.Contains("Include=\"UASamples.Component\" Version=\"13.0.2\"") || after.Contains("Version=\"13.0.1\""))
+                throw new Exception("the Component pin must now read 13.0.2");
+            if (!after.Contains("Include=\"Contoso.Tracking\" Version=\"4.19.2\""))
+                throw new Exception("the Tracking pin must be pegged-capped at 4.19.2 (never at the feed's 4.25.0)");
+            if (before.Length != after.Length) throw new Exception("same-length replacements must keep the file length stable");
+
+            // 4a) PIN-ABOVE-CEILING: the EVIDENCE carries a pin above the probed ceiling (someone
+            // installed 15.0.9 after the last cache refresh) — visible, never a downgrade, no edits
+            var above = Path.Combine(root, "fixture-above"); Directory.CreateDirectory(Path.Combine(above, "input"));
+            File.WriteAllText(Path.Combine(above, "input", "package-evidence.v0.json"),
+                "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[ {\"repo\":\"repo-b\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"15.0.9\",\"format\":\"packagereference\",\"constraintSource\":\"Directory.Packages.props\",\"tfm\":\"net10.0\",\"line\":3,\"path\":\"Directory.Packages.props\",\"projects\":[],\"commitSha\":\"x\"}]}");
+            var (_, planB) = Upgrade.Update(new Upgrade.UpdateOptions(above, "repo-b", reposRoot, cacheDir2, null, null, Apply: false, OutPath: null, UpdateDotNet: false));
+            var compB = JsonSerializer.Deserialize<JsonElement>(planB!).GetProperty("packages").EnumerateArray().Single();
+            if (compB.GetProperty("status").GetString() != "pin-above-ceiling")
+                throw new Exception($"a pin above the computed ceiling must be pin-above-ceiling, never a downgrade (got {compB.GetProperty("status").GetString()})");
+            if (compB.GetProperty("edits").EnumerateArray().Any()) throw new Exception("pin-above-ceiling must produce no edits");
+
+            // 4b) STALE: the evidence plans an edit but the FILE moved since the scan — the
+            // apply-time re-check must refuse, never overwrite (the apply law)
+            File.WriteAllText(Path.Combine(repoB, "Directory.Packages.props"),
+                "<Project>\n  <ItemGroup>\n    <PackageVersion Include=\"UASamples.Component\" Version=\"15.0.9\" />\n  </ItemGroup>\n</Project>\n");
+            var (rcStale, planS) = Upgrade.Update(new Upgrade.UpdateOptions(fixture2, "repo-b", reposRoot, cacheDir2, null, null, Apply: true, OutPath: null, UpdateDotNet: false));
+            if (rcStale != 0) throw new Exception("a refused edit must not fail the run (the refusal is IN the report)");
+            var staleEdit = JsonSerializer.Deserialize<JsonElement>(planS!).GetProperty("packages").EnumerateArray().Single().GetProperty("edits").EnumerateArray().Single();
+            if (staleEdit.GetProperty("applied").GetBoolean() || !staleEdit.GetProperty("refusal").GetString()!.Contains("stale evidence"))
+                throw new Exception("a moved file must refuse as stale evidence, never overwrite");
+
+            // 5) CURRENT: bring repo-b's pin to the ceiling — status flips to current, zero edits
+            File.WriteAllText(Path.Combine(fixture2, "input", "package-evidence.v0.json"),
+                "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[ {\"repo\":\"repo-b\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"15.0.4\",\"format\":\"packagereference\",\"constraintSource\":\"Directory.Packages.props\",\"tfm\":\"net10.0\",\"line\":3,\"path\":\"Directory.Packages.props\",\"projects\":[],\"commitSha\":\"x\"}]}");
+            var (_, planC) = Upgrade.Update(new Upgrade.UpdateOptions(fixture2, "repo-b", reposRoot, cacheDir2, null, null, Apply: false, OutPath: null, UpdateDotNet: false));
+            var cur = JsonSerializer.Deserialize<JsonElement>(planC!).GetProperty("packages").EnumerateArray().Single();
+            if (cur.GetProperty("status").GetString() != "current") throw new Exception("a pin at the ceiling must read current");
+
+            // 6) the estate VIEW: TFM groups, potential vs allowed, license shift flagged
+            File.WriteAllText(Path.Combine(fixture2, "input", "package-evidence.v0.json"),
+                "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[ {\"repo\":\"repo-a\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":7,\"path\":\"App.csproj\",\"projects\":[],\"commitSha\":\"x\"}, {\"repo\":\"repo-b\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"15.0.3\",\"format\":\"packagereference\",\"constraintSource\":\"Directory.Packages.props\",\"tfm\":\"net10.0\",\"line\":3,\"path\":\"Directory.Packages.props\",\"projects\":[],\"commitSha\":\"x\"}]}");
+            var (_, viewText) = Upgrade.View(new Upgrade.ViewOptions(fixture2, cacheDir2, null, null, null));
+            var view = JsonSerializer.Deserialize<JsonElement>(viewText!);
+            var g8 = view.GetProperty("groups").GetProperty("net8.0").EnumerateArray().Single();
+            if (g8.GetProperty("allowedMax").GetString() != "13.0.2" || g8.GetProperty("potentialMax").GetString() != "15.0.4")
+                throw new Exception($"the net8 group must show allowed 13.0.2 under potential 15.0.4 (got {g8.GetProperty("allowedMax").GetString()}/{g8.GetProperty("potentialMax").GetString()})");
+            if (!g8.GetProperty("licenseShift").GetBoolean()) throw new Exception("MIT → Apache-2.0 across majors must flag licenseShift");
+
+            Console.WriteLine("ok   upgrade-plan-layer-2 (estate join; update plan+apply under the apply law; peg cap; stale/pin-above-ceiling/current; per-TFM estate view with license shift)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL upgrade-plan-layer-2: {ex.Message}"); }
 
         Console.WriteLine(fail == 0 ? $"SELFTEST PASS ({pass} cases)" : $"SELFTEST FAIL ({fail} failing)");
         return fail == 0 ? 0 : 1;

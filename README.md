@@ -252,6 +252,44 @@ missing. Three ways to get a `delta.json`:
    --emit-deltas <dir>` writes one delta file per distinct behind-version it found; pick one and
    copy it in as `delta.json`.
 
+## The upgrade-plan layer (pegs + the compatibility cache)
+
+Beyond one-delta campaigns, ua carries the **upgrade-plan layer**: TFM-aware blanket updates.
+Design: [docs/UPGRADE-PLAN-DESIGN.md](docs/UPGRADE-PLAN-DESIGN.md).
+
+```powershell
+# 1) the compatibility cache — probe .nupkg files (lib/** folder names ARE the supported TFMs),
+#    then join the estate (usedVersions/usedByRepos/InUse fill from the fixture's live pins):
+dotnet $ua discover-max --from-folder C:\nupkg-feed --out C:\ua-estate\compat-cache
+dotnet $ua discover-max --join-fixture C:\ua-estate\fixture --out C:\ua-estate\compat-cache
+
+# 2) the estate view — per TFM group × package: pins observed, potentialMax (feed),
+#    allowedMax (compat ceiling under pegs), status, license-shift flags. Read-only.
+dotnet $ua upgrade-plan C:\ua-estate\fixture --cache C:\ua-estate\compat-cache `
+  --pegs pegs-master.v0.json --estate-pegs pegs-estate.v0.json --out C:\ua-estate\upgrade-plan.json
+
+# 3) the daily driver — one repo, every live pin to its allowedMax (cross-major in scope,
+#    never a downgrade). Plan mode first; --apply executes under the apply law
+#    (every site re-checked against the file; stale/ambiguous refusals, never a guess):
+dotnet $ua update C:\ua-estate\fixture --repo <repo> --cache C:\ua-estate\compat-cache `
+  --pegs pegs-master.v0.json --repos-root C:\repos --out update-plan.json     # plan
+dotnet $ua update C:\ua-estate\fixture --repo <repo> --cache C:\ua-estate\compat-cache `
+  --pegs pegs-master.v0.json --repos-root C:\repos --apply                    # move the pins
+```
+
+**Pegs** (`pegs.v0`): three shapes — `exact` ("pegged at this version"), `maxExclusive` (hard
+ceiling, `< 4.20`), `forceMax` (a floor — "at least X"). Master (org-shared) + estate override;
+the estate may **tighten** a master peg, never loosen one. Pegs are the only editable artifact
+in this layer — reports are read-only output.
+
+**Statuses** you will see: `would-update` / `current` / `pegged` flag / `compat-blocked`
+(no probed version admits the repo's TFM — onboarding) / `pin-above-ceiling` (the cache is
+stale — never downgraded, refresh the cache) / `floor-violation` (a forceMax floor the TFM
+cannot reach) / `tfm-unknown` / `unknown-package` (before the estate join).
+
+`-keep-dot-net` is the only V0 behavior (package pins move, TFMs are never touched);
+`--update-dot-net` is a reserved refusal.
+
 ## The commands
 
 | Command | What it does |
