@@ -149,15 +149,24 @@ public static class CompatCache
             cache.AllVersionsSimple = group.Select(p => p.Version).Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(v => v, StringComparer.Ordinal).ToList();
             cache.FetchedUtc = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
-            // probe targets: the latest stable-parseable version per major (selective probing —
-            // the cheap list carries the rest); versions already probed are NOT re-read.
-            var known = cache.Versions.Select(v => v.Version).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // probe targets (the brief's selection rule): the latest stable-parseable version per
+            // major PLUS every in-use version — the estate's pinned versions MUST get TFM records
+            // or their ceilings cannot resolve (the first estate census: 199 compat-blocked because
+            // latest-per-major alone skipped the pinned versions). Already-probed versions are
+            // never re-read.
+            // "already probed" = a record with real TFM evidence: the estate join's stub records
+            // (InUse, undetermined TFMs) are precisely the versions that need probing
+            var known = cache.Versions.Where(v => v.TargetFrameworks.Count > 0).Select(v => v.Version).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var inUse = cache.Versions.Where(v => v.InUse).Select(v => v.Version).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var probeTargets = group
                 .Select(p => (p.Version, Core: Apply.ParseCorePublic(p.Version)))
                 .Where(p => p.Core is not null)
                 .GroupBy(p => p.Core![0])
                 .Select(g => g.OrderByDescending(p => p.Version, VersionComparer.Instance).First().Version) // full 4-part rank, not major-only
+                .Concat(group.Select(p => p.Version).Where(v => inUse.Contains(v)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Where(v => !known.Contains(v))
+                .OrderBy(v => v, StringComparer.Ordinal)
                 .ToList();
             foreach (var version in probeTargets)
             {
@@ -180,11 +189,13 @@ public static class CompatCache
                     onboarding++;
                     continue;
                 }
+                var prior = cache.Versions.FirstOrDefault(old => old.Version.Equals(version, StringComparison.OrdinalIgnoreCase));
                 var record = new CompatVersion
                 {
                     Version = version,
                     TargetFrameworks = tfms,
                     SupportsNetStandard = tfms.Any(t => t.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase)),
+                    InUse = prior?.InUse ?? false, // the estate join's InUse survives the probe (a stub record upgrading to a probed record)
                     Note = tfms.Count == 0 ? "no lib assets probed — undetermined (onboarding)" : null,
                 };
                 record.SupportsNet8 = tfms.Count == 0 ? null : SupportsTfm(tfms, "net8.0");

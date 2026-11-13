@@ -4422,6 +4422,24 @@ public static class Program
             if (probed.TotalVersionsAvailable != 2 || probed.Versions.Count != 2) throw new Exception($"probe must inspect both versions (got {probed.Versions.Count}/{probed.TotalVersionsAvailable})");
             if (CompatCache.Ceiling(probed, "net8.0", null, null) != "13.0.2") throw new Exception("probed ceiling must respect the per-version TFMs from the zip lib/ folders");
             if (CompatCache.Ceiling(probed, "net10.0", null, null) != "15.0.4") throw new Exception("probed net10 ceiling wrong");
+            // the in-use probe rule: a version the estate PINS (InUse via the join's stub) gets a
+            // record even when it is not the latest of its major — and the stub's InUse survives
+            File.WriteAllText(Path.Combine(probeCacheDir, "contoso.inuse.json"),
+                "{\"id\":\"Contoso.InUse\",\"versionsInspected\":0,\"totalVersionsAvailable\":0,\"fetchedUtc\":\"2026-01-01T00:00:00Z\",\"allVersionsSimple\":[],\"usedVersions\":{\"12.0.5\":[\"repo-a\"]},\"usedByRepos\":[\"repo-a\"],\"versions\":[ {\"version\":\"12.0.5\",\"inUse\":true,\"note\":\"stub\"} ]}");
+            // probing a package the folder does not carry is a typed refusal — and the stub survives untouched
+            if (CompatCache.ProbeFolder(feedDir, probeCacheDir, "Contoso.InUse") == 0) throw new Exception("a probe with no matching nupkgs must refuse");
+            var inuseCache = CompatCache.Load(probeCacheDir, "Contoso.InUse") ?? throw new Exception("in-use cache missing");
+            // the folder has no Contoso.InUse nupkg — the stub record must survive untouched
+            var inuseStub = inuseCache.Versions.FirstOrDefault(v => v.Version == "12.0.5") ?? throw new Exception("the unprobed in-use stub must survive");
+            if (!inuseStub.InUse || inuseStub.TargetFrameworks.Count != 0) throw new Exception("the stub must keep InUse and stay undetermined");
+            // and when the folder DOES carry the pinned version, it gets probed despite not being latest-of-major
+            var inusePath = Path.Combine(feedDir, "contoso.inuse.12.0.5.nupkg");
+            using (var zip2 = System.IO.Compression.ZipFile.Open(inusePath, System.IO.Compression.ZipArchiveMode.Create))
+                zip2.CreateEntry("lib/netstandard2.0/lib.dll");
+            if (CompatCache.ProbeFolder(feedDir, probeCacheDir, "Contoso.InUse") != 0) throw new Exception("second in-use probe exited non-zero");
+            var inuseProbed = CompatCache.Load(probeCacheDir, "Contoso.InUse")!.Versions.FirstOrDefault(v => v.Version == "12.0.5")!;
+            if (inuseProbed.TargetFrameworks.Count != 1 || !inuseProbed.InUse)
+                throw new Exception("the pinned version must gain TFM records and KEEP its InUse flag through the probe");
 
             Console.WriteLine("ok   upgrade-plan-layer (pegs merge tighten/loosen-refuse/forceMax; per-TFM ceiling incl. the silent-TFM-bump defense; peg bounds; discover-max folder probe)"); pass++;
         }
