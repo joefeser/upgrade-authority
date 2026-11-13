@@ -53,10 +53,14 @@ per package how far it can go **on that TFM**, show the human, let them peg, the
    lower levels). **Patch day is the headline scenario for surface 2**: a .NET security
    release means the whole chain updates — on the order of a hundred-fifty PRs in two days,
    which is exactly `update --all-max` + the existing push machinery.
-2. **`pegs.v0`** — master (org-shared) + estate override. Three shapes: **exact** ("pegged at
-   13.0.3"), **maxExclusive** (`< 4.20` — Moq), **forceMax** (LiteBus). Estate config may
-   tighten a master peg, never loosen one. **No cross-package peer ranges** — not npm's
-   angular-typescript style; pegs bind one package each. Human `notes` ride along.
+2. **`pegs.v0`** — master (org-shared) + estate override. Three bound shapes: **exact** ("pegged at
+   13.0.3"), **maxExclusive** (`< 4.20` — Moq), **forceMax** (LiteBus), plus the **allowPrerelease**
+   flag (2026-11-13, Joe's forgotten knob): the operator opts a package into prerelease eligibility —
+   without it every ceiling is stable-only, which made prerelease-only feeds (System.CommandLine
+   family) permanently compat-blocked. The flag OR-merges across master/estate (either operator
+   turning it on is a deliberate act — the stated exception to tighten-only). Bare
+   `{"packageName": "…", "allowPrerelease": true}` entries are legal. **No cross-package peer
+   ranges** — not npm's angular-typescript style; pegs bind one package each. Human `notes` ride along.
 3. **Onboarding review file** — when a package's TFM chain cannot be auto-determined
    (`discover-max` fails or a new major appears overnight), ua writes a candidate file (delta-
    style: human edits it or throws lines out, then applies). `--dont-ask-again` promotes the
