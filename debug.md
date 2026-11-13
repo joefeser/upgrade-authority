@@ -24,8 +24,10 @@ Get-ChildItem "$env:USERPROFILE\.nuget\packages" -Recurse -Filter *.nupkg | ForE
 #      TargetFrameworkDeclared facts — TFM evidence with NO lockfiles and NO build output)
 #      rides ingest. After pulling a new ua build, re-run the ingest with the SAME carriers
 #      your scan-estate run carried (seconds — never a rescan), then re-run step 3:
-dotnet $ua ingest --scans-root C:\ua-estate\scans --producer C:\ua-estate\producer-evidence.v0.json --ownership C:\ua-estate\ownership.v0.json --out C:\ua-estate\fixture
-#      (add --scope / --archived / --delta ONLY if your original run carried them)
+dotnet $ua ingest --scans-root C:\ua-estate\scans --scope <repos-root>\repos.txt --producer C:\ua-estate\producer-evidence.v0.json --ownership C:\ua-estate\ownership.v0.json --out C:\ua-estate\fixture
+#      --scope = the SAME scope file your scan-estate run used (required if you scoped the scan —
+#      without it ingest re-discovers every scan child and resurrects out-of-scope caches);
+#      add --archived / --delta the same way if the original run carried them)
 
 # 2) the probe — real targetFrameworks records from the nupkg lib/** folders.
 #    Never rewrites probed records; never destroys the join's back-references.
