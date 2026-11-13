@@ -2,6 +2,40 @@
 
 **LAW: every command the agent hands over lives here, not in chat. Is it in debug.md? is the correct challenge before running anything.**
 
+## COMPAT-CACHE COLD START — the upgrade-plan layer's warm-up (2026-11-13)
+
+The order on a fresh machine: join (estate knowledge) → probe (TFM knowledge) → view (the
+worklist). The cache dir is PERMANENT warm state (like scans/) — same `--cache` path on
+every verb that takes one. Step 0 assumes the estate scan already ran (C:\ua-estate\fixture
+exists). `$ua` = the dotnet invocation you use elsewhere in this file.
+
+```powershell
+# 0) the join — fills usedVersions/usedByRepos/InUse for every consumed package.
+#    Everything reads compat-blocked after this: that is the worklist, not an error.
+dotnet $ua discover-max --join-fixture C:\ua-estate\fixture --out C:\ua-estate\compat-cache
+
+# 1) flatten the NuGet restore cache into a folder of nupkgs (the build server's own
+#    restore puts every pinned version here; -Force overwrites case-duplicate names).
+#    If nothing has been restored on this machine yet, run your normal restore/build once.
+New-Item -ItemType Directory -Force C:\ua-estate\nupkg-feed | Out-Null
+Get-ChildItem "$env:USERPROFILE\.nuget\packages" -Recurse -Filter *.nupkg | ForEach-Object { Copy-Item $_.FullName ("C:\ua-estate\nupkg-feed\" + $_.Name) -Force }
+
+# 2) the probe — real targetFrameworks records from the nupkg lib/** folders.
+#    Never rewrites probed records; never destroys the join's back-references.
+dotnet $ua discover-max --from-folder C:\ua-estate\nupkg-feed --out C:\ua-estate\compat-cache
+
+# 3) the estate view — per TFM group x package: pins, potentialMax, allowedMax, status.
+dotnet $ua upgrade-plan C:\ua-estate\fixture --cache C:\ua-estate\compat-cache --out C:\ua-estate\upgrade-plan.json
+
+# READ BACK TO THE AGENT: the status counts, one line —
+(Get-Content C:\ua-estate\upgrade-plan.json -Raw | ConvertFrom-Json).groups.PSObject.Properties | ForEach-Object { $_.Value } | ForEach-Object { $_.status } | Group-Object | Sort-Object Count -Descending | ForEach-Object { "$($_.Count)x $($_.Name)" }
+```
+
+Known limit while the feed input is slice 3: potentialMax only knows versions that were in
+the nupkg folder (the restore cache holds what was pinned, not what is newest) — some
+`current` rows are actually behind. `would-update` rows are real and safe either way: a
+ceiling computed from actual TFM assets.
+
 ## GAP-KIND CENSUS — the extractor-change diff (2026-11-10)
 
 What it answers: which gap kinds exist across the whole estate's scans, one line per
