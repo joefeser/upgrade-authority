@@ -39,6 +39,15 @@ dotnet $ua discover-max --feed-url https://api.nuget.org/v3-flatcontainer/ --out
 #      (--feed-out writes the drift feed contract — ua drift can consume the same file;
 #       internals will note 'not on this feed' here — expected)
 
+#      ARTIFACTORY (internals at work): the base is the flat-container form — the URL that
+#      ends right before {id}/index.json:
+#        https://<host>/artifactory/api/nuget/<repo>/flatcontainer
+#      Credentials (if the instance requires them — env vars, never the command line):
+#        $env:NUGET_FEED_USER = "<your-username>"          # password may be your Artifactory API key
+#        $env:NUGET_FEED_PASSWORD = "<password-or-api-key>"
+#      Failure notes now carry the REASON: 401 = credentials, 403 = no read on the repo,
+#      404 = wrong base shape, transport = TLS/proxy — read the note, it names the fix.
+
 # 2) the probe — real targetFrameworks records from the nupkg lib/** folders.
 #    Never rewrites probed records; never destroys the join's back-references.
 dotnet $ua discover-max --from-folder C:\ua-estate\nupkg-feed --out C:\ua-estate\compat-cache
