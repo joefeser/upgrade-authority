@@ -179,10 +179,11 @@ public static class Upgrade
     // blocks the whole package); a forceMax floor above the ceiling is a typed violation.
     internal static PackageResolution Resolve(CompatCacheFile? cache, IReadOnlyList<string> tfms, Pegs.Resolved? peg, IReadOnlyList<string> allPins)
     {
-        // the ceiling math is STABLE-only (prerelease is never guessed — the apply law's N3);
-        // prerelease pins are displayed as usage evidence and surface as their own status
-        var pins = allPins.Where(v => Apply.ParseCorePublic(v) is not null).ToList();
-        var prereleasePins = allPins.Where(v => Apply.ParseCorePublic(v) is null).ToList();
+        // the pin math is EXACT-VERSION-only: stable pins AND specific prerelease pins are both
+        // semver-comparable (1.3.180 provably outranks 1.2.0-beta.556 — the VS-update law).
+        // Floating/range/redacted constraints stay unresolved (the N3 law, precise scope now).
+        var pins = allPins.Where(Apply.IsExactVersion).ToList();
+        var floatingPins = allPins.Where(v => !Apply.IsExactVersion(v)).ToList();
         string? potentialMax = null;
         if (cache is not null)
         {
@@ -214,7 +215,7 @@ public static class Upgrade
         var floor = peg?.FloorVersion;
         if (floor is not null && (ceiling is null || Apply.CompareSemver(ceiling, floor) < 0))
             return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "floor-violation", true, LicenseShift(cache), $"forceMax floor {floor} is unreachable on this TFM set (ceiling {ceiling})", tfms);
-        var mathPins = allowPre ? allPins : pins; // with the opt-in, prerelease pins are in scope
+        var mathPins = allowPre ? allPins.Where(Apply.IsExactVersion).Concat(pins).Distinct(StringComparer.OrdinalIgnoreCase).ToList() : pins; // the opt-in admits prerelease TARGETS; pins are already exact
         if (mathPins.Count > 0)
         {
             var highest = mathPins.OrderByDescending(v => v, Comparer<string>.Create((a, b) => Apply.CompareSemver(a, b))).First();
@@ -223,9 +224,9 @@ public static class Upgrade
             if (Apply.CompareSemver(highest, ceiling!) == 0)
                 return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "current", peg is not null, LicenseShift(cache), null, tfms);
         }
-        if (prereleasePins.Count > 0 && pins.Count == 0 && !allowPre)
+        if (floatingPins.Count > 0 && pins.Count == 0 && !allowPre)
             return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "prerelease-pin", peg is not null, LicenseShift(cache),
-                $"pinned at {string.Join(", ", prereleasePins.Order(StringComparer.Ordinal))} — prerelease sites are never guessed (N3); the stable ceiling is shown for reference", tfms);
+                $"pinned at {string.Join(", ", floatingPins.Order(StringComparer.Ordinal))} — floating/range constraints are never guessed (N3); the stable ceiling is shown for reference", tfms);
         return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "would-update", peg is not null, LicenseShift(cache), null, tfms);
     }
 
@@ -285,7 +286,7 @@ public static class Upgrade
         {
             var cache = CompatCache.Load(o.CacheDir, group.Key);
             var peg = pegs.TryGetValue(group.Key, out var p) ? p : null;
-            var pins = group.Where(f => f.DeclaredConstraint.Length > 0 && Apply.ParseCorePublic(f.DeclaredConstraint) is not null)
+            var pins = group.Where(f => Apply.IsExactVersion(f.DeclaredConstraint))
                 .Select(f => f.DeclaredConstraint).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var resolution = Resolve(cache, tfms, peg, pins);
             var row = new Dictionary<string, object?>
@@ -301,10 +302,11 @@ public static class Upgrade
             };
             var edits = new List<Dictionary<string, object?>>();
             if (resolution.AllowedMax is { } target && resolution.Status is not ("pin-above-ceiling" or "floor-violation"))
-                foreach (var fact in group.Where(f => f.DeclaredConstraint.Length > 0 && f.Line is not null))
+                foreach (var fact in group.Where(f => Apply.IsExactVersion(f.DeclaredConstraint) && f.Line is not null))
                 {
-                    var cmp = Apply.CompareCore(fact.DeclaredConstraint, target);
-                    if (cmp is null || cmp >= 0) continue; // prerelease/floating = unresolved (N3); at-or-above = never a downgrade
+                    var cmp = Apply.CompareSemver(fact.DeclaredConstraint, target); // exact prerelease pins are semver-comparable: beta→stable is a provable upgrade
+                    if (cmp >= 0) continue; // at-or-above = never a downgrade
+                    var floating = !Apply.IsExactVersion(fact.DeclaredConstraint);
                     var edit = new Dictionary<string, object?>
                     {
                         ["path"] = fact.Path, ["line"] = fact.Line, ["attribute"] = AttrName(fact),
@@ -434,7 +436,7 @@ public static class Upgrade
             {
                 var cache = CompatCache.Load(o.CacheDir, pkg.Key);
                 var peg = pegs.TryGetValue(pkg.Key, out var p) ? p : null;
-                var pins = pkg.Select(x => x.Fact).Where(f => f.DeclaredConstraint.Length > 0 && Apply.ParseCorePublic(f.DeclaredConstraint) is not null).Select(f => f.DeclaredConstraint).ToList();
+                var pins = pkg.Select(x => x.Fact).Where(f => f.DeclaredConstraint.Length > 0).Select(f => f.DeclaredConstraint).ToList(); // pinCounts display ALL pinned spellings, prerelease included
                 var pinCounts = pins.GroupBy(v => v, StringComparer.OrdinalIgnoreCase).ToDictionary(k => k.Key, k => k.Count(), StringComparer.OrdinalIgnoreCase);
                 var resolution = Resolve(cache, g.Key == "(tfm-unknown)" ? Array.Empty<string>() : new[] { g.Key }, peg, pinCounts.Keys.ToList());
                 rows.Add(new Dictionary<string, object?>

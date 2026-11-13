@@ -4857,9 +4857,14 @@ public static class Program
             if (!beta.InUse) throw new Exception("the pinned prerelease keeps InUse through the probe");
 
             // and the RESOLUTION: prerelease-only pins read prerelease-pin, ceiling shown for reference
+            // the EXACT-VERSION law: a specific prerelease pin is semver-comparable — beta→stable
+            // is a provable upgrade (verified against VS 2026's NuGet update), not an N3 refusal
             var pp = Upgrade.Resolve(anyCacheFile, ["net10.0"], null, ["1.2.0-beta.556"]);
-            if (pp.Status != "prerelease-pin" || pp.AllowedMax is null)
-                throw new Exception($"prerelease-only pins must read prerelease-pin with the stable ceiling shown (got {pp.Status}/{pp.AllowedMax})");
+            if (pp.Status != "would-update" || pp.AllowedMax != "1.3.180")
+                throw new Exception($"an exact prerelease pin must resolve to would-update at the stable ceiling (got {pp.Status}/{pp.AllowedMax})");
+            // the floating shape stays N3 (its precise scope now)
+            var fl = Upgrade.Resolve(anyCacheFile, ["net10.0"], null, ["1.2.0-beta.*"]);
+            if (fl.Status != "floating-pin" && fl.Status != "prerelease-pin") throw new Exception($"a floating pin must stay unresolved (got {fl.Status})");
 
             // ---- the four estate adjudications, pinned: ----
             // (1) the LONG-FORM nuspec (itext7's shape: .NETFramework4.6.1 / .NETStandard2.0 groups,

@@ -217,6 +217,20 @@ public static class Apply
         return (core, string.IsNullOrEmpty(pre) ? null : pre);
     }
 
+    // an EXACT version constraint: a stable parse, or a specific prerelease (a '-' with a
+    // parseable core) — both are semver-comparable, so an update from them is deterministic.
+    // Floating/range shapes (6.*, [1.0,), redacted) stay unresolved: those genuinely could
+    // admit anything (the N3 law — its scope is now precise: imprecise constraints only).
+    internal static bool IsExactVersion(string constraint)
+    {
+        if (constraint.Length == 0 || constraint.StartsWith("redacted:", StringComparison.Ordinal)) return false;
+        if (ParseCorePublic(constraint) is not null) return true;
+        var dash = constraint.IndexOf('-');
+        if (dash <= 0 || ParseCorePublic(constraint[..dash]) is null) return false;
+        var pre = constraint[(dash + 1)..]; // the prerelease grammar: dot-separated identifiers of [0-9A-Za-z-], no wildcards — "beta.*" is a floating shape
+        return pre.Length > 0 && pre.Split('.').All(id => id.Length > 0 && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'));
+    }
+
     internal static bool IsExactPin(string constraint) =>
         constraint.Length > 0 && !constraint.StartsWith("redacted:") && ParseCore(constraint) is not null;
     static int[]? ParseCore(string v)
