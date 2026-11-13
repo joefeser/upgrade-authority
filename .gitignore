@@ -10,3 +10,4 @@ samplerepos/feed-history.staging/
 samplerepos/out/
 samplerepos/.scratch/
 samplerepos/**/packages.lock.json
+.codex-attachments/

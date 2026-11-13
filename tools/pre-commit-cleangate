@@ -1,29 +1,88 @@
 #!/bin/bash
 # pre-commit clean-gate: refuse any commit that stages employer-identifying
-# content (same patterns as tools/check-public-clean.sh; self-contained so it
-# works on any branch). Mirrors the gate's allowlist and file-type scope.
+# content or non-source material (self-contained so it works on any branch).
 # Scans the STAGED BLOB (git show :$f), not the worktree file — later edits
 # must not hide violations from the commit being made (review).
 # Iterates NUL-delimited: paths with spaces are files too (review).
+#
+# LAW (2026-11-13, the .codex-attachments leak — "binary == file"): the old
+# gate scanned a fixed list of TEXT extensions and silently SKIPPED every other
+# file; a photo is a file, and "binary" is not a category a gate can test.
+# The default is now REFUSE: a file type this hook does not explicitly classify
+# does not commit. Shipping a new file type means classifying it deliberately
+# here — text-scan list, asset allowlist, or a new typed refusal — never in the
+# moment. Self-test (scratch repo, before every install): clean text commit
+# passes; patterned text refused; media refused; attachment paths refused;
+# unknown extensions refused; allowlisted assets allowed.
 set -u
+
+# employer-identifying text patterns (keep in sync with tools/check-public-clean.sh)
 pat='\bunited\b|united'"'"'s|\bcrew\.|LoggingManager|sonarqube|sonarqube|\bwiz\b|CI in Harness|CI = Harness|lives in GitHub and Harness|~150 repos|150-repo|8 packages compiled|publishes ~8 packages|employment agreement|invention-assignment|outside-work policy|88mph|88mphServer'
-fail=0
+
+# chat-attachment material never ships (the leak path: session photos staged
+# inside the workspace by tooling, swept in by a tree-wide add)
+attach_pat='codex-attachments'
+
+# media/archive/executable classes: refuse OUTSIDE the sanctioned fixture zone
+# (testdata-ingest carries deliberate test binaries: dll/netmodule/png/ico/m4a/pdf)
+# and outside the asset allowlist — never allowlisted by extension presence alone
+# (Joe's law: name the file CLASS; "binary" names nothing)
+media_ext='jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|mkv|mp3|wav|zip|7z|rar|dll|exe|msi|dmg|apk|jar|iso|bin|pdf|m4a|ico|netmodule'
+
+# known text vocabulary of both repos: pattern-scanned
+text_ext='md|json|cs|mjs|props|csproj|yml|yaml|config|vb|ps1|html|py|sql|ts|java|vbproj|aspx|txt|swift|xaml|js|sh|fs|toml|xml|sln|master|resolved|asax|npconfig|bmml|testsettings|ndjson|patch|ascx|ashx|bat|cmd|css|dbml|discomap|edmx|fsproj|gradle|kt|kts|lock|lockfile|log|myapp|ncproj|pbxproj|plist|properties|refactorlog|res|resx|sqlproj|storyboard|svg|vsmdi|vssettings|wsdl|xib|xsd|xsl|contents|xcworkspacedata'
+
+# deliberate asset allowlist (path-based): tracemap's site imagery only
+asset_allow='^site/src/assets/.*\.png$'
+
+# sanctioned non-source zones (deliberate vendored/test material): binaries
+# allowed HERE, refused everywhere else
+zone_pat='(^|/)testdata-ingest/|^samples/'
+
+# pattern-scan exemptions (fixtures whose content legitimately mentions the patterns)
+exempt='docs/COMPARISONS.md|*testdata-ingest*'
+
 git diff --cached --name-only -z --diff-filter=ACMR | while IFS= read -r -d '' f; do
   case "$f" in
-    docs/COMPARISONS.md|*testdata-ingest*) continue ;;
+    *$attach_pat*)
+      echo "COMMIT REFUSED [pre-commit clean-gate] $f" >&2
+      echo "  (chat-attachment material never ships — gitignore the attachments dir; stage explicit paths)" >&2
+      exit 1 ;;
   esac
+  ext="${f##*.}"
   case "$f" in
-    *.md|*.json|*.cs|*.mjs|*.props|*.csproj|*.yml|*.config) ;;
-    *) continue ;;
+    testdata-ingest/*|*/testdata-ingest/*|samples/*) continue ;;  # sanctioned zones: vendored/test material
   esac
-  # the staged blob, never the worktree copy: the commit is what ships
-  hit=$(git show ":$f" 2>/dev/null | grep -niE "$pat" | head -1)
-  if [ -n "$hit" ]; then
-    echo "COMMIT REFUSED [pre-commit clean-gate] $f:$hit" >&2
-    echo "  (employer-identifying content; fix or see tools/check-public-clean.sh)" >&2
-    fail=1
+  case "$ext" in
+    jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|avi|mkv|mp3|wav|zip|7z|rar|dll|exe|msi|dmg|apk|jar|iso|bin|pdf|m4a|ico|netmodule)
+      if ! printf '%s' "$f" | grep -qE "$asset_allow"; then
+        echo "COMMIT REFUSED [pre-commit clean-gate] $f" >&2
+        echo "  (media/asset files are refuse-by-default; allowlist the exact path in tools/pre-commit-cleangate if it truly ships)" >&2
+        exit 1
+      fi
+      continue ;;
+  esac
+  scan=0
+  if [ "$ext" != "$f" ]; then
+    printf '%s' "$ext" | grep -qiE "^($text_ext)$" && scan=1
+  else
+    scan=1  # no extension: LICENSE, dotfiles, gate scripts — all text
   fi
-  if [ "$fail" = 1 ]; then exit 1; fi
+  if [ "$scan" = 1 ]; then
+    case "$f" in
+      docs/COMPARISONS.md) continue ;;
+    esac
+    hit=$(git show ":$f" 2>/dev/null | grep -niE "$pat" | head -1)
+    if [ -n "$hit" ]; then
+      echo "COMMIT REFUSED [pre-commit clean-gate] $f:$hit" >&2
+      echo "  (employer-identifying content; fix or see tools/check-public-clean.sh)" >&2
+      exit 1
+    fi
+    continue
+  fi
+  echo "COMMIT REFUSED [pre-commit clean-gate] $f" >&2
+  echo "  (unknown file type '$ext' — classify it deliberately in tools/pre-commit-cleangate: text list, asset allowlist, or a typed refusal)" >&2
+  exit 1
 done
-[ "${PIPESTATUS[1]:-0}" = 1 ] && exit 1
+[ "${PIPESTATUS[0]:-0}" = 1 ] && exit 1
 exit 0
