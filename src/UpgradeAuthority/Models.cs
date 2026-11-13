@@ -134,6 +134,23 @@ public sealed class LockfileRepo
     [JsonPropertyName("rows")] public List<LockRow> Rows { get; set; } = new();
 }
 
+// The repo target-framework channel (2026-11-13): tracemap emits a TargetFrameworkDeclared
+// fact per project — the csproj's own TargetFramework/TargetFrameworks declaration, split per
+// framework, cited at the line. This is the TFM evidence for estates WITHOUT lockfiles or
+// indexed build output (a csproj PackageReference names no framework, so the facts' own tfm
+// field is empty on real estates — the whole reason this channel exists).
+public sealed class RepoFrameworksFile
+{
+    [JsonPropertyName("schemaVersion")] public string SchemaVersion { get; set; } = "repo-frameworks.v0";
+    [JsonPropertyName("repos")] public List<RepoFrameworksRepo> Repos { get; set; } = new();
+}
+
+public sealed class RepoFrameworksRepo
+{
+    [JsonPropertyName("repo")] public string Repo { get; set; } = "";
+    [JsonPropertyName("tfms")] public List<string> Tfms { get; set; } = new();
+}
+
 public sealed class LockRow
 {
     [JsonPropertyName("packageId")] public string PackageId { get; set; } = "";

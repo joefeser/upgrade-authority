@@ -241,9 +241,29 @@ public static class Ingest
 
         // ---- consumer facts (PackageReferenced, non-lockfile) ----
         var evidence = new Dictionary<string, List<Fact>>(StringComparer.Ordinal);
+        // ---- repo target-framework evidence (TargetFrameworkDeclared) ----
+        // collected from the SAME fact stream: tracemap emits one fact per declared framework
+        // (TargetFramework/TargetFrameworks split on ';') — the TFM channel for estates without
+        // lockfiles or indexed build output (a csproj PackageReference names no framework).
+        var repoFrameworks = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         var deferredUnevidenced = new List<(string Repo, string Pkg, string FactId)>(); // resolved after the CPM pin correlation — see the gap-deferral note in the loop
         foreach (var (f, manifest, dir) in allFacts)
         {
+            if (f.FactType == "TargetFrameworkDeclared")
+            {
+                // tracemap already splits TargetFrameworks on ';' (one fact per framework);
+                // splitting here too is belt-and-braces against contract drift — each piece is
+                // what the csproj declared
+                var tfm2 = Prop(f, "targetFramework");
+                if (!string.IsNullOrWhiteSpace(tfm2))
+                {
+                    var fwKey = RepoKey(f, manifest);
+                    if (!repoFrameworks.TryGetValue(fwKey, out var fwSet)) repoFrameworks[fwKey] = fwSet = new(StringComparer.OrdinalIgnoreCase);
+                    foreach (var piece in tfm2.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        fwSet.Add(piece);
+                }
+                continue;
+            }
             if (f.FactType != "PackageReferenced") continue;
             var mk = Prop(f, "manifestKind");
             if (mk == "packages.lock.json" || mk == "deps.json") continue; // resolution evidence, handled as lockfile-class rows (SPEC-019 §4: build output is NEVER a consumer declaration — it would fabricate rule-b edges, CPM correlations, and apply sites inside bin/)
@@ -746,6 +766,17 @@ public static class Ingest
                     .Select(kv => new LockfileRepo { Repo = kv.Key, Rows = kv.Value }).ToList(),
             };
             File.WriteAllText(Path.Combine(inputDir, "lockfile-rows.v2.json"), JsonSerializer.Serialize(v2, WriteOpts).ReplaceLineEndings("\n"));
+        }
+
+        // the repo-frameworks channel: written beside the lockfile channel, same conditional shape
+        if (repoFrameworks.Count > 0)
+        {
+            File.WriteAllText(Path.Combine(inputDir, "repo-frameworks.v0.json"), JsonSerializer.Serialize(
+                new RepoFrameworksFile
+                {
+                    Repos = repoFrameworks.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                        .Select(kv => new RepoFrameworksRepo { Repo = kv.Key, Tfms = kv.Value.OrderBy(t => t, StringComparer.Ordinal).ToList() }).ToList(),
+                }, WriteOpts).ReplaceLineEndings("\n"));
         }
 
         // Sidecars (validated)

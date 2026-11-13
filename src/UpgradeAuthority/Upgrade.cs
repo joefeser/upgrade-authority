@@ -87,26 +87,48 @@ public static class Upgrade
         return 0;
     }
 
-    // Repo TFM evidence: the lockfile envelope carries a tfm per row — a csproj PackageReference
-    // names no framework, so on real estates the fact's own tfm field is usually empty and the
-    // lockfile/deps rows are where the repo's target frameworks are actually evidenced.
+    // Repo TFM evidence, three channels (any one suffices): the lockfile envelope carries a tfm
+    // per row; the repo-frameworks channel carries the csproj's own TargetFrameworkDeclared
+    // facts (the estate-wide source — no lockfiles or build output needed); a fact's own tfm
+    // field is the rare third. A csproj PackageReference names no framework, so real estates
+    // rely on the first two.
     internal static Dictionary<string, List<string>> LoadRepoTfms(string fixtureDir)
     {
         var map = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        var path = Path.Combine(Path.GetFullPath(fixtureDir), "input", "lockfile-rows.v2.json");
-        if (!File.Exists(path)) return map; // no lockfile channel at all: every repo stays tfm-unknown
-        try
+        var lockPath = Path.Combine(Path.GetFullPath(fixtureDir), "input", "lockfile-rows.v2.json");
+        if (File.Exists(lockPath))
         {
-            var v2 = JsonSerializer.Deserialize<LockfileRowsV2>(File.ReadAllText(path), ReadOpts);
-            if (v2 is null) return map;
-            foreach (var repo in v2.Repos)
+            try
             {
-                var tfms = repo.Rows.Where(r => !string.IsNullOrWhiteSpace(r.Tfm)).Select(r => r.Tfm!.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
-                if (tfms.Count > 0) map[repo.Repo] = tfms;
+                var v2 = JsonSerializer.Deserialize<LockfileRowsV2>(File.ReadAllText(lockPath), ReadOpts);
+                if (v2 is not null)
+                    foreach (var repo in v2.Repos)
+                    {
+                        var tfms = repo.Rows.Where(r => !string.IsNullOrWhiteSpace(r.Tfm)).Select(r => r.Tfm!.Trim())
+                            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
+                        if (tfms.Count > 0) map[repo.Repo] = tfms;
+                    }
             }
+            catch (JsonException) { /* unparseable lockfile channel: no TFM evidence — never guessed */ }
         }
-        catch (JsonException) { /* unparseable lockfile channel: no TFM evidence — never guessed */ }
+        var fwPath = Path.Combine(Path.GetFullPath(fixtureDir), "input", "repo-frameworks.v0.json");
+        if (File.Exists(fwPath))
+        {
+            try
+            {
+                var fw = JsonSerializer.Deserialize<RepoFrameworksFile>(File.ReadAllText(fwPath), ReadOpts);
+                if (fw is not null)
+                    foreach (var repo in fw.Repos)
+                    {
+                        var tfms = repo.Tfms.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim())
+                            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
+                        if (tfms.Count == 0) continue;
+                        if (map.TryGetValue(repo.Repo, out var existing)) existing.AddRange(tfms.Where(t => !existing.Contains(t, StringComparer.OrdinalIgnoreCase)));
+                        else map[repo.Repo] = tfms;
+                    }
+            }
+            catch (JsonException) { /* unparseable frameworks channel: the lockfile channel stands */ }
+        }
         return map;
     }
 

@@ -4462,6 +4462,27 @@ public static class Program
                 AllVersionsSimple = ["4.19.0", "4.19.2", "4.20.0", "4.25.0"],
                 Versions = [new CompatVersion { Version = "4.19.2", TargetFrameworks = ["netstandard2.0"], IsLatestForMajor = true }],
             }, new JsonSerializerOptions { WriteIndented = true }));
+            // the INGEST half of the same law: TargetFrameworkDeclared scan facts (already in
+            // every tracemap scan) land in the fixture as the repo-frameworks channel — no
+            // lockfiles or indexed build output needed
+            var fwScan = Path.Combine(Path.GetTempPath(), "ua-fw-scan-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(fwScan);
+            string FwFact(string tfm) => JsonSerializer.Serialize(new
+            {
+                factId = "fw-" + tfm, scanId = "s", repo = "repo-x", commitSha = "c",
+                factType = "TargetFrameworkDeclared", ruleId = "project.file.v1", evidenceTier = "Tier2Structural",
+                evidence = new { filePath = "src/App/App.csproj", startLine = 2, endLine = 2, snippetHash = (string?)null, extractorId = "ProjectFileExtractor", extractorVersion = "project-file/0.1.0" },
+                properties = new Dictionary<string, object?> { ["targetFramework"] = tfm },
+            }, Json);
+            File.WriteAllText(Path.Combine(fwScan, "facts.ndjson"), FwFact("net8.0") + "\n" + FwFact("net9.0;net10.0") + "\n");
+            var fwOut = Path.Combine(root, "fw-fixture"); Directory.CreateDirectory(fwOut);
+            if (Ingest.Run(new[] { fwScan }, fwOut, null, null, null) != 0) throw new Exception("ingest of the framework-fact scan exited non-zero");
+            var fwFile = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(fwOut, "input", "repo-frameworks.v0.json")));
+            var fwRepo = fwFile.GetProperty("repos").EnumerateArray().Single();
+            var fwTfms = fwRepo.GetProperty("tfms").EnumerateArray().Select(x => x.GetString()).ToList();
+            if (fwTfms is not [_, _, _] || fwTfms[0] != "net10.0" || fwTfms[1] != "net8.0" || fwTfms[2] != "net9.0")
+                throw new Exception($"the channel must split the plural declaration (ordinal order: got {string.Join(",", fwTfms)})");
+
             // the lockfile channel: repo TFMs are evidenced HERE on real estates (a csproj
             // PackageReference names no framework). repo-c's facts carry NO tfm — its net9.0
             // group comes only from this file.
@@ -4555,8 +4576,12 @@ public static class Program
             foreach (var f2 in factsNow.GetProperty("facts").EnumerateArray())
                 factList.Add(JsonSerializer.Serialize(f2));
             factList.Add("{\"repo\":\"repo-c\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"line\":2,\"path\":\"Lib.csproj\",\"projects\":[],\"commitSha\":\"x\"}");
+            factList.Add("{\"repo\":\"repo-d\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"line\":2,\"path\":\"New.csproj\",\"projects\":[],\"commitSha\":\"x\"}");
             File.WriteAllText(Path.Combine(fixture2, "input", "package-evidence.v0.json"),
                 "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[" + string.Join(",", factList) + "]}");
+            // repo-d's framework comes ONLY from the repo-frameworks channel (no lockfile rows)
+            File.WriteAllText(Path.Combine(fixture2, "input", "repo-frameworks.v0.json"),
+                "{\"schemaVersion\":\"repo-frameworks.v0\",\"repos\":[ {\"repo\":\"repo-d\",\"tfms\":[\"net11.0\"]} ]}");
             var (_, viewText) = Upgrade.View(new Upgrade.ViewOptions(fixture2, cacheDir2, null, null, null));
             var view = JsonSerializer.Deserialize<JsonElement>(viewText!);
             var g8 = view.GetProperty("groups").GetProperty("net8.0").EnumerateArray().Single();
@@ -4566,6 +4591,9 @@ public static class Program
             var g9 = view.GetProperty("groups").GetProperty("net9.0").EnumerateArray().Single();
             if (g9.GetProperty("allowedMax").GetString() != "13.0.2")
                 throw new Exception($"net9 sits between the two cache records: net10-only 15.0.4 is invisible to it, so 13.0.2 (got {g9.GetProperty("allowedMax").GetString()})");
+            var g11 = view.GetProperty("groups").GetProperty("net11.0").EnumerateArray().Single();
+            if (g11.GetProperty("allowedMax").GetString() != "15.0.4")
+                throw new Exception($"net11 (a repo-frameworks-only repo) admits both records, so the ceiling is 15.0.4 (got {g11.GetProperty("allowedMax").GetString()})");
 
             Console.WriteLine("ok   upgrade-plan-layer-2 (estate join; update plan+apply under the apply law; peg cap; stale/pin-above-ceiling/current; per-TFM estate view with license shift)"); pass++;
         }

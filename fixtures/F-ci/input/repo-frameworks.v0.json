@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "repo-frameworks.v0",
+  "repos": [
+    {
+      "repo": "both",
+      "tfms": [
+        "net10.0"
+      ]
+    },
+    {
+      "repo": "pure-ci",
+      "tfms": [
+        "net10.0"
+      ]
+    },
+    {
+      "repo": "vers",
+      "tfms": [
+        "net10.0"
+      ]
+    }
+  ]
+}
