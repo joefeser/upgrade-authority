@@ -44,7 +44,9 @@ dotnet $ua discover-max --feed-url https://api.nuget.org/v3-flatcontainer/ --out
 #        https://<host>/artifactory/api/nuget/<repo>/flatcontainer
 #      SIMPLER: paste your NuGet.config URL (the service index) — the verb resolves
 #      PackageBaseAddress itself:
-#        dotnet $ua discover-max --feed-url https://<host>/artifactory/api/nuget/v3/v-nuget/index.json --out C:\ua-estate\compat-cache
+#        dotnet $ua discover-max --feed-url https://<host>/artifactory/api/nuget/v3/v-nuget/index.json --out C:\ua-estate\compat-cache --feed-out C:\ua-estate\feed-versions.v1.json
+#      (--feed-out = the drift feed contract — ua drift --feed reads the same truth;
+#       omit it if you only drive upgrade-plan/update — they read the cache directly)
 #      Credentials (if the instance requires them — env vars, never the command line):
 #        $env:NUGET_FEED_USER = "<your-username>"          # password may be your Artifactory API key
 #        $env:NUGET_FEED_PASSWORD = "<password-or-api-key>"
