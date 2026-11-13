@@ -27,6 +27,12 @@ dotnet $ua discover-max --from-folder C:\ua-estate\nupkg-feed --out C:\ua-estate
 # 3) the estate view — per TFM group x package: pins, potentialMax, allowedMax, status.
 dotnet $ua upgrade-plan C:\ua-estate\fixture --cache C:\ua-estate\compat-cache --out C:\ua-estate\upgrade-plan.json
 
+# IF EVERYTHING STILL READS (tfm-unknown) after the fix: does the lockfile channel carry anything?
+$lf = Get-Content C:\ua-estate\fixture\input\lockfile-rows.v2.json -Raw | ConvertFrom-Json
+"$($lf.repos.Count) repos in the lockfile channel; with tfm evidence: " + (($lf.repos | Where-Object { $_.rows | Where-Object { $_.tfm } } | Measure-Object).Count)
+# 0 repos or 0 with tfm = the estate ships no lockfiles (or deps.json was not indexed) — the
+# frameworks are then unevidenced and (tfm-unknown) is the honest state until lockfiles exist.
+
 # READ BACK TO THE AGENT: the status counts, one line —
 (Get-Content C:\ua-estate\upgrade-plan.json -Raw | ConvertFrom-Json).groups.PSObject.Properties | ForEach-Object { $_.Value } | ForEach-Object { $_.status } | Group-Object | Sort-Object Count -Descending | ForEach-Object { "$($_.Count)x $($_.Name)" }
 ```
