@@ -154,7 +154,7 @@ public static class Upgrade
         string? ceiling = null; string? blocked = null;
         foreach (var tfm in tfms)
         {
-            var one = CompatCache.Ceiling(cache, tfm, peg?.BoundKind, peg?.BoundVersion);
+            var one = CompatCache.Ceiling(cache, tfm, peg?.BoundKind, peg?.BoundVersion, maxVersion: potentialMax); // feed-truth caps the recommendation
             if (one is null) { blocked = tfm; break; }
             if (ceiling is null || Rank(one, ceiling) < 0) ceiling = one;
         }

@@ -174,19 +174,30 @@ public static class Program
                 // --join-fixture fills usedVersions/usedByRepos/InUse from the fixture's live
                 // pins (the estate join); probing NEVER destroys those joins, and the join
                 // never rewrites probed records.
-                int? badDm = ValueFlagError(args, "--from-folder", "--out", "--package", "--join-fixture");
+                int? badDm = ValueFlagError(args, "--from-folder", "--out", "--package", "--join-fixture", "--feed-url", "--feed-out");
                 if (badDm is not null) { Console.Error.WriteLine($"error: {args[badDm.Value]} requires a value"); return 1; }
                 var folderDm = GetOpt(args, "--from-folder");
                 var joinDm = GetOpt(args, "--join-fixture");
+                var feedUrlDm = GetOpt(args, "--feed-url");
                 var outDirDm = GetOpt(args, "--out");
-                if (outDirDm is null || (folderDm is null && joinDm is null))
-                { Console.Error.WriteLine("error: discover-max requires --out <cache-dir> and at least one of --from-folder <nupkg-dir> / --join-fixture <fixture-dir>"); return 1; }
+                if (outDirDm is null || (folderDm is null && joinDm is null && feedUrlDm is null))
+                { Console.Error.WriteLine("error: discover-max requires --out <cache-dir> and at least one of --join-fixture <fixture-dir> / --from-folder <nupkg-dir> / --feed-url <nuget-v3-flat-base>"); return 1; }
+                if (joinDm is not null)
+                {
+                    var rcJoin = Upgrade.Join(outDirDm!, joinDm!);
+                    if (rcJoin != 0) return rcJoin;
+                }
                 if (folderDm is not null)
                 {
                     var rcProbe = CompatCache.ProbeFolder(folderDm, outDirDm!, GetOpt(args, "--package"));
                     if (rcProbe != 0) return rcProbe;
                 }
-                if (joinDm is not null) return Upgrade.Join(outDirDm!, joinDm!);
+                if (feedUrlDm is not null)
+                {
+                    // the feed path: version lists + candidate nupkg downloads from a NuGet v3
+                    // flat container (nuget.org for externals; your Artifactory base for internals)
+                    return CompatCache.ProbeFeed(feedUrlDm, outDirDm!, GetOpt(args, "--package"), GetOpt(args, "--feed-out"));
+                }
                 return 0;
             }
             if (args.Length >= 1 && args[0] == "update")
@@ -4617,6 +4628,67 @@ public static class Program
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL upgrade-plan-layer-2: {ex.Message}"); }
 
+        // ---- the feed path: version lists + candidate downloads from a NuGet v3 flat container ----
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "ua-feed-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(root);
+            var cacheDir3 = Path.Combine(root, "cache"); Directory.CreateDirectory(cacheDir3);
+            // the fake feed (a hermetic HttpMessageHandler — no network): an index with a newer
+            // major, a prerelease (never a candidate), and per-version nupkg zips
+            byte[] Nupkg(params string[] tfms)
+            {
+                using var ms = new MemoryStream();
+                using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                    foreach (var tfm in tfms) zip.CreateEntry($"lib/{tfm}/lib.dll");
+                return ms.ToArray();
+            }
+            var indexServed = ""; var nupkgUrlsServed = new List<string>();
+            var handler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url.EndsWith("/contoso.sample/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"versions\":[\"13.0.2\",\"15.0.4\",\"15.0.7-beta\",\"16.0.0\"]}"));
+                    if (url.EndsWith("/contoso.sample/13.0.2/contoso.sample.13.0.2.nupkg")) { nupkgUrlsServed.Add(url); return (200, Nupkg("net8.0")); }
+                    if (url.EndsWith("/contoso.sample/15.0.4/contoso.sample.15.0.4.nupkg")) { nupkgUrlsServed.Add(url); return (200, Nupkg("net10.0")); }
+                    if (url.EndsWith("/contoso.sample/16.0.0/contoso.sample.16.0.0.nupkg")) { nupkgUrlsServed.Add(url); return (200, Nupkg("net11.0")); }
+                    return (404, []);
+                }
+            };
+            // the feed path operates on EXISTING cache entries (the join's output) — seed one
+            Program.WriteArtifactFile(CompatCache.CachePath(cacheDir3, "Contoso.Sample"),
+                JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Sample" }, new JsonSerializerOptions { WriteIndented = true }));
+            // the candidate-selection pin (pure): latest per major, in-use added, prerelease never
+            var cands = CompatCache.SelectCandidates(new[] { "13.0.2", "15.0.4", "15.0.7-beta", "16.0.0" }, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "13.0.2" }, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            if (string.Join(",", cands) != "13.0.2,15.0.4,16.0.0") throw new Exception($"candidates = latest-per-major (3 majors) + in-use, prerelease excluded, ordinal order (got {string.Join(",", cands)})");
+
+            if (CompatCache.ProbeFeed("https://feed.example/v3-flatcontainer/", cacheDir3, "Contoso.Sample", Path.Combine(root, "feed-versions.v1.json"), handler) != 0)
+                throw new Exception("ProbeFeed exited non-zero");
+            // URL casing law: lowercase id AND version in both the index and the nupkg URLs
+            if (!nupkgUrlsServed.All(u => u.Contains("/contoso.sample/"))) throw new Exception("nupkg URLs must lowercase the id");
+            if (nupkgUrlsServed.Any(u => u.Contains("15.0.7-beta"))) throw new Exception("prerelease must never be downloaded");
+            var probed3 = CompatCache.Load(cacheDir3, "Contoso.Sample") ?? throw new Exception("feed cache missing");
+            if (probed3.TotalVersionsAvailable != 4 || !probed3.AllVersionsSimple.Contains("15.0.7-beta"))
+                throw new Exception("allVersionsSimple must be the feed's full list (prerelease listed, never probed)");
+            if (CompatCache.Ceiling(probed3, "net8.0", null, null) != "13.0.2" || CompatCache.Ceiling(probed3, "net11.0", null, null) != "16.0.0")
+                throw new Exception("the feed probe must extend the per-TFM ceilings (net8=13.0.2, net11=16.0.0)");
+            var feedFile = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(root, "feed-versions.v1.json")));
+            var fp = feedFile.GetProperty("packages").EnumerateArray().Single();
+            var fpId = fp.GetProperty("packageId").GetString();
+            var fpVer = fp.GetProperty("version").GetString();
+            if (fpId != "Contoso.Sample" || fpVer != "16.0.0")
+                throw new Exception($"feed-out must carry the drift contract's latest-stable per package (got {fpId} {fpVer})");
+            // the ceiling cap: a probed record above the feed's list is not a recommendation
+            probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });
+            if (CompatCache.Ceiling(probed3, "net8.0", null, null, maxVersion: "16.0.0") != "13.0.2")
+                throw new Exception("the feed cap must exclude probed versions above the feed's list");
+
+            Console.WriteLine("ok   feed-path (URL casing; index parse; prerelease never a candidate; per-major download; feed-out drift contract; ceiling cap)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL feed-path: {ex.Message}"); }
+
+        Console.WriteLine(fail == 0 ? $"SELFTEST PASS ({pass} cases)" : $"SELFTEST FAIL ({fail} failing)");
+
         Console.WriteLine(fail == 0 ? $"SELFTEST PASS ({pass} cases)" : $"SELFTEST FAIL ({fail} failing)");
         return fail == 0 ? 0 : 1;
     }
@@ -4656,5 +4728,19 @@ public static class Program
             if (gl != al) { Console.WriteLine($"  line {i + 1}:\n    golden: {gl.TrimEnd()}\n    actual: {al.TrimEnd()}"); shown++; }
         }
         if (shown == 0 && golden != actual) Console.WriteLine("  (length/trailing-byte difference)");
+    }
+
+
+    // the hermetic fake feed: routes canned responses by URL suffix, records nothing outside
+    private sealed class FakeFeedHandler : System.Net.Http.HttpMessageHandler
+    {
+        public Func<string, (int Status, byte[] Body)> Responder = _ => (404, []);
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri?.ToString() ?? "";
+            var (status, body) = Responder(url);
+            var response = new System.Net.Http.HttpResponseMessage((System.Net.HttpStatusCode)status) { Content = new System.Net.Http.ByteArrayContent(body) };
+            return Task.FromResult(response);
+        }
     }
 }

@@ -84,7 +84,7 @@ public static class CompatCache
     // stable-parseable, TFM-compatible version the bound admits. null = nothing qualifies
     // (onboarding/unknown — never guessed). Only PROBED records are candidates: the cheap
     // allVersionsSimple list carries no TFM evidence.
-    public static string? Ceiling(CompatCacheFile cache, string repoTfm, string? boundKind, string? boundVersion)
+    public static string? Ceiling(CompatCacheFile cache, string repoTfm, string? boundKind, string? boundVersion, string? maxVersion = null)
     {
         string? best = null;
         foreach (var v in cache.Versions)
@@ -93,6 +93,7 @@ public static class CompatCache
             if (SupportsTfm(v.TargetFrameworks, repoTfm) != true) continue;
             if (boundKind == Pegs.KindExact && Apply.CompareCore(v.Version, boundVersion!) != 0) continue;
             if (boundKind == Pegs.KindMaxExclusive && Apply.CompareCore(v.Version, boundVersion!) >= 0) continue;
+            if (maxVersion is not null && Apply.CompareCore(v.Version, maxVersion) > 0) continue; // feed-truth cap: a probed version the feed does not carry is not a recommendation
             if (best is null || Apply.CompareCore(v.Version, best) > 0) best = v.Version;
         }
         return best;
@@ -175,13 +176,7 @@ public static class CompatCache
                 try
                 {
                     using var zip = System.IO.Compression.ZipFile.OpenRead(path);
-                    tfms = zip.Entries
-                        .Where(e => e.FullName.StartsWith("lib/", StringComparison.OrdinalIgnoreCase) && e.FullName.Length > "lib/".Length)
-                        .Select(e => e.FullName["lib/".Length..].Split('/')[0])
-                        .Where(seg => seg.StartsWith("net", StringComparison.OrdinalIgnoreCase)) // TFM dirs (net8.0, netstandard2.0); excludes marker files like lib/_._
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .OrderBy(t => t, StringComparer.Ordinal)
-                        .ToList();
+                    tfms = TfmFolders(zip);
                 }
                 catch (Exception ex) when (ex is IOException or System.IO.InvalidDataException)
                 {
@@ -189,21 +184,7 @@ public static class CompatCache
                     onboarding++;
                     continue;
                 }
-                var prior = cache.Versions.FirstOrDefault(old => old.Version.Equals(version, StringComparison.OrdinalIgnoreCase));
-                var record = new CompatVersion
-                {
-                    Version = version,
-                    TargetFrameworks = tfms,
-                    SupportsNetStandard = tfms.Any(t => t.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase)),
-                    InUse = prior?.InUse ?? false, // the estate join's InUse survives the probe (a stub record upgrading to a probed record)
-                    Note = tfms.Count == 0 ? "no lib assets probed — undetermined (onboarding)" : null,
-                };
-                record.SupportsNet8 = tfms.Count == 0 ? null : SupportsTfm(tfms, "net8.0");
-                record.SupportsNet10 = tfms.Count == 0 ? null : SupportsTfm(tfms, "net10.0");
-                cache.Versions.RemoveAll(old => old.Version.Equals(version, StringComparison.OrdinalIgnoreCase));
-                cache.Versions.Add(record);
-                probed++;
-                if (tfms.Count == 0) onboarding++;
+                if (ApplyProbeRecord(cache, version, tfms)) onboarding++; else probed++;
             }
             // isLatestForMajor: the highest stable-parseable probed version within each major
             foreach (var grp in cache.Versions.Where(v => Apply.ParseCorePublic(v.Version) is not null).GroupBy(v => Apply.ParseCorePublic(v.Version)![0]))
@@ -217,6 +198,154 @@ public static class CompatCache
         }
         if (onboarding > 0)
             Console.Error.WriteLine($"note: {onboarding} version(s) probed undetermined (no lib assets / unreadable) — they stay out of ceilings until onboarded");
+        return 0;
+    }
+
+    // ---- the shared probe core (folder path and feed path both land here) ----
+
+    // TFM folders are the lib/** first segments that look like frameworks (net8.0,
+    // netstandard2.0); marker files (lib/_._) and non-lib entries are not evidence.
+    private static List<string> TfmFolders(System.IO.Compression.ZipArchive zip) => zip.Entries
+        .Where(e => e.FullName.StartsWith("lib/", StringComparison.OrdinalIgnoreCase) && e.FullName.Length > "lib/".Length)
+        .Select(e => e.FullName["lib/".Length..].Split('/')[0])
+        .Where(seg => seg.StartsWith("net", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(t => t, StringComparer.Ordinal)
+        .ToList();
+
+    // Apply one probe result: a stub record upgrades (InUse preserved), a probed record is
+    // replaced. Returns true when the version landed UNDETERMINED (onboarding).
+    private static bool ApplyProbeRecord(CompatCacheFile cache, string version, List<string> tfms)
+    {
+        var prior = cache.Versions.FirstOrDefault(old => old.Version.Equals(version, StringComparison.OrdinalIgnoreCase));
+        var record = new CompatVersion
+        {
+            Version = version,
+            TargetFrameworks = tfms,
+            SupportsNetStandard = tfms.Any(t => t.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase)),
+            InUse = prior?.InUse ?? false, // the estate join's InUse survives the probe (a stub record upgrading to a probed record)
+            Note = tfms.Count == 0 ? "no lib assets probed — undetermined (onboarding)" : null,
+        };
+        record.SupportsNet8 = tfms.Count == 0 ? null : SupportsTfm(tfms, "net8.0");
+        record.SupportsNet10 = tfms.Count == 0 ? null : SupportsTfm(tfms, "net10.0");
+        cache.Versions.RemoveAll(old => old.Version.Equals(version, StringComparison.OrdinalIgnoreCase));
+        cache.Versions.Add(record);
+        return tfms.Count == 0;
+    }
+
+    // the candidate selection (the brief's selection rule, pure — pinned by selftest): the
+    // latest stable version per major PLUS every in-use version, never re-probing evidence
+    // that already exists; prerelease strings are not candidates
+    internal static List<string> SelectCandidates(IEnumerable<string> versions, IReadOnlySet<string> inUse, IReadOnlySet<string> alreadyProbed)
+    {
+        return versions
+            .Select(v => (v, Core: Apply.ParseCorePublic(v)))
+            .Where(p => p.Core is not null)
+            .GroupBy(p => p.Core![0])
+            .Select(g => g.OrderByDescending(p => p.v, VersionComparer.Instance).First().v)
+            .Concat(versions.Where(v => inUse.Contains(v)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(v => !alreadyProbed.Contains(v))
+            .OrderBy(v => v, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    internal static string IndexUrl(string feedBase, string packageId) =>
+        feedBase.TrimEnd('/') + "/" + packageId.ToLowerInvariant() + "/index.json";
+
+    internal static string NupkgUrl(string feedBase, string packageId, string version) =>
+        feedBase.TrimEnd('/') + "/" + packageId.ToLowerInvariant() + "/" + version.ToLowerInvariant() + "/" + packageId.ToLowerInvariant() + "." + version.ToLowerInvariant() + ".nupkg";
+
+    // ---- the feed path: version lists + candidate nupkg downloads from a NuGet v3 flat
+    // container (nuget.org, or your Artifactory's equivalent base). Network lives HERE at the
+    // edge — the engine still reads files. The HTTP handler is injectable so the selftest
+    // pins the whole loop hermetically (URL casing, JSON shape, download, probe, feed-out).
+    public static int ProbeFeed(string feedBase, string cacheDir, string? packageFilter, string? feedOutPath, System.Net.Http.HttpMessageHandler? handler = null)
+    {
+        var ids = Directory.GetFiles(Path.GetFullPath(cacheDir), "*.json")
+            .Select(f => Path.GetFileName(f)[..^".json".Length])
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        if (packageFilter is not null)
+            ids = ids.Where(id => id.Equals(packageFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (ids.Count == 0)
+        { Console.Error.WriteLine($"error: no cache entries in {cacheDir} — run the join first (discover-max --join-fixture)"); return 1; }
+        using var http = new System.Net.Http.HttpClient(handler ?? new System.Net.Http.HttpClientHandler());
+        http.Timeout = TimeSpan.FromSeconds(30);
+        var feedPackages = new List<Drift.FeedPackage>();
+        var probed = 0; var failures = 0; var notOnFeed = 0;
+        foreach (var id in ids)
+        {
+            Console.Error.WriteLine($"feed {id}: fetching version list");
+            string[] versions;
+            try
+            {
+                var text = http.GetStringAsync(IndexUrl(feedBase, id)).GetAwaiter().GetResult();
+                using var doc = System.Text.Json.JsonDocument.Parse(text);
+                versions = (doc.RootElement.TryGetProperty("versions", out var arr) ? arr.EnumerateArray().Select(v => v.GetString() ?? "") : Enumerable.Empty<string>())
+                    .Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            }
+            catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException)
+            {
+                // 404-class: the package is not on THIS feed (internal packages on nuget.org —
+                // expected; point --feed-url at your Artifactory base for internals)
+                notOnFeed++;
+                Console.Error.WriteLine($"note: {id}: not on this feed or unreachable ({ex.GetType().Name}) — its cache entry stands as-is (internal? use your Artifactory base)");
+                continue;
+            }
+            var cache = Load(cacheDir, id) ?? new CompatCacheFile { Id = id };
+            var merged = cache.AllVersionsSimple.Concat(versions).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+            cache.AllVersionsSimple = merged;
+            cache.TotalVersionsAvailable = merged.Count;
+            cache.FetchedUtc = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+            var latestStable = versions.Where(v => Apply.ParseCorePublic(v) is not null)
+                .OrderByDescending(v => v, VersionComparer.Instance).FirstOrDefault();
+            if (latestStable is not null) feedPackages.Add(new Drift.FeedPackage { PackageId = cache.Id, Version = latestStable }); // the cache's CANONICAL casing, never the filename's lowercase
+            var known = cache.Versions.Where(v => v.TargetFrameworks.Count > 0).Select(v => v.Version).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var inUse = cache.Versions.Where(v => v.InUse).Select(v => v.Version).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var candidates = SelectCandidates(versions, inUse, known);
+            var probedHere = 0;
+            foreach (var version in candidates)
+            {
+                byte[] bytes;
+                try
+                {
+                    bytes = http.GetByteArrayAsync(NupkgUrl(feedBase, id, version)).GetAwaiter().GetResult();
+                }
+                catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or TaskCanceledException)
+                {
+                    Console.Error.WriteLine($"warning: {id} {version}: download failed ({ex.GetType().Name}) — skipped (onboarding)");
+                    failures++;
+                    continue;
+                }
+                List<string> tfms;
+                try
+                {
+                    using var stream = new MemoryStream(bytes);
+                    using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read);
+                    tfms = TfmFolders(zip);
+                }
+                catch (Exception ex) when (ex is IOException or System.IO.InvalidDataException)
+                {
+                    Console.Error.WriteLine($"warning: {id} {version}: unreadable nupkg ({ex.Message}) — skipped (onboarding)");
+                    failures++;
+                    continue;
+                }
+                if (ApplyProbeRecord(cache, version, tfms)) failures++; else { probed++; probedHere++; }
+            }
+            foreach (var grp in cache.Versions.Where(v => Apply.ParseCorePublic(v.Version) is not null).GroupBy(v => Apply.ParseCorePublic(v.Version)![0]))
+            {
+                var latest = grp.OrderByDescending(v => v.Version, VersionComparer.Instance).First();
+                foreach (var v in grp) v.IsLatestForMajor = v.Version == latest.Version;
+            }
+            Program.WriteArtifactFile(CachePath(cacheDir, id),
+                JsonSerializer.Serialize(cache, WriteOpts).ReplaceLineEndings("\n") + "\n");
+            Console.Error.WriteLine($"discovered {id}: feed carries {versions.Length} versions, probed {probedHere} candidate(s), cache now holds {cache.Versions.Count} probed record(s)");
+        }
+        if (feedOutPath is not null && feedPackages.Count > 0)
+            Program.WriteArtifactFile(feedOutPath, JsonSerializer.Serialize(
+                new Drift.FeedFile { SchemaVersion = "feed-versions.v1", Source = feedBase, AsOf = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture), Packages = feedPackages.OrderBy(p => p.PackageId, StringComparer.Ordinal).ToList() }, WriteOpts).ReplaceLineEndings("\n") + "\n");
+        Console.Error.WriteLine($"feed probe done: {probed} candidate(s) probed, {notOnFeed} package(s) not on this feed, {failures} download/parse failure(s)");
         return 0;
     }
 
