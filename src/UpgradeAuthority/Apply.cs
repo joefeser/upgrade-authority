@@ -169,6 +169,54 @@ public static class Apply
     // SPEC-018 §4: exact-pin test extracted for sharing with drift. Same semantics as the edit-site
     // gate above (ranges/floating/prerelease/redacted fail it) with two deliberate divergences
     // stated by the spec: no line-evidence requirement and no comparison target.
+    // Full semver rank, prerelease-aware: the 4-part numeric core compares first, then
+    // prerelease identifiers by the semver rules (numeric identifiers compare numerically,
+    // numeric < alphanumeric, a prerelease ranks BELOW the same core without one). This is
+    // what the upgrade-plan layer's allowPrerelease needs — the numeric comparer cannot order
+    // beta.9 vs beta.556 (ordinal puts 556 first, semantics put it last).
+    internal static int CompareSemver(string a, string b)
+    {
+        var (coreA, preA) = SplitCorePre(a);
+        var (coreB, preB) = SplitCorePre(b);
+        if (coreA is null || coreB is null) return StringComparer.Ordinal.Compare(a, b);
+        for (var i = 0; i < 4; i++)
+        {
+            if (coreA[i] != coreB[i]) return coreA[i].CompareTo(coreB[i]);
+        }
+        if (preA is null && preB is null) return 0;
+        if (preA is null) return 1;  // stable outranks a prerelease of the same core
+        if (preB is null) return -1;
+        var idsA = preA.Split('.');
+        var idsB = preB.Split('.');
+        for (var i = 0; i < Math.Max(idsA.Length, idsB.Length); i++)
+        {
+            if (i >= idsA.Length) return -1; // a shorter prerelease ranks below a longer one
+            if (i >= idsB.Length) return 1;
+            var numA = long.TryParse(idsA[i], out var na);
+            var numB = long.TryParse(idsB[i], out var nb);
+            if (numA && numB) { if (na != nb) return na.CompareTo(nb); }
+            else if (numA) return -1;       // numeric identifiers rank below alphanumeric
+            else if (numB) return 1;
+            else { var c = StringComparer.Ordinal.Compare(idsA[i], idsB[i]); if (c != 0) return c; }
+        }
+        return 0;
+    }
+
+    private static (int[]? Core, string? Pre) SplitCorePre(string v)
+    {
+        var dash = v.IndexOf('-');
+        var coreText = dash < 0 ? v : v[..dash];
+        var pre = dash < 0 ? null : v[(dash + 1)..];
+        var plus = pre?.IndexOf('+') ?? -1;
+        if (plus >= 0) pre = pre![..plus];
+        var parts = coreText.Split('.');
+        if (parts.Length is < 1 or > 4) return (null, pre);
+        var core = new int[4];
+        for (var i = 0; i < parts.Length; i++)
+            if (!int.TryParse(parts[i], out core[i]) || core[i] < 0) return (null, pre);
+        return (core, string.IsNullOrEmpty(pre) ? null : pre);
+    }
+
     internal static bool IsExactPin(string constraint) =>
         constraint.Length > 0 && !constraint.StartsWith("redacted:") && ParseCore(constraint) is not null;
     static int[]? ParseCore(string v)

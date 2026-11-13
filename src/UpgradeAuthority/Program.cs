@@ -4695,7 +4695,7 @@ public static class Program
                 JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Sample" }, new JsonSerializerOptions { WriteIndented = true }));
             // the candidate-selection pin (pure): latest per major, in-use added, prerelease never
             var cands = CompatCache.SelectCandidates(new[] { "13.0.2", "15.0.4", "15.0.7-beta", "16.0.0" }, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "13.0.2" }, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-            if (string.Join(",", cands) != "13.0.2,15.0.4,16.0.0") throw new Exception($"candidates = latest-per-major (3 majors) + in-use, prerelease excluded, ordinal order (got {string.Join(",", cands)})");
+            if (string.Join(",", cands) != "13.0.2,15.0.7-beta,16.0.0") throw new Exception($"candidates = latest-per-major INCLUDING prerelease (a record is not a recommendation; major 15's latest is the beta) + in-use (got {string.Join(",", cands)})");
 
             // the SERVICE INDEX door: paste the NuGet.config URL — the verb resolves
             // PackageBaseAddress itself (a second handler serves the index at that path)
@@ -4901,11 +4901,30 @@ public static class Program
             {
                 Id = "Contoso.PreOnly",
                 AllVersionsSimple = ["0.4.0-beta.1", "0.4.0-beta.2"],
-                Versions = [new CompatVersion { Version = "0.4.0-beta.1", TargetFrameworks = ["net8.0"] }],
+                Versions = [new CompatVersion { Version = "0.4.0-beta.1", TargetFrameworks = ["net8.0"] }, new CompatVersion { Version = "0.4.0-beta.2", TargetFrameworks = ["net8.0"] }],
             };
             var pre = Upgrade.Resolve(preOnly, ["net8.0"], null, []);
             if (pre.Status != "compat-blocked" || pre.Note is null || !pre.Note.Contains("every published version", StringComparison.OrdinalIgnoreCase))
                 throw new Exception($"a prerelease-only package must say so in the note (got {pre.Note})");
+
+            // (5) allowPrerelease: semver rank rules first
+            if (Apply.CompareSemver("1.2.0-beta.9", "1.2.0-beta.556") >= 0) throw new Exception("beta.9 must rank BELOW beta.556 (numeric identifiers)");
+            if (Apply.CompareSemver("1.2.0", "1.2.0-beta.1") <= 0) throw new Exception("stable must outrank a prerelease of the same core");
+            if (Apply.CompareSemver("2.0.0-beta.1", "1.9.3") <= 0) throw new Exception("a higher core outranks any lower stable, prerelease or not");
+            // the merge: the estate's flag promotes even without a master flag (OR-merged, noted)
+            var apDir = Path.Combine(root, "pegs-ap"); Directory.CreateDirectory(apDir);
+            File.WriteAllText(Path.Combine(apDir, "master.json"), "{}");
+            File.WriteAllText(Path.Combine(apDir, "estate.json"), "{\"schemaVersion\":\"pegs.v0\",\"pegs\":[ {\"packageName\":\"Contoso.PreOnly\",\"allowPrerelease\":true} ]}");
+            var apMerge = Pegs.Merge(Pegs.Load(Path.Combine(apDir, "master.json")), Pegs.Load(Path.Combine(apDir, "estate.json")));
+            if (!apMerge.ByPackage["Contoso.PreOnly"].AllowPrerelease) throw new Exception("the estate's allowPrerelease must promote");
+            // the resolution flips: prerelease-only + the flag = would-update with the beta ceiling
+            var apPeg = apMerge.ByPackage["Contoso.PreOnly"];
+            var preAllowed = Upgrade.Resolve(preOnly, ["net8.0"], apPeg, []);
+            if (preAllowed.Status != "would-update" || preAllowed.AllowedMax != "0.4.0-beta.2")
+                throw new Exception($"allowPrerelease must resolve the prerelease-only ceiling (got {preAllowed.Status}/{preAllowed.AllowedMax})");
+            // and WITHOUT the flag the same package stays blocked (the conservative default)
+            var preBlocked = Upgrade.Resolve(preOnly, ["net8.0"], null, []);
+            if (preBlocked.Status != "compat-blocked") throw new Exception("without the flag the prerelease-only package stays blocked");
 
             // the ceiling cap: a probed record above the feed's list is not a recommendation
             probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });

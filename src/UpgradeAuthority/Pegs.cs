@@ -20,6 +20,11 @@ public sealed class PegEntry
     [JsonPropertyName("packageName")] public string PackageName { get; set; } = "";
     [JsonPropertyName("kind")] public string Kind { get; set; } = ""; // exact | maxExclusive | forceMax
     [JsonPropertyName("version")] public string Version { get; set; } = "";
+    // allowPrerelease: the operator opts the package INTO prerelease eligibility — without it
+    // the ceiling is stable-only (never guessed). Deliberately OR-merged across master/estate:
+    // either operator turning it on is a deliberate act (the conservative default is off
+    // everywhere); this is the one flag the tighten-only law does not constrain, stated here.
+    [JsonPropertyName("allowPrerelease")] public bool? AllowPrerelease { get; set; }
     [JsonPropertyName("note")] public string? Note { get; set; }
 }
 
@@ -31,7 +36,7 @@ public static class Pegs
 
     // A resolved peg: the binding bound (if any) plus the asserted floor (if any). The bound
     // narrows what update may choose; the floor is intent the driver must honor or refuse.
-    public sealed record Resolved(string PackageName, string? BoundKind, string? BoundVersion, string? FloorVersion);
+    public sealed record Resolved(string PackageName, string? BoundKind, string? BoundVersion, string? FloorVersion, bool AllowPrerelease = false);
 
     public static PegsFile Load(string path)
     {
@@ -42,6 +47,9 @@ public static class Pegs
         foreach (var peg in file.Pegs)
         {
             if (peg.PackageName.Length == 0) throw new InvalidDataException($"pegs entry with empty packageName in {path}");
+            // a bare allowPrerelease entry (no bound, no floor) is legal: the flag alone opts the
+            // package into prerelease eligibility without constraining it
+            if (peg.Kind.Length == 0 && peg.AllowPrerelease == true) continue;
             if (peg.Kind is not (KindExact or KindMaxExclusive or KindForceMax))
                 throw new InvalidDataException($"peg {peg.PackageName}: unknown kind '{peg.Kind}' (exact | maxExclusive | forceMax)");
             if (peg.Version.Length == 0) throw new InvalidDataException($"peg {peg.PackageName}: empty version");
@@ -64,7 +72,10 @@ public static class Pegs
         var estateBound = CollectBound(estate, "estate");
         var masterFloors = CollectFloors(master, "master");
         var estateFloors = CollectFloors(estate, "estate");
+        var masterAllowPre = CollectAllowPrerelease(master);
+        var estateAllowPre = CollectAllowPrerelease(estate);
         foreach (var packageName in masterBound.Keys.Concat(estateBound.Keys).Concat(masterFloors.Keys).Concat(estateFloors.Keys)
+            .Concat(masterAllowPre).Concat(estateAllowPre)
             .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var hasMasterBound = masterBound.TryGetValue(packageName, out var mb);
@@ -91,6 +102,9 @@ public static class Pegs
             else if (hasMasterBound) (boundKind, boundVersion) = (mb!.Kind, mb.Version);
             else if (hasEstateBound) (boundKind, boundVersion) = (eb!.Kind, eb.Version);
             var floor = masterFloors.TryGetValue(packageName, out var mf) ? mf : estateFloors.TryGetValue(packageName, out var ef) ? ef : null;
+            var allowPre = masterAllowPre.Contains(packageName) || estateAllowPre.Contains(packageName);
+            if (!masterAllowPre.Contains(packageName) && estateAllowPre.Contains(packageName))
+                notes.Add($"{packageName}: estate enables prerelease eligibility (the master did not)");
             if (masterFloors.ContainsKey(packageName) && estateFloors.ContainsKey(packageName) && masterFloors[packageName] != estateFloors[packageName])
                 throw new InvalidDataException($"peg conflict for {packageName}: forceMax floor declared twice (master {masterFloors[packageName]}, estate {estateFloors[packageName]})");
             if (floor is not null && boundKind is not null)
@@ -100,7 +114,7 @@ public static class Pegs
                 if (floorVsBound is not null && unsatisfiable)
                     throw new InvalidDataException($"peg contradiction for {packageName}: forceMax floor {floor} is not satisfiable under {boundKind} {boundVersion}");
             }
-            byPackage[packageName] = new Resolved(packageName, boundKind, boundVersion, floor);
+            byPackage[packageName] = new Resolved(packageName, boundKind, boundVersion, floor, allowPre);
         }
         return (byPackage, notes);
     }
@@ -119,13 +133,16 @@ public static class Pegs
         var map = new Dictionary<string, PegEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var peg in file.Pegs)
         {
-            if (peg.Kind == KindForceMax) continue;
+            if (peg.Kind == KindForceMax || peg.Kind.Length == 0) continue; // bare allowPrerelease entries carry no bound
             if (map.ContainsKey(peg.PackageName))
                 throw new InvalidDataException($"peg conflict in {label}: {peg.PackageName} bound twice ({map[peg.PackageName].Kind} {map[peg.PackageName].Version} and {peg.Kind} {peg.Version})");
             map[peg.PackageName] = peg;
         }
         return map;
     }
+
+    private static HashSet<string> CollectAllowPrerelease(PegsFile file) =>
+        file.Pegs.Where(p => p.AllowPrerelease == true).Select(p => p.PackageName).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static Dictionary<string, string> CollectFloors(PegsFile file, string label)
     {

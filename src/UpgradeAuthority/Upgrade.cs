@@ -158,16 +158,21 @@ public static class Upgrade
         var prereleasePins = allPins.Where(v => Apply.ParseCorePublic(v) is null).ToList();
         string? potentialMax = null;
         if (cache is not null)
-            potentialMax = cache.AllVersionsSimple.Where(v => Apply.ParseCorePublic(v) is not null)
-                .OrderByDescending(v => v, Comparer<string>.Create((a, b) => Rank(a, b))).FirstOrDefault();
+        {
+            var eligible = peg?.AllowPrerelease == true
+                ? cache.AllVersionsSimple.Where(v => v.Contains('-') || Apply.ParseCorePublic(v) is not null) // the operator opted into prerelease eligibility
+                : cache.AllVersionsSimple.Where(v => Apply.ParseCorePublic(v) is not null);                    // stable-only: the default
+            potentialMax = eligible.OrderByDescending(v => v, Comparer<string>.Create((a, b) => Apply.CompareSemver(a, b))).FirstOrDefault();
+        }
         if (cache is null)
             return new PackageResolution("", potentialMax, null, peg, "unknown-package", peg is not null, false, "no compatibility cache entry — run discover-max (onboarding)", tfms);
         if (tfms.Count == 0)
             return new PackageResolution(cache.Id, potentialMax, null, peg, "tfm-unknown", peg is not null, LicenseShift(cache), "the repo's target framework is not evidenced (no tfm on any fact) — cannot compute a ceiling", tfms);
         string? ceiling = null; string? blocked = null;
+        var allowPre = peg?.AllowPrerelease == true;
         foreach (var tfm in tfms)
         {
-            var one = CompatCache.Ceiling(cache, tfm, peg?.BoundKind, peg?.BoundVersion, maxVersion: potentialMax); // feed-truth caps the recommendation
+            var one = CompatCache.Ceiling(cache, tfm, peg?.BoundKind, peg?.BoundVersion, maxVersion: potentialMax, allowPrerelease: allowPre); // feed-truth caps the recommendation
             if (one is null) { blocked = tfm; break; }
             if (ceiling is null || Rank(one, ceiling) < 0) ceiling = one;
         }
@@ -180,17 +185,18 @@ public static class Upgrade
             return new PackageResolution(cache.Id, potentialMax, null, peg, "compat-blocked", peg is not null, LicenseShift(cache), note, tfms);
         }
         var floor = peg?.FloorVersion;
-        if (floor is not null && (ceiling is null || Rank(ceiling, floor) < 0))
+        if (floor is not null && (ceiling is null || Apply.CompareSemver(ceiling, floor) < 0))
             return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "floor-violation", true, LicenseShift(cache), $"forceMax floor {floor} is unreachable on this TFM set (ceiling {ceiling})", tfms);
-        if (pins.Count > 0)
+        var mathPins = allowPre ? allPins : pins; // with the opt-in, prerelease pins are in scope
+        if (mathPins.Count > 0)
         {
-            var highest = pins.OrderByDescending(v => v, Comparer<string>.Create((a, b) => Rank(a, b))).First();
-            if (Rank(highest, ceiling!) > 0)
+            var highest = mathPins.OrderByDescending(v => v, Comparer<string>.Create((a, b) => Apply.CompareSemver(a, b))).First();
+            if (Apply.CompareSemver(highest, ceiling!) > 0)
                 return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "pin-above-ceiling", peg is not null, LicenseShift(cache), $"a pin ({highest}) sits above the computed ceiling ({ceiling}) — the cache is stale or predates the pin; NEVER downgraded, refresh the cache", tfms);
-            if (Rank(highest, ceiling!) == 0)
+            if (Apply.CompareSemver(highest, ceiling!) == 0)
                 return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "current", peg is not null, LicenseShift(cache), null, tfms);
         }
-        if (prereleasePins.Count > 0 && pins.Count == 0)
+        if (prereleasePins.Count > 0 && pins.Count == 0 && !allowPre)
             return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "prerelease-pin", peg is not null, LicenseShift(cache),
                 $"pinned at {string.Join(", ", prereleasePins.Order(StringComparer.Ordinal))} — prerelease sites are never guessed (N3); the stable ceiling is shown for reference", tfms);
         return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "would-update", peg is not null, LicenseShift(cache), null, tfms);

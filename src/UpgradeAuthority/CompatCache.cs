@@ -115,17 +115,22 @@ public static class CompatCache
     // stable-parseable, TFM-compatible version the bound admits. null = nothing qualifies
     // (onboarding/unknown — never guessed). Only PROBED records are candidates: the cheap
     // allVersionsSimple list carries no TFM evidence.
-    public static string? Ceiling(CompatCacheFile cache, string repoTfm, string? boundKind, string? boundVersion, string? maxVersion = null)
+    public static string? Ceiling(CompatCacheFile cache, string repoTfm, string? boundKind, string? boundVersion, string? maxVersion = null, bool allowPrerelease = false)
     {
         string? best = null;
         foreach (var v in cache.Versions)
         {
-            if (Apply.ParseCorePublic(v.Version) is null) continue; // prerelease/floating: not a stable candidate
+            var isStable = Apply.ParseCorePublic(v.Version) is not null;
+            if (!isStable)
+            {
+                if (!allowPrerelease) continue;         // prerelease: only with the operator's opt-in
+                if (!v.Version.Contains('-')) continue; // unparseable non-prerelease junk stays out
+            }
             if (SupportsTfm(v.TargetFrameworks, repoTfm) != true) continue;
-            if (boundKind == Pegs.KindExact && Apply.CompareCore(v.Version, boundVersion!) != 0) continue;
-            if (boundKind == Pegs.KindMaxExclusive && Apply.CompareCore(v.Version, boundVersion!) >= 0) continue;
-            if (maxVersion is not null && Apply.CompareCore(v.Version, maxVersion) > 0) continue; // feed-truth cap: a probed version the feed does not carry is not a recommendation
-            if (best is null || Apply.CompareCore(v.Version, best) > 0) best = v.Version;
+            if (boundKind == Pegs.KindExact && Apply.CompareSemver(v.Version, boundVersion!) != 0) continue;
+            if (boundKind == Pegs.KindMaxExclusive && Apply.CompareSemver(v.Version, boundVersion!) >= 0) continue;
+            if (maxVersion is not null && Apply.CompareSemver(v.Version, maxVersion) > 0) continue; // feed-truth cap: a probed version the feed does not carry is not a recommendation
+            if (best is null || Apply.CompareSemver(v.Version, best) > 0) best = v.Version;
         }
         return best;
     }
@@ -135,7 +140,7 @@ public static class CompatCache
     // driver refuses on, never a silent downgrade of intent).
     public static (string? Max, bool FloorUnsatisfiable, string? Floor) AllowedMax(CompatCacheFile cache, string repoTfm, Pegs.Resolved? peg)
     {
-        var max = Ceiling(cache, repoTfm, peg?.BoundKind, peg?.BoundVersion);
+        var max = Ceiling(cache, repoTfm, peg?.BoundKind, peg?.BoundVersion, allowPrerelease: peg?.AllowPrerelease ?? false);
         var floor = peg?.FloorVersion;
         var violated = floor is not null && (max is null || Apply.CompareCore(max, floor) < 0);
         return (max, violated, violated ? floor : null);
@@ -181,20 +186,21 @@ public static class CompatCache
             cache.AllVersionsSimple = group.Select(p => p.Version).Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(v => v, StringComparer.Ordinal).ToList();
             cache.FetchedUtc = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
-            // probe targets (the brief's selection rule): the latest stable-parseable version per
-            // major PLUS every in-use version — the estate's pinned versions MUST get TFM records
-            // or their ceilings cannot resolve (the first estate census: 199 compat-blocked because
-            // latest-per-major alone skipped the pinned versions). Already-probed versions are
-            // never re-read.
+            // probe targets (the brief's selection rule): the latest version per major INCLUDING
+            // prerelease (an allowPrerelease peg later needs the record to exist — probing a
+            // record is not a recommendation; eligibility is decided at resolve time) PLUS every
+            // in-use version — the estate's pinned versions MUST get TFM records or their ceilings
+            // cannot resolve (the first estate census: 199 compat-blocked because latest-per-major
+            // alone skipped the pinned versions). Already-probed versions are never re-read.
             // "already probed" = a record with real TFM evidence: the estate join's stub records
             // (InUse, undetermined TFMs) are precisely the versions that need probing
             var known = cache.Versions.Where(v => v.TargetFrameworks.Count > 0).Select(v => v.Version).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var inUse = cache.Versions.Where(v => v.InUse).Select(v => v.Version).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var probeTargets = group
-                .Select(p => (p.Version, Core: Apply.ParseCorePublic(p.Version)))
-                .Where(p => p.Core is not null)
-                .GroupBy(p => p.Core![0])
-                .Select(g => g.OrderByDescending(p => p.Version, VersionComparer.Instance).First().Version) // full 4-part rank, not major-only
+                .Select(p => (p.Version, Major: MajorOf(p.Version)))
+                .Where(p => p.Major is not null)
+                .GroupBy(p => p.Major!.Value)
+                .Select(g => g.OrderByDescending(p => p.Version, SemverComparer.Instance).First().Version) // full semver rank: a prerelease can be a major's latest
                 .Concat(group.Select(p => p.Version).Where(v => inUse.Contains(v)))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Where(v => !known.Contains(v))
@@ -313,15 +319,23 @@ public static class CompatCache
     internal static List<string> SelectCandidates(IEnumerable<string> versions, IReadOnlySet<string> inUse, IReadOnlySet<string> alreadyProbed)
     {
         return versions
-            .Select(v => (v, Core: Apply.ParseCorePublic(v)))
-            .Where(p => p.Core is not null)
-            .GroupBy(p => p.Core![0])
-            .Select(g => g.OrderByDescending(p => p.v, VersionComparer.Instance).First().v)
+            .Select(v => (v, Major: MajorOf(v)))
+            .Where(p => p.Major is not null)
+            .GroupBy(p => p.Major!.Value)
+            .Select(g => g.OrderByDescending(p => p.v, SemverComparer.Instance).First().v) // latest per major INCLUDING prerelease (records, not recommendations)
             .Concat(versions.Where(v => inUse.Contains(v)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(v => !alreadyProbed.Contains(v))
             .OrderBy(v => v, StringComparer.Ordinal)
             .ToList();
+    }
+
+    // the major of a version string, prerelease tolerated ("1.2.0-beta.1" -> 1); unparseable -> null
+    private static int? MajorOf(string v)
+    {
+        var core = v.Split('-')[0];
+        var first = core.Split('.')[0];
+        return int.TryParse(first, out var m) && m >= 0 ? m : null;
     }
 
     internal static string IndexUrl(string feedBase, string packageId) =>
@@ -551,21 +565,16 @@ public static class CompatCache
         return line.Length > 220 ? line[..220] + "…" : line;
     }
 
-    // Full 4-part numeric rank for stable-parseable versions (CompareCore against a constant
-    // ranks by the FIRST differing part only — it cannot order 15.0.2 vs 15.0.4 against "0").
+    // full semver rank (prerelease-aware); a stable-only alias kept for callers that mean it
     private sealed class VersionComparer : IComparer<string>
     {
         public static readonly VersionComparer Instance = new();
-        public int Compare(string? a, string? b)
-        {
-            var pa = Apply.ParseCorePublic(a ?? ""); var pb = Apply.ParseCorePublic(b ?? "");
-            if (pa is null || pb is null) return StringComparer.Ordinal.Compare(a, b);
-            for (var i = 0; i < 4; i++)
-            {
-                var x = i < pa.Length ? pa[i] : 0; var y = i < pb.Length ? pb[i] : 0;
-                if (x != y) return x.CompareTo(y);
-            }
-            return 0;
-        }
+        public int Compare(string? a, string? b) => Apply.CompareSemver(a ?? "", b ?? "");
+    }
+
+    private sealed class SemverComparer : IComparer<string>
+    {
+        public static readonly SemverComparer Instance = new();
+        public int Compare(string? a, string? b) => Apply.CompareSemver(a ?? "", b ?? "");
     }
 }
