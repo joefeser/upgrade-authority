@@ -105,7 +105,21 @@ public static class Upgrade
             Program.WriteArtifactFile(CompatCache.CachePath(cacheDir, packageId), JsonSerializer.Serialize(cache, WriteOpts).ReplaceLineEndings("\n") + "\n");
             joined++;
         }
-        Console.Error.WriteLine($"joined {joined} package(s) from the fixture into the cache ({cacheDir})");
+        // THE PRUNE (2026-11-13, the system.commandline.hosting mystery): the cache mirrors the
+        // CURRENT scoped estate — packages whose only consumer left the scope (or the estate)
+        // must leave the cache too, or stale pre-scope entries haunt every later census as
+        // compat-blocked rows the operator cannot explain. The cache is regenerable (feed truth
+        // re-fetches in seconds); pruning deletes nothing precious.
+        var pruned = 0;
+        foreach (var cacheFile in Directory.GetFiles(cacheDir, "*.json"))
+        {
+            var id = Path.GetFileNameWithoutExtension(cacheFile);
+            if (touched.Keys.Contains(id, StringComparer.OrdinalIgnoreCase)) continue;
+            File.Delete(cacheFile);
+            pruned++;
+            Console.Error.WriteLine($"pruned {id}: no longer consumed by the scoped estate");
+        }
+        Console.Error.WriteLine($"joined {joined} package(s) from the fixture into the cache ({cacheDir})" + (pruned > 0 ? $" — pruned {pruned} stale entr{(pruned == 1 ? "y" : "ies")}" : ""));
         return 0;
     }
 

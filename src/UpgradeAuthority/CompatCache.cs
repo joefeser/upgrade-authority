@@ -348,7 +348,7 @@ public static class CompatCache
     // container (nuget.org, or your Artifactory's equivalent base). Network lives HERE at the
     // edge — the engine still reads files. The HTTP handler is injectable so the selftest
     // pins the whole loop hermetically (URL casing, JSON shape, download, probe, feed-out).
-    public static int ProbeFeed(string feedBase, string cacheDir, string? packageFilter, string? feedOutPath, System.Net.Http.HttpMessageHandler? handler = null)
+    public static async Task<int> ProbeFeed(string feedBase, string cacheDir, string? packageFilter, string? feedOutPath, System.Net.Http.HttpMessageHandler? handler = null, int parallel = 8)
     {
         using var http = new System.Net.Http.HttpClient(handler ?? new System.Net.Http.HttpClientHandler());
         http.Timeout = TimeSpan.FromSeconds(120); // nupkg downloads reach tens of MB through corporate proxies; 30s starved the itext7-class packages into onboarding stubs
@@ -433,9 +433,10 @@ public static class CompatCache
                 feedBase = resolved;
             }
         }
-        var feedPackages = new List<Drift.FeedPackage>();
+        var feedPackages = new System.Collections.Concurrent.ConcurrentBag<Drift.FeedPackage>();
+        var notFetchable = new System.Collections.Concurrent.ConcurrentBag<string>();
         var probed = 0; var failures = 0; var notOnFeed = 0;
-        foreach (var id in ids)
+        await Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(parallel, 1, 64) }, async (id, cancellationToken) =>
         {
             Console.Error.WriteLine($"feed {id}: fetching version list");
             string[] versions;
@@ -446,7 +447,7 @@ public static class CompatCache
                 {
                     // the registrations door (JFrog): the registration index lists pages; each page
                     // carries catalogEntry.version + packageContent (the download URL)
-                    var regText = http.GetStringAsync(registrationBase.TrimEnd('/') + "/" + id.ToLowerInvariant() + "/index.json").GetAwaiter().GetResult();
+                    var regText = await http.GetStringAsync(registrationBase.TrimEnd('/') + "/" + id.ToLowerInvariant() + "/index.json");
                     using var regDoc = System.Text.Json.JsonDocument.Parse(regText);
                     var pages = new List<string>();
                     var collected = new List<(string Version, string Content)>();
@@ -464,7 +465,7 @@ public static class CompatCache
                     }
                     foreach (var pageUrl in pages.Distinct(StringComparer.Ordinal))
                     {
-                        var pageText = http.GetStringAsync(pageUrl).GetAwaiter().GetResult();
+                        var pageText = await http.GetStringAsync(pageUrl);
                         using var pageDoc = System.Text.Json.JsonDocument.Parse(pageText);
                         foreach (var leaf in pageDoc.RootElement.GetProperty("items").EnumerateArray())
                         {
@@ -477,7 +478,7 @@ public static class CompatCache
                 }
                 else
                 {
-                    var text = http.GetStringAsync(IndexUrl(feedBase, id)).GetAwaiter().GetResult();
+                    var text = await http.GetStringAsync(IndexUrl(feedBase, id));
                     using var doc = System.Text.Json.JsonDocument.Parse(text);
                     versions = (doc.RootElement.TryGetProperty("versions", out var arr) ? arr.EnumerateArray().Select(v => v.GetString() ?? "") : Enumerable.Empty<string>())
                         .Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -498,8 +499,9 @@ public static class CompatCache
                 };
                 if (ex is not System.Net.Http.HttpRequestException) hint = $"feed returned unparseable data ({ex.GetType().Name}: {FirstLine(ex.Message)})";
                 Console.Error.WriteLine($"note: {id}: not fetchable from this feed — {hint}: {FirstLine(ex.Message)}");
-                notOnFeed++;
-                continue;
+                notFetchable.Add($"{id} ({hint})");
+                Interlocked.Increment(ref notOnFeed);
+                return;
             }
             var cache = Load(cacheDir, id) ?? new CompatCacheFile { Id = id };
             var merged = cache.AllVersionsSimple.Concat(versions).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
@@ -524,7 +526,7 @@ public static class CompatCache
                 catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or TaskCanceledException)
                 {
                     Console.Error.WriteLine($"warning: {id} {version}: download failed ({ex.GetType().Name}) — skipped (onboarding)");
-                    failures++;
+                    Interlocked.Increment(ref failures);
                     continue;
                 }
                 List<string> tfms;
@@ -537,10 +539,10 @@ public static class CompatCache
                 catch (Exception ex) when (ex is IOException or System.IO.InvalidDataException)
                 {
                     Console.Error.WriteLine($"warning: {id} {version}: unreadable nupkg ({ex.Message}) — skipped (onboarding)");
-                    failures++;
+                    Interlocked.Increment(ref failures);
                     continue;
                 }
-                if (ApplyProbeRecord(cache, version, tfms)) failures++; else { probed++; probedHere++; }
+                if (ApplyProbeRecord(cache, version, tfms)) Interlocked.Increment(ref failures); else { Interlocked.Increment(ref probed); probedHere++; }
             }
             foreach (var grp in cache.Versions.Where(v => Apply.ParseCorePublic(v.Version) is not null).GroupBy(v => Apply.ParseCorePublic(v.Version)![0]))
             {
@@ -550,11 +552,17 @@ public static class CompatCache
             Program.WriteArtifactFile(CachePath(cacheDir, id),
                 JsonSerializer.Serialize(cache, WriteOpts).ReplaceLineEndings("\n") + "\n");
             Console.Error.WriteLine($"discovered {id}: feed carries {versions.Length} versions, probed {probedHere} candidate(s), cache now holds {cache.Versions.Count} probed record(s)");
-        }
-        if (feedOutPath is not null && feedPackages.Count > 0)
+        });
+        if (feedOutPath is not null && !feedPackages.IsEmpty)
             Program.WriteArtifactFile(feedOutPath, JsonSerializer.Serialize(
                 new Drift.FeedFile { SchemaVersion = "feed-versions.v1", Source = feedBase, AsOf = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture), Packages = feedPackages.OrderBy(p => p.PackageId, StringComparer.Ordinal).ToList() }, WriteOpts).ReplaceLineEndings("\n") + "\n");
-        Console.Error.WriteLine($"feed probe done: {probed} candidate(s) probed, {notOnFeed} package(s) not on this feed, {failures} download/parse failure(s)");
+        Console.Error.WriteLine($"feed probe done: {probed} candidate(s) probed, {notOnFeed} package(s) not fetchable, {failures} download/parse failure(s)");
+        if (!notFetchable.IsEmpty)
+        {
+            Console.Error.WriteLine($"  not fetchable (the rows that need a decision):");
+            foreach (var entry in notFetchable.Order(StringComparer.Ordinal))
+                Console.Error.WriteLine($"    {entry}");
+        }
         return 0;
     }
 

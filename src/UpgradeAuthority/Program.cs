@@ -174,7 +174,7 @@ public static class Program
                 // --join-fixture fills usedVersions/usedByRepos/InUse from the fixture's live
                 // pins (the estate join); probing NEVER destroys those joins, and the join
                 // never rewrites probed records.
-                int? badDm = ValueFlagError(args, "--from-folder", "--out", "--package", "--join-fixture", "--feed-url", "--feed-out");
+                int? badDm = ValueFlagError(args, "--from-folder", "--out", "--package", "--join-fixture", "--feed-url", "--feed-out", "--parallel");
                 if (badDm is not null) { Console.Error.WriteLine($"error: {args[badDm.Value]} requires a value"); return 1; }
                 var folderDm = GetOpt(args, "--from-folder");
                 var joinDm = GetOpt(args, "--join-fixture");
@@ -196,7 +196,10 @@ public static class Program
                 {
                     // the feed path: version lists + candidate nupkg downloads from a NuGet v3
                     // flat container (nuget.org for externals; your Artifactory base for internals)
-                    return CompatCache.ProbeFeed(feedUrlDm, outDirDm!, GetOpt(args, "--package"), GetOpt(args, "--feed-out"));
+                    var parallelDm = GetOpt(args, "--parallel");
+                    if (parallelDm is not null && (!int.TryParse(parallelDm, out var pN) || pN is < 1 or > 64))
+                    { Console.Error.WriteLine("error: --parallel requires a value in 1..64"); return 1; }
+                    return CompatCache.ProbeFeed(feedUrlDm, outDirDm!, GetOpt(args, "--package"), GetOpt(args, "--feed-out"), null, parallelDm is null ? 8 : int.Parse(parallelDm)).GetAwaiter().GetResult(); // Main is sync; the loop inside is parallel-async
                 }
                 return 0;
             }
@@ -4530,6 +4533,13 @@ public static class Program
                 throw new Exception("usedByRepos must carry both consumers");
             if (joined.UsedVersions["13.0.1"].Single() != "repo-a" || joined.UsedVersions["15.0.3"].Single() != "repo-b")
                 throw new Exception("usedVersions must map pinned versions to consumers");
+            // the prune: a stale pre-scope entry (a package the scoped estate no longer consumes)
+            // must leave the cache — it cannot haunt later censuses as an unexplained row
+            var stalePath = CompatCache.CachePath(cacheDir2, "Contoso.PreScope");
+            Program.WriteArtifactFile(stalePath, "{\"id\":\"Contoso.PreScope\",\"versionsInspected\":0,\"totalVersionsAvailable\":0,\"fetchedUtc\":\"2026-01-01T00:00:00Z\",\"allVersionsSimple\":[],\"usedVersions\":{},\"usedByRepos\":[],\"versions\":[]}");
+            if (Upgrade.Join(cacheDir2, fixture2) != 0) throw new Exception("re-join exited non-zero");
+            if (File.Exists(stalePath)) throw new Exception("a stale pre-scope cache entry must be pruned by the join");
+
             var stub = joined.Versions.FirstOrDefault(v => v.Version == "13.0.1") ?? throw new Exception("pinned-but-unprobed version must gain a stub record");
             if (!stub.InUse || stub.TargetFrameworks.Count != 0) throw new Exception("the stub must be InUse with undetermined TFMs");
             if (joined.Versions.First(v => v.Version == "13.0.2").InUse) throw new Exception("13.0.2 is not pinned by anyone — InUse must stay false");
@@ -4722,7 +4732,7 @@ public static class Program
             var oldCache = Path.Combine(root, "cache-old"); Directory.CreateDirectory(oldCache);
             Program.WriteArtifactFile(CompatCache.CachePath(oldCache, "Contoso.Sample"),
                 JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Sample" }, new JsonSerializerOptions { WriteIndented = true }));
-            if (CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", oldCache, "Contoso.Sample", null, oldIndexHandler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", oldCache, "Contoso.Sample", null, oldIndexHandler).GetAwaiter().GetResult() != 0)
                 throw new Exception("the sibling-flat-container canary door must proceed when the canary answers");
             if (CompatCache.Load(oldCache, "Contoso.Sample")!.Versions.Count == 0)
                 throw new Exception("the canary door must actually probe through the verified sibling path");
@@ -4734,7 +4744,7 @@ public static class Program
             {
                 Console.SetError(errOld);
                 var deadHandler = new FakeFeedHandler { Responder = url => url.EndsWith("/v3/v-nuget/index.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"x\",\"@type\":\"SearchQueryService\"}]}")) : (404, []) };
-                _ = CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", oldCache, "Contoso.Sample", null, deadHandler);
+                _ = CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", oldCache, "Contoso.Sample", null, deadHandler).GetAwaiter().GetResult();
             }
             finally { Console.SetError(savedOld); }
             oldErrText = errOld.ToString();
@@ -4743,11 +4753,11 @@ public static class Program
             var indexCache = Path.Combine(root, "cache-index"); Directory.CreateDirectory(indexCache);
             Program.WriteArtifactFile(CompatCache.CachePath(indexCache, "Contoso.Sample"),
                 JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Sample" }, new JsonSerializerOptions { WriteIndented = true }));
-            if (CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", indexCache, "Contoso.Sample", null, indexHandler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", indexCache, "Contoso.Sample", null, indexHandler).GetAwaiter().GetResult() != 0)
                 throw new Exception("ProbeFeed via the service index exited non-zero");
             if (CompatCache.Load(indexCache, "Contoso.Sample")!.Versions.Count == 0)
                 throw new Exception("the service-index door must resolve PackageBaseAddress and probe through it");
-            if (CompatCache.ProbeFeed("https://feed.example/v3-flatcontainer/", cacheDir3, "Contoso.Sample", Path.Combine(root, "feed-versions.v1.json"), handler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3-flatcontainer/", cacheDir3, "Contoso.Sample", Path.Combine(root, "feed-versions.v1.json"), handler).GetAwaiter().GetResult() != 0)
                 throw new Exception("ProbeFeed exited non-zero");
             // URL casing law: lowercase id AND version in both the index and the nupkg URLs
             if (!nupkgUrlsServed.All(u => u.Contains("/contoso.sample/"))) throw new Exception("nupkg URLs must lowercase the id");
@@ -4795,7 +4805,7 @@ public static class Program
                     foreach (var tfm in tfms) zip.CreateEntry($"build/{tfm}/pkg.targets");
                 return ms.ToArray();
             }
-            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", regCache, "Contoso.JFrog", null, regHandler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", regCache, "Contoso.JFrog", null, regHandler).GetAwaiter().GetResult() != 0)
                 throw new Exception("the registrations door exited non-zero");
             var reg = CompatCache.Load(regCache, "Contoso.JFrog") ?? throw new Exception("registrations cache missing");
             var r12 = reg.Versions.FirstOrDefault(v => v.Version == "1.2.0");
@@ -4808,7 +4818,7 @@ public static class Program
                 url.EndsWith("/registration/contoso.collector/index.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.collector/page/6.0.4/6.0.4.json\",\"count\":1,\"lower\":\"6.0.4\",\"upper\":\"6.0.4\"}]}")) :
                 url.EndsWith("/page/6.0.4/6.0.4.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"6.0.4\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.collector/6.0.4\"}}]}")) :
                 url.Contains("/Download/contoso.collector/6.0.4") ? (200, BuildOnlyNupkg("netstandard2.0")) : (404, []) };
-            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", regCache, "Contoso.Collector", null, ccHandler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", regCache, "Contoso.Collector", null, ccHandler).GetAwaiter().GetResult() != 0)
                 throw new Exception("the collector probe exited non-zero");
             var cc = CompatCache.Load(regCache, "Contoso.Collector")!.Versions.Single();
             if (cc.TargetFrameworks.Single() != "netstandard2.0")
@@ -4837,7 +4847,7 @@ public static class Program
                 UsedByRepos = ["repo-a"],
                 Versions = [new CompatVersion { Version = "1.2.0-beta.556", InUse = true, Note = "prerelease pin" }],
             }, new JsonSerializerOptions { WriteIndented = true }));
-            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", anyCache, "Contoso.Analyzers", null, anyHandler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", anyCache, "Contoso.Analyzers", null, anyHandler).GetAwaiter().GetResult() != 0)
                 throw new Exception("the analyzer probe exited non-zero");
             var anyCacheFile = CompatCache.Load(anyCache, "Contoso.Analyzers") ?? throw new Exception("analyzer cache missing");
             var stable = anyCacheFile.Versions.FirstOrDefault(v => v.Version == "1.3.180") ?? throw new Exception("the stable release must be probed");
@@ -4868,7 +4878,7 @@ public static class Program
             };
             var metaCache = Path.Combine(root, "cache-meta"); Directory.CreateDirectory(metaCache);
             Program.WriteArtifactFile(CompatCache.CachePath(metaCache, "Contoso.Meta"), JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Meta" }, new JsonSerializerOptions { WriteIndented = true }));
-            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", metaCache, "Contoso.Meta", null, longHandler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", metaCache, "Contoso.Meta", null, longHandler).GetAwaiter().GetResult() != 0)
                 throw new Exception("the long-form meta probe exited non-zero");
             var metaFile = CompatCache.Load(metaCache, "Contoso.Meta") ?? throw new Exception("meta cache missing");
             var meta = metaFile.Versions.First(v => v.Version == "8.0.5");
@@ -4891,7 +4901,7 @@ public static class Program
                 url.Contains("/Download/contoso.meta2/2.9.3") ? (200, MetaNupkgAnyGroup()) : (404, []) };
             var meta2Cache = Path.Combine(root, "cache-meta2"); Directory.CreateDirectory(meta2Cache);
             Program.WriteArtifactFile(CompatCache.CachePath(meta2Cache, "Contoso.Meta2"), JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Meta2" }, new JsonSerializerOptions { WriteIndented = true }));
-            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", meta2Cache, "Contoso.Meta2", null, metaAnyHandler) != 0)
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", meta2Cache, "Contoso.Meta2", null, metaAnyHandler).GetAwaiter().GetResult() != 0)
                 throw new Exception("the any-group meta probe exited non-zero");
             var meta2 = CompatCache.Load(meta2Cache, "Contoso.Meta2")!.Versions.Single();
             if (meta2.TargetFrameworks.Single() != "any") throw new Exception($"a group with no targetFramework must record any (got [{string.Join(",", meta2.TargetFrameworks)}])");
@@ -4938,7 +4948,7 @@ public static class Program
             {
                 Console.SetError(errCap);
                 var authHandler = new FakeFeedHandler { Responder = _ => (401, []) };
-                _ = CompatCache.ProbeFeed("https://feed.example/v3-flatcontainer/", cacheDir3, "Contoso.Sample", null, authHandler);
+                _ = CompatCache.ProbeFeed("https://feed.example/v3-flatcontainer/", cacheDir3, "Contoso.Sample", null, authHandler).GetAwaiter().GetResult(); // the discarded-task trap: parallel work escaped the stderr capture
             }
             finally { Console.SetError(savedErr); }
             warnLine = errCap.ToString().Split('\n').FirstOrDefault(l => l.Contains("not fetchable")) ?? "";
