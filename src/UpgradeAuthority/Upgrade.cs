@@ -43,9 +43,22 @@ public static class Upgrade
     internal static Dictionary<string, Pegs.Resolved> LoadPegs(string? master, string? estate)
     {
         if (master is null && estate is null) return new Dictionary<string, Pegs.Resolved>(StringComparer.OrdinalIgnoreCase);
-        var m = master is null ? new PegsFile() : Pegs.Load(master);
-        var e = estate is null ? new PegsFile() : Pegs.Load(estate);
+        var m = BootstrapPegs(master);
+        var e = BootstrapPegs(estate);
         return Pegs.Merge(m, e).ByPackage;
+    }
+
+    // the delta-bootstrap precedent: a passed-but-missing pegs file is CREATED as an empty
+    // valid document (with a note naming the shapes) — the operator fills it, never fights a
+    // raw FileNotFoundException mid-run
+    private static PegsFile BootstrapPegs(string? path)
+    {
+        if (path is null) return new PegsFile();
+        if (File.Exists(path)) return Pegs.Load(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        Program.WriteArtifactFile(path, JsonSerializer.Serialize(new PegsFile(), WriteOpts).ReplaceLineEndings("\n") + "\n");
+        Console.Error.WriteLine($"note: {path} did not exist — created an empty pegs file. The shapes: exact (pegged at a version), maxExclusive (a hard ceiling like Moq < 4.20), forceMax (a floor), and the allowPrerelease flag — see README 'The upgrade-plan layer' for copy-paste entries");
+        return new PegsFile();
     }
 
     // ------------------------------------------------------------------ estate join ----

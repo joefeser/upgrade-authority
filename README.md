@@ -277,10 +277,29 @@ dotnet $ua update C:\ua-estate\fixture --repo <repo> --cache C:\ua-estate\compat
   --pegs pegs-master.v0.json --repos-root C:\repos --apply                    # move the pins
 ```
 
-**Pegs** (`pegs.v0`): three shapes — `exact` ("pegged at this version"), `maxExclusive` (hard
-ceiling, `< 4.20`), `forceMax` (a floor — "at least X"). Master (org-shared) + estate override;
-the estate may **tighten** a master peg, never loosen one. Pegs are the only editable artifact
-in this layer — reports are read-only output.
+**Pegs** (`pegs.v0`): three bound shapes plus one flag — `exact` ("pegged at this version"),
+`maxExclusive` (hard ceiling, `< 4.20`), `forceMax` (a floor — "at least X"), and
+`allowPrerelease` (opt a package into prerelease eligibility — the only way a prerelease-only
+feed like System.CommandLine.Hosting ever resolves). Master (org-shared) + estate override; the
+estate may **tighten** a master peg, never loosen one (the flag OR-merges — either operator
+turning it on is a deliberate act). Pegs are the only editable artifact in this layer — reports
+are read-only output. A passed-but-missing pegs file is **created as an empty valid document**
+(the delta.json bootstrap precedent — the tool scaffolds, you fill).
+
+Copy-paste starter (`pegs-master.v0.json` — the filename is yours; both `--pegs` and
+`--estate-pegs` take explicit paths):
+
+```json
+{
+  "schemaVersion": "pegs.v0",
+  "pegs": [
+    { "packageName": "Moq", "kind": "maxExclusive", "version": "4.20.0", "note": "no telemetry" },
+    { "packageName": "LiteBus", "kind": "forceMax", "version": "9.0.0", "note": "must ride the latest" },
+    { "packageName": "Mediator", "kind": "exact", "version": "8.1.0", "note": "went paid — pegged" },
+    { "packageName": "System.CommandLine.Hosting", "allowPrerelease": true }
+  ]
+}
+```
 
 **Statuses** you will see: `would-update` / `current` / `pegged` flag / `compat-blocked`
 (no probed version admits the repo's TFM — onboarding) / `pin-above-ceiling` (the cache is
