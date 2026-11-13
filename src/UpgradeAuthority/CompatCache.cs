@@ -53,6 +53,30 @@ public static class CompatCache
     // frameworks (a net10-only package is invisible to a net8 repo; that IS the ceiling). Anything else (netstandard1.x, netcoreapp*, unknown shapes) is
     // NOT counted — an ancient package with only legacy assets stays undetermined and lands
     // in the onboarding path, never a guessed "compatible".
+    // TFM normalization: nuspec group names come in long form (.NETFramework4.6.1,
+    // .NETStandard2.0, .NETCoreApp8.0 — iText7's nuspec uses exactly that shape) and the short
+    // forms hide a trap: net20/net462/net48 are .NET FRAMEWORK, not "net major 20" — a legacy
+    // framework asset never admits a modern repo. Returns the canonical short form plus a kind.
+    internal static (string Tfm, string Kind) NormalizeTfm(string raw)
+    {
+        var s = raw.Trim();
+        if (s.Equals("any", StringComparison.OrdinalIgnoreCase)) return ("any", "any");
+        var dotNetStandard = s.StartsWith(".NETStandard", StringComparison.OrdinalIgnoreCase) ? s[".NETStandard".Length..] : null;
+        var dotNetFramework = s.StartsWith(".NETFramework", StringComparison.OrdinalIgnoreCase) ? s[".NETFramework".Length..] : null;
+        var dotNetCoreApp = s.StartsWith(".NETCoreApp", StringComparison.OrdinalIgnoreCase) ? s[".NETCoreApp".Length..] : null;
+        if (dotNetStandard is not null && dotNetStandard.Length > 0) return ("netstandard" + dotNetStandard, "netstandard");
+        if (dotNetFramework is not null && dotNetFramework.Length > 0) return ("net" + dotNetFramework.Replace(".", ""), "framework"); // 4.6.1 -> net461: LEGACY
+        if (dotNetCoreApp is not null && dotNetCoreApp.Length > 0) return ("net" + dotNetCoreApp, "modern"); // 8.0 -> net8.0
+        if (s.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase)) return (s.ToLowerInvariant(), "netstandard");
+        var lower = s.ToLowerInvariant();
+        if (lower.StartsWith("net") && lower.Length > 3)
+        {
+            var version = lower[3..];
+            return (version.Contains('.') ? ("net" + version, "modern") : ("net" + version, "framework")); // net8.0 modern; net20/net462 LEGACY
+        }
+        return (lower, "other"); // native, uap, wp...: not .NET asset evidence
+    }
+
     public static bool? SupportsTfm(IReadOnlyList<string> packageTfms, string repoTfm)
     {
         if (packageTfms.Any(t => t.Equals("any", StringComparison.OrdinalIgnoreCase))) return true; // the evidence-of-absence case: nothing in the package excludes a framework
@@ -61,13 +85,19 @@ public static class CompatCache
         var admitted = false;
         foreach (var tfm in packageTfms)
         {
-            var t = tfm.Trim();
-            if (t.Equals("netstandard2.0", StringComparison.OrdinalIgnoreCase) || t.Equals("netstandard2.1", StringComparison.OrdinalIgnoreCase)) return true;
-            if (t.StartsWith("net", StringComparison.OrdinalIgnoreCase) && char.IsAsciiDigit(t[3]))
+            var (tfmShort, kind) = NormalizeTfm(tfm);
+            if (tfmShort.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase))
             {
-                var pkgMajor = RepoTfmMajor(t);
+                var nsVersion = tfmShort["netstandard".Length..];
+                if (nsVersion.StartsWith("2")) return true; // netstandard2.x admits net5+; netstandard1.x does not (legacy)
+                continue;
+            }
+            if (kind == "modern")
+            {
+                var pkgMajor = RepoTfmMajor(tfmShort);
                 if (pkgMajor is not null && pkgMajor <= major) admitted = true; // the package targets at-or-below the repo: runtimes run OLDER package frameworks
             }
+            // "framework" (net20/net462/net48) and "other" admit nothing modern — by parse, not by accident
         }
         return admitted;
     }
@@ -245,13 +275,14 @@ public static class CompatCache
                 .ToList();
             if (groups.Count == 0) return ["any"]; // no dependency groups: nothing excludes any framework
             var declared = groups
-                .Select(g => g.Attribute("targetFramework")?.Value ?? "")
-                .Where(tfm => tfm.Length > 0)
+                .Select(g => NormalizeTfm(g.Attribute("targetFramework")?.Value ?? ""))
+                .Where(n => n.Tfm.Length > 0 && n.Kind != "other") // native/uap groups are not .NET evidence
+                .Select(n => n.Tfm)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(t => t, StringComparer.Ordinal)
                 .ToList();
-            if (declared.Count == 0) return ["any"]; // groups exist but none carries a targetFramework: applies to any
-            return declared.All(t => t.StartsWith("net", StringComparison.OrdinalIgnoreCase)) ? declared : [];
+            if (declared.Count == 0) return ["any"]; // groups exist but none carries .NET evidence: applies to any
+            return declared;
         }
         catch (System.Xml.XmlException) { return []; } // unparseable nuspec: undetermined, never guessed
     }
@@ -306,7 +337,7 @@ public static class CompatCache
     public static int ProbeFeed(string feedBase, string cacheDir, string? packageFilter, string? feedOutPath, System.Net.Http.HttpMessageHandler? handler = null)
     {
         using var http = new System.Net.Http.HttpClient(handler ?? new System.Net.Http.HttpClientHandler());
-        http.Timeout = TimeSpan.FromSeconds(30);
+        http.Timeout = TimeSpan.FromSeconds(120); // nupkg downloads reach tens of MB through corporate proxies; 30s starved the itext7-class packages into onboarding stubs
         // corporate feeds authenticate: NUGET_FEED_USER + NUGET_FEED_PASSWORD (password may be
         // an Artifactory API key) — env vars, never command-line secrets (console history)
         var feedUser = Environment.GetEnvironmentVariable("NUGET_FEED_USER");

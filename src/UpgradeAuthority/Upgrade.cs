@@ -172,7 +172,13 @@ public static class Upgrade
             if (ceiling is null || Rank(one, ceiling) < 0) ceiling = one;
         }
         if (blocked is not null)
-            return new PackageResolution(cache.Id, potentialMax, null, peg, "compat-blocked", peg is not null, LicenseShift(cache), $"no probed version of this package admits {blocked} (onboarding or an empty peg-bounded set)", tfms);
+        {
+            var feedStable = cache.AllVersionsSimple.Count(v => Apply.ParseCorePublic(v) is not null);
+            var note = feedStable == 0
+                ? "every published version of this package is prerelease — no stable ceiling exists (the estate's pin, if any, is never guessed)"
+                : $"no probed version of this package admits {blocked} (onboarding or an empty peg-bounded set)";
+            return new PackageResolution(cache.Id, potentialMax, null, peg, "compat-blocked", peg is not null, LicenseShift(cache), note, tfms);
+        }
         var floor = peg?.FloorVersion;
         if (floor is not null && (ceiling is null || Rank(ceiling, floor) < 0))
             return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "floor-violation", true, LicenseShift(cache), $"forceMax floor {floor} is unreachable on this TFM set (ceiling {ceiling})", tfms);

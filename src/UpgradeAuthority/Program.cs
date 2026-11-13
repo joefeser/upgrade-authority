@@ -4643,6 +4643,28 @@ public static class Program
                     foreach (var tfm in tfms) zip.CreateEntry($"lib/{tfm}/lib.dll");
                 return ms.ToArray();
             }
+            byte[] MetaNupkgLongForm()
+            {
+                using var ms = new MemoryStream();
+                using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                {
+                    var nuspec = zip.CreateEntry("Contoso.Meta.nuspec");
+                    using var w = new StreamWriter(nuspec.Open());
+                    w.Write("<package><metadata><id>Contoso.Meta</id><version>8.0.5</version><dependencies><group targetFramework=\".NETFramework4.6.1\" /><group targetFramework=\".NETStandard2.0\" /></dependencies></metadata></package>");
+                }
+                return ms.ToArray();
+            }
+            byte[] MetaNupkgAnyGroup()
+            {
+                using var ms = new MemoryStream();
+                using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                {
+                    var nuspec = zip.CreateEntry("Contoso.Meta2.nuspec");
+                    using var w = new StreamWriter(nuspec.Open());
+                    w.Write("<package><metadata><id>Contoso.Meta2</id><version>2.9.3</version><dependencies><group><dependency id=\"Contoso.Core\" version=\"1.0\" /></group></dependencies></metadata></package>");
+                }
+                return ms.ToArray();
+            }
             byte[] AnalyzerOnlyNupkg()
             {
                 using var ms = new MemoryStream();
@@ -4828,6 +4850,62 @@ public static class Program
             var pp = Upgrade.Resolve(anyCacheFile, ["net10.0"], null, ["1.2.0-beta.556"]);
             if (pp.Status != "prerelease-pin" || pp.AllowedMax is null)
                 throw new Exception($"prerelease-only pins must read prerelease-pin with the stable ceiling shown (got {pp.Status}/{pp.AllowedMax})");
+
+            // ---- the four estate adjudications, pinned: ----
+            // (1) the LONG-FORM nuspec (itext7's shape: .NETFramework4.6.1 / .NETStandard2.0 groups,
+            //     no lib at all — the meta package): normalized to net461+netstandard2.0, admits net10
+            var longHandler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url == "https://feed.example/v3/af/index.json") return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/af/registration/\",\"@type\":\"RegistrationsBaseUrl\"}]}"));
+                    if (url.EndsWith("/registration/contoso.meta/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.meta/page/8.0.5/9.8.0.json\",\"count\":2,\"lower\":\"8.0.5\",\"upper\":\"9.8.0\"}]}"));
+                    if (url.EndsWith("/page/8.0.5/9.8.0.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"8.0.5\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.meta/8.0.5\"}},{\"catalogEntry\":{\"version\":\"9.8.0\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.meta/9.8.0\"}}]}"));
+                    if (url.EndsWith("/Download/contoso.meta/8.0.5")) return (200, MetaNupkgLongForm());
+                    if (url.EndsWith("/Download/contoso.meta/9.8.0")) return (200, MetaNupkgLongForm());
+                    return (404, []);
+                }
+            };
+            var metaCache = Path.Combine(root, "cache-meta"); Directory.CreateDirectory(metaCache);
+            Program.WriteArtifactFile(CompatCache.CachePath(metaCache, "Contoso.Meta"), JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Meta" }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", metaCache, "Contoso.Meta", null, longHandler) != 0)
+                throw new Exception("the long-form meta probe exited non-zero");
+            var metaFile = CompatCache.Load(metaCache, "Contoso.Meta") ?? throw new Exception("meta cache missing");
+            var meta = metaFile.Versions.First(v => v.Version == "8.0.5");
+            if (!meta.TargetFrameworks.Any(t2 => t2.Equals("netstandard2.0", StringComparison.OrdinalIgnoreCase)))
+                throw new Exception($"the long-form groups must normalize (got [{string.Join(",", meta.TargetFrameworks)}])");
+            if (CompatCache.Ceiling(metaFile, "net10.0", null, null) is null)
+                throw new Exception("the itext7 shape must resolve on net10.0 via the normalized netstandard2.0 group");
+
+            // (2) the legacy parse: a net20 asset is .NET FRAMEWORK, not "major 20" — it never admits net5+
+            if (CompatCache.SupportsTfm(["net20"], "net10.0") != false) throw new Exception("a net20 (framework 2.0) asset must not admit a modern repo");
+            if (CompatCache.SupportsTfm(["net462"], "net10.0") != false) throw new Exception("a net462 asset must not admit a modern repo by parse, not by accident");
+
+            // (3) the xunit meta shape: one dependency group with NO targetFramework -> any
+            var anyTfms = CompatCache.SelectCandidates(new[] { "2.9.3" }, new HashSet<string>(StringComparer.OrdinalIgnoreCase), new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            if (anyTfms.Single() != "2.9.3") throw new Exception("candidate selection sanity");
+            var metaAnyHandler = new FakeFeedHandler { Responder = url =>
+                url == "https://feed.example/v3/af/index.json" ? (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/af/registration/\",\"@type\":\"RegistrationsBaseUrl\"}]}")) :
+                url.EndsWith("/registration/contoso.meta2/index.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.meta2/page/2.9.3/2.9.3.json\",\"count\":1,\"lower\":\"2.9.3\",\"upper\":\"2.9.3\"}]}")) :
+                url.EndsWith("/page/2.9.3/2.9.3.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"2.9.3\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.meta2/2.9.3\"}}]}")) :
+                url.Contains("/Download/contoso.meta2/2.9.3") ? (200, MetaNupkgAnyGroup()) : (404, []) };
+            var meta2Cache = Path.Combine(root, "cache-meta2"); Directory.CreateDirectory(meta2Cache);
+            Program.WriteArtifactFile(CompatCache.CachePath(meta2Cache, "Contoso.Meta2"), JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Meta2" }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", meta2Cache, "Contoso.Meta2", null, metaAnyHandler) != 0)
+                throw new Exception("the any-group meta probe exited non-zero");
+            var meta2 = CompatCache.Load(meta2Cache, "Contoso.Meta2")!.Versions.Single();
+            if (meta2.TargetFrameworks.Single() != "any") throw new Exception($"a group with no targetFramework must record any (got [{string.Join(",", meta2.TargetFrameworks)}])");
+
+            // (4) the prerelease-only note: a feed carrying only prerelease versions names it
+            var preOnly = new CompatCacheFile
+            {
+                Id = "Contoso.PreOnly",
+                AllVersionsSimple = ["0.4.0-beta.1", "0.4.0-beta.2"],
+                Versions = [new CompatVersion { Version = "0.4.0-beta.1", TargetFrameworks = ["net8.0"] }],
+            };
+            var pre = Upgrade.Resolve(preOnly, ["net8.0"], null, []);
+            if (pre.Status != "compat-blocked" || pre.Note is null || !pre.Note.Contains("every published version", StringComparison.OrdinalIgnoreCase))
+                throw new Exception($"a prerelease-only package must say so in the note (got {pre.Note})");
 
             // the ceiling cap: a probed record above the feed's list is not a recommendation
             probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });
