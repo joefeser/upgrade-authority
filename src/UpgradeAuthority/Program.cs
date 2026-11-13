@@ -4673,6 +4673,39 @@ public static class Program
                     return handler.Responder(url);
                 }
             };
+            // the OLDER-ARTIFACTORY door: the index advertises NO PackageBaseAddress, and the
+            // sibling flat container is verified by a canary on the first cache entry
+            var oldIndexHandler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url.EndsWith("/v3/v-nuget/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/v-nuget/query\",\"@type\":\"SearchQueryService\"}]}"));
+                    if (url.Contains("/flatcontainer/contoso.sample/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"versions\":[\"13.0.2\"]}"));
+                    if (url.Contains("/flatcontainer/contoso.sample/13.0.2/")) return (200, Nupkg("net8.0"));
+                    return (404, []);
+                }
+            };
+            var oldCache = Path.Combine(root, "cache-old"); Directory.CreateDirectory(oldCache);
+            Program.WriteArtifactFile(CompatCache.CachePath(oldCache, "Contoso.Sample"),
+                JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Sample" }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", oldCache, "Contoso.Sample", null, oldIndexHandler) != 0)
+                throw new Exception("the sibling-flat-container canary door must proceed when the canary answers");
+            if (CompatCache.Load(oldCache, "Contoso.Sample")!.Versions.Count == 0)
+                throw new Exception("the canary door must actually probe through the verified sibling path");
+            // and when the sibling does not answer: the typed error lists what the index HAS
+            var errOld = new System.IO.StringWriter();
+            var savedOld = Console.Error;
+            string oldErrText;
+            try
+            {
+                Console.SetError(errOld);
+                var deadHandler = new FakeFeedHandler { Responder = url => url.EndsWith("/v3/v-nuget/index.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"x\",\"@type\":\"SearchQueryService\"}]}")) : (404, []) };
+                _ = CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", oldCache, "Contoso.Sample", null, deadHandler);
+            }
+            finally { Console.SetError(savedOld); }
+            oldErrText = errOld.ToString();
+            if (!oldErrText.Contains("advertises no PackageBaseAddress") || !oldErrText.Contains("SearchQueryService"))
+                throw new Exception($"the dead-sibling error must list the index's actual resources (got: {oldErrText.Split('\n').FirstOrDefault(l => l.Contains("advertised"))?.Trim()})");
             var indexCache = Path.Combine(root, "cache-index"); Directory.CreateDirectory(indexCache);
             Program.WriteArtifactFile(CompatCache.CachePath(indexCache, "Contoso.Sample"),
                 JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Sample" }, new JsonSerializerOptions { WriteIndented = true }));

@@ -262,14 +262,6 @@ public static class CompatCache
     // pins the whole loop hermetically (URL casing, JSON shape, download, probe, feed-out).
     public static int ProbeFeed(string feedBase, string cacheDir, string? packageFilter, string? feedOutPath, System.Net.Http.HttpMessageHandler? handler = null)
     {
-        var ids = Directory.GetFiles(Path.GetFullPath(cacheDir), "*.json")
-            .Select(f => Path.GetFileName(f)[..^".json".Length])
-            .Where(name => name.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
-        if (packageFilter is not null)
-            ids = ids.Where(id => id.Equals(packageFilter, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (ids.Count == 0)
-        { Console.Error.WriteLine($"error: no cache entries in {cacheDir} — run the join first (discover-max --join-fixture)"); return 1; }
         using var http = new System.Net.Http.HttpClient(handler ?? new System.Net.Http.HttpClientHandler());
         http.Timeout = TimeSpan.FromSeconds(30);
         // corporate feeds authenticate: NUGET_FEED_USER + NUGET_FEED_PASSWORD (password may be
@@ -281,16 +273,29 @@ public static class CompatCache
                 Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(feedUser + ":" + feedPassword)));
         // accept the SERVICE INDEX (the NuGet.config URL — ".../index.json"): the v3 protocol's
         // entry point advertises its resources; the flat container is the PackageBaseAddress one
+        var ids = Directory.GetFiles(Path.GetFullPath(cacheDir), "*.json")
+            .Select(f => Path.GetFileName(f)[..^".json".Length])
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        if (packageFilter is not null)
+            ids = ids.Where(id => id.Equals(packageFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (ids.Count == 0)
+        { Console.Error.WriteLine($"error: no cache entries in {cacheDir} — run the join first (discover-max --join-fixture)"); return 1; }
         if (feedBase.TrimEnd('/').EndsWith("index.json", StringComparison.OrdinalIgnoreCase))
         {
             string resolved;
+            List<string> advertised;
             try
             {
                 var indexText = http.GetStringAsync(feedBase).GetAwaiter().GetResult();
                 using var indexDoc = System.Text.Json.JsonDocument.Parse(indexText);
-                resolved = indexDoc.RootElement.GetProperty("resources").EnumerateArray()
-                    .Where(r => (r.TryGetProperty("@type", out var type) ? type.GetString() : null) is { } s && s.StartsWith("PackageBaseAddress", StringComparison.Ordinal))
-                    .Select(r => r.GetProperty("@id").GetString()!)
+                var resources = indexDoc.RootElement.GetProperty("resources").EnumerateArray()
+                    .Select(r => (Id: r.TryGetProperty("@id", out var rid) ? rid.GetString() ?? "" : "", Type: r.TryGetProperty("@type", out var rt) ? rt.GetString() ?? "" : ""))
+                    .ToList();
+                advertised = resources.Select(r => r.Type).Where(s => s.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+                resolved = resources
+                    .Where(r => r.Type.StartsWith("PackageBaseAddress", StringComparison.Ordinal))
+                    .Select(r => r.Id)
                     .FirstOrDefault() ?? "";
             }
             catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException)
@@ -299,7 +304,28 @@ public static class CompatCache
                 return 1;
             }
             if (resolved.Length == 0)
-            { Console.Error.WriteLine($"error: the service index advertises no PackageBaseAddress resource — pass the flat-container base directly"); return 1; }
+            {
+                // older Artifactory v3 indexes advertise no PackageBaseAddress but STILL serve the
+                // sibling path: verify it with a canary on the FIRST cache entry before adopting
+                // it — an endpoint that answers is evidence, never a guess
+                var sibling = new Uri(new Uri(feedBase), "flatcontainer/").ToString();
+                var canaryId = ids[0].ToLowerInvariant();
+                try
+                {
+                    var canary = http.GetStringAsync(sibling + canaryId + "/index.json").GetAwaiter().GetResult();
+                    using var canaryDoc = System.Text.Json.JsonDocument.Parse(canary);
+                    if (!canaryDoc.RootElement.TryGetProperty("versions", out _)) throw new System.Text.Json.JsonException("no versions array");
+                    resolved = sibling;
+                    Console.Error.WriteLine($"note: the index advertises no PackageBaseAddress (it has: {string.Join(", ", advertised.Take(6))}) — the sibling flat container verified via canary on {canaryId}, using it");
+                }
+                catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException)
+                {
+                    Console.Error.WriteLine($"error: the service index advertises no PackageBaseAddress, and the sibling flat container did not answer ({FirstLine(ex.Message)})");
+                    Console.Error.WriteLine($"  advertised resources: {string.Join(", ", advertised.Take(10))}");
+                    Console.Error.WriteLine($"  fix: pass the flat-container base directly, or use a feed whose index advertises PackageBaseAddress (newer Artifactory / nuget.org)");
+                    return 1;
+                }
+            }
             Console.Error.WriteLine($"feed: service index resolved to the flat container at {resolved}");
             feedBase = resolved;
         }
