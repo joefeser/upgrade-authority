@@ -46,6 +46,11 @@ dotnet $ua discover-max --feed-url https://api.nuget.org/v3-flatcontainer/ --out
 #      PackageBaseAddress itself:
 #      (older Artifactory v3 indexes advertise no PackageBaseAddress: the verb then
 #       canary-verifies the sibling flatcontainer path itself; if that is dead too the
+#      THE JFROG DOOR (proven 2026-11-13 against a real JFrog cloud trial): JFrog's NuGet
+#      v3 index NEVER advertises PackageBaseAddress — the verb detects this and walks the
+#      REGISTRATIONS resource instead (registration pages -> versions -> packageContent
+#      downloads). Credentials ride the env vars; the same command works on nuget.org
+#      (flat container) and JFrog (registrations) — the door is chosen from the index.
 #       error lists the index's ACTUAL resources — paste that line and the next step
 #       is named, never guessed)
 #        dotnet $ua discover-max --feed-url https://<host>/artifactory/api/nuget/v3/v-nuget/index.json --out C:\ua-estate\compat-cache --feed-out C:\ua-estate\feed-versions.v1.json
