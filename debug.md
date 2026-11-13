@@ -29,6 +29,16 @@ dotnet $ua ingest --scans-root C:\ua-estate\scans --scope <repos-root>\repos.txt
 #      without it ingest re-discovers every scan child and resurrects out-of-scope caches);
 #      add --archived / --delta the same way if the original run carried them)
 
+# 2b) FEED TRUTH (2026-11-13) — the restore cache only knows what THIS machine restored;
+#      ceilings capped at 15.0.10 while pins run to 15.0.27 = local-mirror blindness. The
+#      feed path fetches version lists + candidate nupkgs straight from a NuGet v3 flat
+#      container, probes them, and caps ceilings at feed truth. Externals now; internals at
+#      work by pointing the SAME command at your Artifactory's flat-container base (both
+#      runs accumulate into one cache — nothing is clobbered):
+dotnet $ua discover-max --feed-url https://api.nuget.org/v3-flatcontainer/ --out C:\ua-estate\compat-cache --feed-out C:\ua-estate\feed-versions.v1.json
+#      (--feed-out writes the drift feed contract — ua drift can consume the same file;
+#       internals will note 'not on this feed' here — expected)
+
 # 2) the probe — real targetFrameworks records from the nupkg lib/** folders.
 #    Never rewrites probed records; never destroys the join's back-references.
 dotnet $ua discover-max --from-folder C:\ua-estate\nupkg-feed --out C:\ua-estate\compat-cache
