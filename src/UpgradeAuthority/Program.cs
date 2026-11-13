@@ -4933,6 +4933,26 @@ public static class Program
             var meta2 = CompatCache.Load(meta2Cache, "Contoso.Meta2")!.Versions.Single();
             if (meta2.TargetFrameworks.Single() != "any") throw new Exception($"a group with no targetFramework must record any (got [{string.Join(",", meta2.TargetFrameworks)}])");
 
+            // (3b) THE NET10 GATE: EF Core 11 ships lib/net11.0 only (verified against the real
+            // nupkg on nuget.org) — a net10 app must NEVER receive it, whatever the feed top says
+            var efCache = new CompatCacheFile
+            {
+                Id = "Microsoft.EntityFrameworkCore",
+                AllVersionsSimple = ["9.0.11", "10.0.2", "11.0.0"],
+                Versions =
+                [
+                    new CompatVersion { Version = "9.0.11", TargetFrameworks = ["net8.0"] },
+                    new CompatVersion { Version = "10.0.2", TargetFrameworks = ["net10.0"] },
+                    new CompatVersion { Version = "11.0.0", TargetFrameworks = ["net11.0"] },
+                ],
+            };
+            var efGate = Upgrade.Resolve(efCache, ["net10.0"], null, ["10.0.2"]);
+            if (efGate.Status != "current" || efGate.AllowedMax != "10.0.2")
+                throw new Exception($"the net10 gate must cap EF Core at 10.0.2 (pin at ceiling = current) — 11.0.0 is net11-only (got {efGate.Status}/{efGate.AllowedMax})");
+            var efGate11 = Upgrade.Resolve(efCache, ["net11.0"], null, ["10.0.2"]);
+            if (efGate11.AllowedMax != "11.0.0") throw new Exception($"a net11 repo takes EF 11 (got {efGate11.AllowedMax})");
+            if (Apply.CompareSemver("11.0.0", "10.0.2") <= 0) throw new Exception("sanity: 11 outranks 10");
+
             // (4) the prerelease-only note: a feed carrying only prerelease versions names it
             var preOnly = new CompatCacheFile
             {
