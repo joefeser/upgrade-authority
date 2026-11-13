@@ -281,15 +281,18 @@ public static class CompatCache
             ids = ids.Where(id => id.Equals(packageFilter, StringComparison.OrdinalIgnoreCase)).ToList();
         if (ids.Count == 0)
         { Console.Error.WriteLine($"error: no cache entries in {cacheDir} — run the join first (discover-max --join-fixture)"); return 1; }
+        var registrationBase = ""; // set when the index speaks JFrog's registrations dialect
+        var packageContent = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase); // id-lower -> version-lower -> download url
         if (feedBase.TrimEnd('/').EndsWith("index.json", StringComparison.OrdinalIgnoreCase))
         {
-            string resolved;
+            string resolved = "";
             List<string> advertised;
+            List<(string Id, string Type)> resources;
             try
             {
                 var indexText = http.GetStringAsync(feedBase).GetAwaiter().GetResult();
                 using var indexDoc = System.Text.Json.JsonDocument.Parse(indexText);
-                var resources = indexDoc.RootElement.GetProperty("resources").EnumerateArray()
+                resources = indexDoc.RootElement.GetProperty("resources").EnumerateArray()
                     .Select(r => (Id: r.TryGetProperty("@id", out var rid) ? rid.GetString() ?? "" : "", Type: r.TryGetProperty("@type", out var rt) ? rt.GetString() ?? "" : ""))
                     .ToList();
                 advertised = resources.Select(r => r.Type).Where(s => s.Length > 0).Distinct(StringComparer.Ordinal).ToList();
@@ -303,11 +306,22 @@ public static class CompatCache
                 Console.Error.WriteLine($"error: the service index at {feedBase} is not fetchable/parseable ({FirstLine(ex.Message)}) — pass the flat-container base directly if you know it");
                 return 1;
             }
-            if (resolved.Length == 0)
+            // THE JFROG DOOR (verified against a real JFrog cloud trial, 2026-11-13): JFrog's
+            // NuGet v3 index advertises NO PackageBaseAddress at all — versions and nupkg
+            // downloads live behind RegistrationsBaseUrl instead. Prefer it when present.
+            var registrations = resources
+                .Where(r => r.Type.StartsWith("RegistrationsBaseUrl", StringComparison.Ordinal))
+                .Select(r => r.Id)
+                .FirstOrDefault() ?? "";
+            if (registrations.Length > 0)
             {
-                // older Artifactory v3 indexes advertise no PackageBaseAddress but STILL serve the
-                // sibling path: verify it with a canary on the FIRST cache entry before adopting
-                // it — an endpoint that answers is evidence, never a guess
+                registrationBase = registrations;
+                Console.Error.WriteLine($"feed: no PackageBaseAddress (it has: {string.Join(", ", advertised.Take(6))}) — using the registrations door at {registrationBase}");
+            }
+            else
+            {
+                // no registrations either: verify the sibling flat container with a canary on the
+                // FIRST cache entry before adopting it — an endpoint that answers is evidence
                 var sibling = new Uri(new Uri(feedBase), "flatcontainer/").ToString();
                 var canaryId = ids[0].ToLowerInvariant();
                 try
@@ -320,14 +334,16 @@ public static class CompatCache
                 }
                 catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException)
                 {
-                    Console.Error.WriteLine($"error: the service index advertises no PackageBaseAddress, and the sibling flat container did not answer ({FirstLine(ex.Message)})");
+                    Console.Error.WriteLine($"error: the service index advertises no PackageBaseAddress and no RegistrationsBaseUrl, and the sibling flat container did not answer ({FirstLine(ex.Message)})");
                     Console.Error.WriteLine($"  advertised resources: {string.Join(", ", advertised.Take(10))}");
-                    Console.Error.WriteLine($"  fix: pass the flat-container base directly, or use a feed whose index advertises PackageBaseAddress (newer Artifactory / nuget.org)");
                     return 1;
                 }
             }
-            Console.Error.WriteLine($"feed: service index resolved to the flat container at {resolved}");
-            feedBase = resolved;
+            if (resolved.Length > 0)
+            {
+                Console.Error.WriteLine($"feed: service index resolved to the flat container at {resolved}");
+                feedBase = resolved;
+            }
         }
         var feedPackages = new List<Drift.FeedPackage>();
         var probed = 0; var failures = 0; var notOnFeed = 0;
@@ -335,12 +351,49 @@ public static class CompatCache
         {
             Console.Error.WriteLine($"feed {id}: fetching version list");
             string[] versions;
+            Dictionary<string, string> contentUrls = new(StringComparer.OrdinalIgnoreCase);
             try
             {
-                var text = http.GetStringAsync(IndexUrl(feedBase, id)).GetAwaiter().GetResult();
-                using var doc = System.Text.Json.JsonDocument.Parse(text);
-                versions = (doc.RootElement.TryGetProperty("versions", out var arr) ? arr.EnumerateArray().Select(v => v.GetString() ?? "") : Enumerable.Empty<string>())
-                    .Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+                if (registrationBase.Length > 0)
+                {
+                    // the registrations door (JFrog): the registration index lists pages; each page
+                    // carries catalogEntry.version + packageContent (the download URL)
+                    var regText = http.GetStringAsync(registrationBase.TrimEnd('/') + "/" + id.ToLowerInvariant() + "/index.json").GetAwaiter().GetResult();
+                    using var regDoc = System.Text.Json.JsonDocument.Parse(regText);
+                    var pages = new List<string>();
+                    var collected = new List<(string Version, string Content)>();
+                    foreach (var page in regDoc.RootElement.GetProperty("items").EnumerateArray())
+                    {
+                        if (page.TryGetProperty("items", out var inline))
+                        {
+                            foreach (var leaf in inline.EnumerateArray())
+                            {
+                                var ce = leaf.GetProperty("catalogEntry");
+                                collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                            }
+                        }
+                        else pages.Add(page.GetProperty("@id").GetString() ?? "");
+                    }
+                    foreach (var pageUrl in pages.Distinct(StringComparer.Ordinal))
+                    {
+                        var pageText = http.GetStringAsync(pageUrl).GetAwaiter().GetResult();
+                        using var pageDoc = System.Text.Json.JsonDocument.Parse(pageText);
+                        foreach (var leaf in pageDoc.RootElement.GetProperty("items").EnumerateArray())
+                        {
+                            var ce = leaf.GetProperty("catalogEntry");
+                            collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                        }
+                    }
+                    versions = collected.Select(c => c.Version).Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+                    foreach (var (v, url) in collected) if (url.Length > 0 && !contentUrls.ContainsKey(v.ToLowerInvariant())) contentUrls[v.ToLowerInvariant()] = url;
+                }
+                else
+                {
+                    var text = http.GetStringAsync(IndexUrl(feedBase, id)).GetAwaiter().GetResult();
+                    using var doc = System.Text.Json.JsonDocument.Parse(text);
+                    versions = (doc.RootElement.TryGetProperty("versions", out var arr) ? arr.EnumerateArray().Select(v => v.GetString() ?? "") : Enumerable.Empty<string>())
+                        .Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+                }
             }
             catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException)
             {
@@ -377,7 +430,8 @@ public static class CompatCache
                 byte[] bytes;
                 try
                 {
-                    bytes = http.GetByteArrayAsync(NupkgUrl(feedBase, id, version)).GetAwaiter().GetResult();
+                    var url = contentUrls.TryGetValue(version.ToLowerInvariant(), out var content) ? content : NupkgUrl(feedBase, id, version);
+                    bytes = http.GetByteArrayAsync(url).GetAwaiter().GetResult();
                 }
                 catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or TaskCanceledException)
                 {

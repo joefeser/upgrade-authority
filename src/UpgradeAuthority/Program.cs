@@ -4729,6 +4729,31 @@ public static class Program
             var fpVer = fp.GetProperty("version").GetString();
             if (fpId != "Contoso.Sample" || fpVer != "16.0.0")
                 throw new Exception($"feed-out must carry the drift contract's latest-stable per package (got {fpId} {fpVer})");
+            // the REGISTRATIONS door (JFrog): the index advertises no PackageBaseAddress; versions
+            // come from the registration pages and nupkgs download from packageContent
+            var regHandler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url.EndsWith("/v3/af/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/af/registration/\",\"@type\":\"RegistrationsBaseUrl\"},{\"@id\":\"https://feed.example/v3/af/query\",\"@type\":\"SearchQueryService\"}]}"));
+                    if (url.EndsWith("/registration/contoso.jfrog/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.jfrog/page/1.2.0/2.0.0.json\",\"count\":2,\"lower\":\"1.2.0\",\"upper\":\"2.0.0\"}]}"));
+                    if (url.EndsWith("/page/1.2.0/2.0.0.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"1.2.0\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.jfrog/1.2.0\"}},{\"catalogEntry\":{\"version\":\"2.0.0\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.jfrog/2.0.0\"}}]}"));
+                    if (url.EndsWith("/Download/contoso.jfrog/1.2.0")) return (200, Nupkg("net8.0"));
+                    if (url.EndsWith("/Download/contoso.jfrog/2.0.0")) return (200, Nupkg("net10.0"));
+                    return (404, []);
+                }
+            };
+            var regCache = Path.Combine(root, "cache-reg"); Directory.CreateDirectory(regCache);
+            Program.WriteArtifactFile(CompatCache.CachePath(regCache, "Contoso.JFrog"),
+                JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.JFrog" }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", regCache, "Contoso.JFrog", null, regHandler) != 0)
+                throw new Exception("the registrations door exited non-zero");
+            var reg = CompatCache.Load(regCache, "Contoso.JFrog") ?? throw new Exception("registrations cache missing");
+            var r12 = reg.Versions.FirstOrDefault(v => v.Version == "1.2.0");
+            var r20 = reg.Versions.FirstOrDefault(v => v.Version == "2.0.0");
+            if (r12 is null || r12.TargetFrameworks.Single() != "net8.0" || r20 is null || r20.TargetFrameworks.Single() != "net10.0")
+                throw new Exception("the registrations door must fetch versions from the pages and nupkgs from packageContent");
+
             // the ceiling cap: a probed record above the feed's list is not a recommendation
             probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });
             if (CompatCache.Ceiling(probed3, "net8.0", null, null, maxVersion: "16.0.0") != "13.0.2")
