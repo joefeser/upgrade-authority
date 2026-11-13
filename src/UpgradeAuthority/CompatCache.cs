@@ -370,6 +370,7 @@ public static class CompatCache
         if (ids.Count == 0)
         { Console.Error.WriteLine($"error: no cache entries in {cacheDir} — run the join first (discover-max --join-fixture)"); return 1; }
         var registrationBase = ""; // set when the index speaks JFrog's registrations dialect
+        string[] allRegistrationBases = []; // every advertised registration partition, semver2-first
         var packageContent = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase); // id-lower -> version-lower -> download url
         if (feedBase.TrimEnd('/').EndsWith("index.json", StringComparison.OrdinalIgnoreCase))
         {
@@ -397,14 +398,21 @@ public static class CompatCache
             // THE JFROG DOOR (verified against a real JFrog cloud trial, 2026-11-13): JFrog's
             // NuGet v3 index advertises NO PackageBaseAddress at all — versions and nupkg
             // downloads live behind RegistrationsBaseUrl instead. Prefer it when present.
-            var registrations = resources
+            // PREFER THE SEMVER2 PARTITION: NuGet partitions registration blobs — semver2-only
+            // packages (System.CommandLine.Hosting's 0.3.0-alpha.19405.1-style versions) 404 in
+            // the semver1 partition (BlobNotFound) but serve from /3.6.0 + /Versioned, which
+            // carry BOTH partitions. Rank the advertised variants highest-version first.
+            var registrationBases = resources
                 .Where(r => r.Type.StartsWith("RegistrationsBaseUrl", StringComparison.Ordinal))
                 .Select(r => r.Id)
-                .FirstOrDefault() ?? "";
-            if (registrations.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .OrderByDescending(id => RegistrationRank(resources.First(r2 => r2.Id == id).Type))
+                .ToList();
+            if (registrationBases.Count > 0)
             {
-                registrationBase = registrations;
-                Console.Error.WriteLine($"feed: no PackageBaseAddress (it has: {string.Join(", ", advertised.Take(6))}) — using the registrations door at {registrationBase}");
+                registrationBase = registrationBases[0];
+                allRegistrationBases = registrationBases.ToArray();
+                Console.Error.WriteLine($"feed: no PackageBaseAddress (it has: {string.Join(", ", advertised.Take(6))}) — using the registrations door at {registrationBase}" + (registrationBases.Count > 1 ? $" (+{registrationBases.Count - 1} fallback partition(s): {string.Join(", ", registrationBases.Skip(1).Take(3))})" : ""));
             }
             else
             {
@@ -439,42 +447,58 @@ public static class CompatCache
         await Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(parallel, 1, 64) }, async (id, cancellationToken) =>
         {
             Console.Error.WriteLine($"feed {id}: fetching version list");
-            string[] versions;
+            string[] versions = [];
             Dictionary<string, string> contentUrls = new(StringComparer.OrdinalIgnoreCase);
             try
             {
-                if (registrationBase.Length > 0)
+                if (allRegistrationBases.Length > 0)
                 {
                     // the registrations door (JFrog): the registration index lists pages; each page
-                    // carries catalogEntry.version + packageContent (the download URL)
-                    var regText = await http.GetStringAsync(registrationBase.TrimEnd('/') + "/" + id.ToLowerInvariant() + "/index.json");
-                    using var regDoc = System.Text.Json.JsonDocument.Parse(regText);
-                    var pages = new List<string>();
-                    var collected = new List<(string Version, string Content)>();
-                    foreach (var page in regDoc.RootElement.GetProperty("items").EnumerateArray())
+                    // carries catalogEntry.version + packageContent (the download URL). The door
+                    // FALLS THROUGH every advertised partition — a semver2-only package 404s in
+                    // the semver1 partition but serves from semver2 (System.CommandLine.Hosting)
+                    Exception? lastRegFailure = null;
+                    foreach (var regBase in allRegistrationBases)
                     {
-                        if (page.TryGetProperty("items", out var inline))
+                        try
                         {
-                            foreach (var leaf in inline.EnumerateArray())
+                            var regText = await http.GetStringAsync(regBase.TrimEnd('/') + "/" + id.ToLowerInvariant() + "/index.json");
+                            using var regDoc = System.Text.Json.JsonDocument.Parse(regText);
+                            var pages = new List<string>();
+                            var collected = new List<(string Version, string Content)>();
+                            foreach (var page in regDoc.RootElement.GetProperty("items").EnumerateArray())
                             {
-                                var ce = leaf.GetProperty("catalogEntry");
-                                collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                                if (page.TryGetProperty("items", out var inline))
+                                {
+                                    foreach (var leaf in inline.EnumerateArray())
+                                    {
+                                        var ce = leaf.GetProperty("catalogEntry");
+                                        collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                                    }
+                                }
+                                else pages.Add(page.GetProperty("@id").GetString() ?? "");
                             }
+                            foreach (var pageUrl in pages.Distinct(StringComparer.Ordinal))
+                            {
+                                var pageText = await http.GetStringAsync(pageUrl);
+                                using var pageDoc = System.Text.Json.JsonDocument.Parse(pageText);
+                                foreach (var leaf in pageDoc.RootElement.GetProperty("items").EnumerateArray())
+                                {
+                                    var ce = leaf.GetProperty("catalogEntry");
+                                    collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                                }
+                            }
+                            versions = collected.Select(c => c.Version).Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+                            foreach (var (v, url) in collected) if (url.Length > 0 && !contentUrls.ContainsKey(v.ToLowerInvariant())) contentUrls[v.ToLowerInvariant()] = url;
+                            lastRegFailure = null;
+                            break;
                         }
-                        else pages.Add(page.GetProperty("@id").GetString() ?? "");
-                    }
-                    foreach (var pageUrl in pages.Distinct(StringComparer.Ordinal))
-                    {
-                        var pageText = await http.GetStringAsync(pageUrl);
-                        using var pageDoc = System.Text.Json.JsonDocument.Parse(pageText);
-                        foreach (var leaf in pageDoc.RootElement.GetProperty("items").EnumerateArray())
+                        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException)
                         {
-                            var ce = leaf.GetProperty("catalogEntry");
-                            collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                            lastRegFailure = ex; // this partition does not carry the package: try the next
                         }
                     }
-                    versions = collected.Select(c => c.Version).Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
-                    foreach (var (v, url) in collected) if (url.Length > 0 && !contentUrls.ContainsKey(v.ToLowerInvariant())) contentUrls[v.ToLowerInvariant()] = url;
+                    if (lastRegFailure is not null) throw lastRegFailure; // every partition refused: the not-fetchable note below names it
                 }
                 else
                 {
@@ -565,6 +589,14 @@ public static class CompatCache
         }
         return 0;
     }
+
+    // registration partition rank: /Versioned and /3.6.0 serve BOTH semver partitions and win;
+    // the plain (semver1) base loses — a semver2-only package 404s there (BlobNotFound)
+    private static int RegistrationRank(string type) => type.Contains("Versioned", StringComparison.OrdinalIgnoreCase) ? 100
+        : type.Contains("3.6.0", StringComparison.Ordinal) ? 90
+        : type.Contains("3.4.0", StringComparison.Ordinal) ? 20
+        : type.Contains("3.0.0", StringComparison.Ordinal) ? 10
+        : 0;
 
     private static string FirstLine(string s)
     {

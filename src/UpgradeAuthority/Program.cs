@@ -4887,6 +4887,28 @@ public static class Program
             if (CompatCache.Ceiling(metaFile, "net10.0", null, null) is null)
                 throw new Exception("the itext7 shape must resolve on net10.0 via the normalized netstandard2.0 group");
 
+            // (1b) the SEMVER2 PARTITION door: a package whose plain (semver1) registration 404s
+            // (System.CommandLine.Hosting — every version semver2) serves from the /3.6.0 partition
+            var partHandler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url == "https://feed.example/v3/af/index.json") return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/af/registration/\",\"@type\":\"RegistrationsBaseUrl\"},{\"@id\":\"https://feed.example/v3/af/registration-semver2/\",\"@type\":\"RegistrationsBaseUrl/3.6.0\"}]}"));
+                    if (url.EndsWith("/registration/contoso.semver2only/index.json")) return (404, []); // the semver1 partition: BlobNotFound
+                    if (url.EndsWith("/registration-semver2/contoso.semver2only/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration-semver2/contoso.semver2only/page/0.3.0-alpha/0.4.0-beta.json\",\"count\":1,\"lower\":\"0.3.0-alpha.19405.1\",\"upper\":\"0.4.0-beta.2\"}]}"));
+                    if (url.EndsWith("/page/0.3.0-alpha/0.4.0-beta.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"0.4.0-beta.2\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.semver2only/0.4.0-beta.2\"}}]}"));
+                    if (url.Contains("/Download/contoso.semver2only/0.4.0-beta.2")) return (200, Nupkg("net8.0"));
+                    return (404, []);
+                }
+            };
+            var partCache = Path.Combine(root, "cache-part"); Directory.CreateDirectory(partCache);
+            Program.WriteArtifactFile(CompatCache.CachePath(partCache, "Contoso.Semver2Only"), JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Semver2Only" }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", partCache, "Contoso.Semver2Only", null, partHandler).GetAwaiter().GetResult() != 0)
+                throw new Exception("the semver2-partition fall-through exited non-zero");
+            var part = CompatCache.Load(partCache, "Contoso.Semver2Only")!.Versions.Single();
+            if (part.Version != "0.4.0-beta.2" || part.TargetFrameworks.Single() != "net8.0")
+                throw new Exception("the semver2-only package must serve through the /3.6.0 partition after the plain one 404s");
+
             // (2) the legacy parse: a net20 asset is .NET FRAMEWORK, not "major 20" — it never admits net5+
             if (CompatCache.SupportsTfm(["net20"], "net10.0") != false) throw new Exception("a net20 (framework 2.0) asset must not admit a modern repo");
             if (CompatCache.SupportsTfm(["net462"], "net10.0") != false) throw new Exception("a net462 asset must not admit a modern repo by parse, not by accident");
