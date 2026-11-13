@@ -20,6 +20,13 @@ dotnet $ua discover-max --join-fixture C:\ua-estate\fixture --out C:\ua-estate\c
 New-Item -ItemType Directory -Force C:\ua-estate\nupkg-feed | Out-Null
 Get-ChildItem "$env:USERPROFILE\.nuget\packages" -Recurse -Filter *.nupkg | ForEach-Object { Copy-Item $_.FullName ("C:\ua-estate\nupkg-feed\" + $_.Name) -Force }
 
+# 1b) RE-INGEST PICKUP (2026-11-13): the repo-frameworks channel (the csproj's own
+#      TargetFrameworkDeclared facts — TFM evidence with NO lockfiles and NO build output)
+#      rides ingest. After pulling a new ua build, re-run the ingest with the SAME carriers
+#      your scan-estate run carried (seconds — never a rescan), then re-run step 3:
+dotnet $ua ingest --scans-root C:\ua-estate\scans --producer C:\ua-estate\producer-evidence.v0.json --ownership C:\ua-estate\ownership.v0.json --out C:\ua-estate\fixture
+#      (add --scope / --archived / --delta ONLY if your original run carried them)
+
 # 2) the probe — real targetFrameworks records from the nupkg lib/** folders.
 #    Never rewrites probed records; never destroys the join's back-references.
 dotnet $ua discover-max --from-folder C:\ua-estate\nupkg-feed --out C:\ua-estate\compat-cache
