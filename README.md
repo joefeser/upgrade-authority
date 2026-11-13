@@ -269,8 +269,10 @@ dotnet $ua upgrade-plan C:\ua-estate\fixture --cache C:\ua-estate\compat-cache `
   --pegs pegs-master.v0.json --estate-pegs pegs-estate.v0.json --out C:\ua-estate\upgrade-plan.json
 
 # 3) the daily driver — one repo, every live pin to its allowedMax (cross-major in scope,
-#    never a downgrade). Plan mode first; --apply executes under the apply law
-#    (every site re-checked against the file; stale/ambiguous refusals, never a guess):
+#    never a downgrade). --repo takes the repo's FOLDER NAME (leaf form; full fixture keys are
+#    matched too — ambiguous names are refused with the candidates). --apply RE-DERIVES the
+#    plan and applies it in one shot; there is no plan-file input (each site is re-checked
+#    against the actual file; stale/ambiguous refusals are the safety, never a guess):
 dotnet $ua update C:\ua-estate\fixture --repo <repo> --cache C:\ua-estate\compat-cache `
   --pegs pegs-master.v0.json --repos-root C:\repos --out update-plan.json     # plan
 dotnet $ua update C:\ua-estate\fixture --repo <repo> --cache C:\ua-estate\compat-cache `

@@ -247,16 +247,37 @@ public static class Upgrade
         if (o.UpdateDotNet)
         { Console.Error.WriteLine("error: --update-dot-net is RESERVED in V0 — TFM-touching moves need compatibility proof plus an explicit hand (the brief: -keep-dot-net is the only V0 behavior)"); return (1, null); }
         if (!TryLoadEvidence(o.FixtureDir, out var evidence, out var error)) { Console.Error.WriteLine($"error: {error}"); return (1, null); }
-        var repoDir = Path.Combine(Path.GetFullPath(o.ReposRoot), o.Repo);
+        var pegs = LoadPegs(o.MasterPegs, o.EstatePegs);
+        // repo matching: the fixture's keys are FULL keys (host/org/repo-shaped) — the operator
+        // knows the folder name. Accept the leaf form (unambiguous when only one key carries it;
+        // ambiguous = typed refusal listing the candidates, never a guess)
+        var repoKey = o.Repo;
+        if (!evidence!.Facts.Any(f => string.Equals(f.Repo, repoKey, StringComparison.Ordinal)))
+        {
+            var byLeaf = evidence.Facts.Select(f => f.Repo).Distinct(StringComparer.Ordinal)
+                .Where(r => RepoLeaf(r).Equals(o.Repo, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (byLeaf.Count == 1) repoKey = byLeaf[0];
+            else if (byLeaf.Count > 1)
+            { Console.Error.WriteLine($"error: '{o.Repo}' matches multiple fixture keys — pick one explicitly: {string.Join(", ", byLeaf.Order(StringComparer.Ordinal))}"); return (1, null); }
+            else
+            {
+                var hints = evidence.Facts.Select(f => f.Repo).Distinct(StringComparer.Ordinal)
+                    .Where(r => r.Contains(o.Repo, StringComparison.OrdinalIgnoreCase))
+                    .Order(StringComparer.Ordinal).Take(5).ToList();
+                if (hints.Count == 0) hints = evidence.Facts.Select(f => f.Repo).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(5).ToList();
+                Console.Error.WriteLine($"error: repo '{o.Repo}' has no facts in the fixture. Closest fixture keys: {string.Join(", ", hints)}");
+                return (1, null);
+            }
+        }
+        var repoFacts = evidence!.Facts.Where(f => string.Equals(f.Repo, repoKey, StringComparison.Ordinal)).ToList();
+        var repoLeaf = RepoLeaf(repoKey);
+        var repoDir = Path.Combine(Path.GetFullPath(o.ReposRoot), repoLeaf);
         if (!Directory.Exists(repoDir))
         { Console.Error.WriteLine($"error: repo checkout not found: {repoDir} (--repos-root + the repo's folder name)"); return (1, null); }
-        var pegs = LoadPegs(o.MasterPegs, o.EstatePegs);
-        var repoFacts = evidence!.Facts.Where(f => string.Equals(f.Repo, o.Repo, StringComparison.Ordinal)).ToList();
-        if (repoFacts.Count == 0)
-        { Console.Error.WriteLine($"error: repo '{o.Repo}' has no facts in the fixture (repo keys are exact — check spelling/leaf form)"); return (1, null); }
         var repoTfms = LoadRepoTfms(o.FixtureDir); // the lockfile channel: where a repo's TFMs are actually evidenced
         var tfms = repoFacts.Where(f => f.Tfm is { Length: > 0 }).Select(f => f.Tfm!)
-            .Concat(repoTfms.TryGetValue(o.Repo, out var lt) ? lt : Array.Empty<string>())
+            .Concat(repoTfms.TryGetValue(repoKey, out var lt) ? lt : Array.Empty<string>())
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
 
         var packageRows = new List<Dictionary<string, object?>>();
@@ -304,7 +325,7 @@ public static class Upgrade
         var report = new Dictionary<string, object?>
         {
             ["schemaVersion"] = "repo-update.v0",
-            ["repo"] = o.Repo,
+            ["repo"] = repoKey,
             ["mode"] = o.Apply ? "applied" : "plan",
             ["tfms"] = tfms,
             ["packages"] = packageRows,
@@ -434,6 +455,16 @@ public static class Upgrade
         }
         var report = new Dictionary<string, object?> { ["schemaVersion"] = "upgrade-plan.v0", ["groups"] = groups };
         return (0, JsonSerializer.Serialize(report, WriteOpts).ReplaceLineEndings("\n") + "\n");
+    }
+
+    // the engine's RepoLeaf shape: the last path segment, .git stripped — what the operator
+    // calls the repo when the fixture carries full keys
+    private static string RepoLeaf(string repo)
+    {
+        var t2 = repo.TrimEnd('/');
+        var cut = t2.LastIndexOfAny(new[] { '/', '\\' });
+        var leaf = cut >= 0 ? t2[(cut + 1)..] : t2;
+        return leaf.EndsWith(".git", StringComparison.Ordinal) ? leaf[..^4] : leaf;
     }
 
     // SPEC-021 §2(c): package identity is OrdinalIgnoreCase
