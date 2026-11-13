@@ -4740,12 +4740,27 @@ public static class Program
                     if (url.EndsWith("/page/1.2.0/2.0.0.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"1.2.0\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.jfrog/1.2.0\"}},{\"catalogEntry\":{\"version\":\"2.0.0\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.jfrog/2.0.0\"}}]}"));
                     if (url.EndsWith("/Download/contoso.jfrog/1.2.0")) return (200, Nupkg("net8.0"));
                     if (url.EndsWith("/Download/contoso.jfrog/2.0.0")) return (200, Nupkg("net10.0"));
+                    if (url.EndsWith("/Download/contoso.jfrog/6.0.4")) return (200, BuildOnlyNupkg("netstandard2.0"));
+                    if (url.EndsWith("/contoso.collector/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"versions\":[\"6.0.4\"]}"));
+                    if (url.EndsWith("/registration/contoso.collector/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.collector/page/6.0.4/6.0.4.json\",\"count\":1,\"lower\":\"6.0.4\",\"upper\":\"6.0.4\"}]}"));
+                    if (url.EndsWith("/page/6.0.4/6.0.4.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"6.0.4\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.collector/6.0.4\"}}]}"));
                     return (404, []);
                 }
             };
             var regCache = Path.Combine(root, "cache-reg"); Directory.CreateDirectory(regCache);
             Program.WriteArtifactFile(CompatCache.CachePath(regCache, "Contoso.JFrog"),
                 JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.JFrog" }, new JsonSerializerOptions { WriteIndented = true }));
+            // the collector-class package (build-only assets, no lib — coverlet.collector's shape)
+            // must gain its TFM evidence from build/ instead of reading as undetermined
+            Program.WriteArtifactFile(CompatCache.CachePath(regCache, "Contoso.Collector"),
+                JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Collector" }, new JsonSerializerOptions { WriteIndented = true }));
+            byte[] BuildOnlyNupkg(params string[] tfms)
+            {
+                using var ms = new MemoryStream();
+                using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                    foreach (var tfm in tfms) zip.CreateEntry($"build/{tfm}/pkg.targets");
+                return ms.ToArray();
+            }
             if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", regCache, "Contoso.JFrog", null, regHandler) != 0)
                 throw new Exception("the registrations door exited non-zero");
             var reg = CompatCache.Load(regCache, "Contoso.JFrog") ?? throw new Exception("registrations cache missing");
@@ -4753,6 +4768,17 @@ public static class Program
             var r20 = reg.Versions.FirstOrDefault(v => v.Version == "2.0.0");
             if (r12 is null || r12.TargetFrameworks.Single() != "net8.0" || r20 is null || r20.TargetFrameworks.Single() != "net10.0")
                 throw new Exception("the registrations door must fetch versions from the pages and nupkgs from packageContent");
+            // the build-only probe (the coverlet.collector shape): assets under build/ are evidence
+            var ccHandler = new FakeFeedHandler { Responder = url =>
+                url == "https://feed.example/v3/af/index.json" ? (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/af/registration/\",\"@type\":\"RegistrationsBaseUrl\"}]}")) :
+                url.EndsWith("/registration/contoso.collector/index.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.collector/page/6.0.4/6.0.4.json\",\"count\":1,\"lower\":\"6.0.4\",\"upper\":\"6.0.4\"}]}")) :
+                url.EndsWith("/page/6.0.4/6.0.4.json") ? (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"6.0.4\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.collector/6.0.4\"}}]}")) :
+                url.Contains("/Download/contoso.collector/6.0.4") ? (200, BuildOnlyNupkg("netstandard2.0")) : (404, []) };
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", regCache, "Contoso.Collector", null, ccHandler) != 0)
+                throw new Exception("the collector probe exited non-zero");
+            var cc = CompatCache.Load(regCache, "Contoso.Collector")!.Versions.Single();
+            if (cc.TargetFrameworks.Single() != "netstandard2.0")
+                throw new Exception($"a build-only package must gain its TFMs from build/ (got [{string.Join(",", cc.TargetFrameworks)}])");
 
             // the ceiling cap: a probed record above the feed's list is not a recommendation
             probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });

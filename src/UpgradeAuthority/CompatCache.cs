@@ -203,15 +203,27 @@ public static class CompatCache
 
     // ---- the shared probe core (folder path and feed path both land here) ----
 
-    // TFM folders are the lib/** first segments that look like frameworks (net8.0,
-    // netstandard2.0); marker files (lib/_._) and non-lib entries are not evidence.
-    private static List<string> TfmFolders(System.IO.Compression.ZipArchive zip) => zip.Entries
-        .Where(e => e.FullName.StartsWith("lib/", StringComparison.OrdinalIgnoreCase) && e.FullName.Length > "lib/".Length)
-        .Select(e => e.FullName["lib/".Length..].Split('/')[0])
-        .Where(seg => seg.StartsWith("net", StringComparison.OrdinalIgnoreCase))
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .OrderBy(t => t, StringComparer.Ordinal)
-        .ToList();
+    // TFM evidence from the package's framework-named asset folders, in confidence order:
+    // lib/** is the runtime truth; when a package has NO lib assets (collector/analyzer/build
+    // packages — coverlet.collector ships build/netstandard2.0 with no lib at all), ref/** and
+    // then build/** carry the same framework-named evidence. Marker entries (lib/_._) and
+    // non-net segments are not evidence. A package with no net-named folder anywhere stays
+    // undetermined — onboarding, never a guess.
+    private static List<string> TfmFolders(System.IO.Compression.ZipArchive zip)
+    {
+        foreach (var root in new[] { "lib/", "ref/", "build/" })
+        {
+            var tfms = zip.Entries
+                .Where(e => e.FullName.StartsWith(root, StringComparison.OrdinalIgnoreCase) && e.FullName.Length > root.Length)
+                .Select(e => e.FullName[root.Length..].Split('/')[0])
+                .Where(seg => seg.StartsWith("net", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(t => t, StringComparer.Ordinal)
+                .ToList();
+            if (tfms.Count > 0) return tfms;
+        }
+        return [];
+    }
 
     // Apply one probe result: a stub record upgrades (InUse preserved), a probed record is
     // replaced. Returns true when the version landed UNDETERMINED (onboarding).
