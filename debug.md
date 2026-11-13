@@ -42,6 +42,9 @@ dotnet $ua discover-max --feed-url https://api.nuget.org/v3-flatcontainer/ --out
 #      ARTIFACTORY (internals at work): the base is the flat-container form — the URL that
 #      ends right before {id}/index.json:
 #        https://<host>/artifactory/api/nuget/<repo>/flatcontainer
+#      SIMPLER: paste your NuGet.config URL (the service index) — the verb resolves
+#      PackageBaseAddress itself:
+#        dotnet $ua discover-max --feed-url https://<host>/artifactory/api/nuget/v3/v-nuget/index.json --out C:\ua-estate\compat-cache
 #      Credentials (if the instance requires them — env vars, never the command line):
 #        $env:NUGET_FEED_USER = "<your-username>"          # password may be your Artifactory API key
 #        $env:NUGET_FEED_PASSWORD = "<password-or-api-key>"

@@ -279,6 +279,30 @@ public static class CompatCache
         if (!string.IsNullOrEmpty(feedUser) && !string.IsNullOrEmpty(feedPassword))
             http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
                 Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(feedUser + ":" + feedPassword)));
+        // accept the SERVICE INDEX (the NuGet.config URL — ".../index.json"): the v3 protocol's
+        // entry point advertises its resources; the flat container is the PackageBaseAddress one
+        if (feedBase.TrimEnd('/').EndsWith("index.json", StringComparison.OrdinalIgnoreCase))
+        {
+            string resolved;
+            try
+            {
+                var indexText = http.GetStringAsync(feedBase).GetAwaiter().GetResult();
+                using var indexDoc = System.Text.Json.JsonDocument.Parse(indexText);
+                resolved = indexDoc.RootElement.GetProperty("resources").EnumerateArray()
+                    .Where(r => (r.TryGetProperty("@type", out var type) ? type.GetString() : null) is { } s && s.StartsWith("PackageBaseAddress", StringComparison.Ordinal))
+                    .Select(r => r.GetProperty("@id").GetString()!)
+                    .FirstOrDefault() ?? "";
+            }
+            catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException)
+            {
+                Console.Error.WriteLine($"error: the service index at {feedBase} is not fetchable/parseable ({FirstLine(ex.Message)}) — pass the flat-container base directly if you know it");
+                return 1;
+            }
+            if (resolved.Length == 0)
+            { Console.Error.WriteLine($"error: the service index advertises no PackageBaseAddress resource — pass the flat-container base directly"); return 1; }
+            Console.Error.WriteLine($"feed: service index resolved to the flat container at {resolved}");
+            feedBase = resolved;
+        }
         var feedPackages = new List<Drift.FeedPackage>();
         var probed = 0; var failures = 0; var notOnFeed = 0;
         foreach (var id in ids)

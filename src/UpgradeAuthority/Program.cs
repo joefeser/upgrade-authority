@@ -4648,7 +4648,8 @@ public static class Program
             {
                 Responder = url =>
                 {
-                    if (url.EndsWith("/contoso.sample/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"versions\":[\"13.0.2\",\"15.0.4\",\"15.0.7-beta\",\"16.0.0\"]}"));
+                    if (url.EndsWith("/v3/v-nuget/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3-flatcontainer/\",\"@type\":\"PackageBaseAddress/3.0.0\"},{\"@id\":\"https://feed.example/v3-reg/\",\"@type\":\"RegistrationsBaseUrl/3.0.0\"}]}"));
+                if (url.EndsWith("/contoso.sample/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"versions\":[\"13.0.2\",\"15.0.4\",\"15.0.7-beta\",\"16.0.0\"]}"));
                     if (url.EndsWith("/contoso.sample/13.0.2/contoso.sample.13.0.2.nupkg")) { nupkgUrlsServed.Add(url); return (200, Nupkg("net8.0")); }
                     if (url.EndsWith("/contoso.sample/15.0.4/contoso.sample.15.0.4.nupkg")) { nupkgUrlsServed.Add(url); return (200, Nupkg("net10.0")); }
                     if (url.EndsWith("/contoso.sample/16.0.0/contoso.sample.16.0.0.nupkg")) { nupkgUrlsServed.Add(url); return (200, Nupkg("net11.0")); }
@@ -4662,6 +4663,23 @@ public static class Program
             var cands = CompatCache.SelectCandidates(new[] { "13.0.2", "15.0.4", "15.0.7-beta", "16.0.0" }, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "13.0.2" }, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             if (string.Join(",", cands) != "13.0.2,15.0.4,16.0.0") throw new Exception($"candidates = latest-per-major (3 majors) + in-use, prerelease excluded, ordinal order (got {string.Join(",", cands)})");
 
+            // the SERVICE INDEX door: paste the NuGet.config URL — the verb resolves
+            // PackageBaseAddress itself (a second handler serves the index at that path)
+            var indexHandler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url.EndsWith("/v3/v-nuget/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3-flatcontainer/\",\"@type\":\"PackageBaseAddress/3.0.0\"}]}"));
+                    return handler.Responder(url);
+                }
+            };
+            var indexCache = Path.Combine(root, "cache-index"); Directory.CreateDirectory(indexCache);
+            Program.WriteArtifactFile(CompatCache.CachePath(indexCache, "Contoso.Sample"),
+                JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Sample" }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/v-nuget/index.json", indexCache, "Contoso.Sample", null, indexHandler) != 0)
+                throw new Exception("ProbeFeed via the service index exited non-zero");
+            if (CompatCache.Load(indexCache, "Contoso.Sample")!.Versions.Count == 0)
+                throw new Exception("the service-index door must resolve PackageBaseAddress and probe through it");
             if (CompatCache.ProbeFeed("https://feed.example/v3-flatcontainer/", cacheDir3, "Contoso.Sample", Path.Combine(root, "feed-versions.v1.json"), handler) != 0)
                 throw new Exception("ProbeFeed exited non-zero");
             // URL casing law: lowercase id AND version in both the index and the nupkg URLs
