@@ -4682,6 +4682,19 @@ public static class Program
             probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });
             if (CompatCache.Ceiling(probed3, "net8.0", null, null, maxVersion: "16.0.0") != "13.0.2")
                 throw new Exception("the feed cap must exclude probed versions above the feed's list");
+            // systemic failure readability: a 401 feed names the credential fix on every line
+            var errCap = new System.IO.StringWriter();
+            var savedErr = Console.Error;
+            string warnLine;
+            try
+            {
+                Console.SetError(errCap);
+                var authHandler = new FakeFeedHandler { Responder = _ => (401, []) };
+                _ = CompatCache.ProbeFeed("https://feed.example/v3-flatcontainer/", cacheDir3, "Contoso.Sample", null, authHandler);
+            }
+            finally { Console.SetError(savedErr); }
+            warnLine = errCap.ToString().Split('\n').FirstOrDefault(l => l.Contains("not fetchable")) ?? "";
+            if (!warnLine.Contains("401") || !warnLine.Contains("NUGET_FEED_USER")) throw new Exception($"a 401 feed must name the credential fix (got: {warnLine.Trim()})");
 
             Console.WriteLine("ok   feed-path (URL casing; index parse; prerelease never a candidate; per-major download; feed-out drift contract; ceiling cap)"); pass++;
         }

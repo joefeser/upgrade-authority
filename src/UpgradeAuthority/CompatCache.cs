@@ -272,6 +272,13 @@ public static class CompatCache
         { Console.Error.WriteLine($"error: no cache entries in {cacheDir} — run the join first (discover-max --join-fixture)"); return 1; }
         using var http = new System.Net.Http.HttpClient(handler ?? new System.Net.Http.HttpClientHandler());
         http.Timeout = TimeSpan.FromSeconds(30);
+        // corporate feeds authenticate: NUGET_FEED_USER + NUGET_FEED_PASSWORD (password may be
+        // an Artifactory API key) — env vars, never command-line secrets (console history)
+        var feedUser = Environment.GetEnvironmentVariable("NUGET_FEED_USER");
+        var feedPassword = Environment.GetEnvironmentVariable("NUGET_FEED_PASSWORD");
+        if (!string.IsNullOrEmpty(feedUser) && !string.IsNullOrEmpty(feedPassword))
+            http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
+                Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(feedUser + ":" + feedPassword)));
         var feedPackages = new List<Drift.FeedPackage>();
         var probed = 0; var failures = 0; var notOnFeed = 0;
         foreach (var id in ids)
@@ -287,10 +294,20 @@ public static class CompatCache
             }
             catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException)
             {
-                // 404-class: the package is not on THIS feed (internal packages on nuget.org —
-                // expected; point --feed-url at your Artifactory base for internals)
+                // the REASON travels: a systemic failure (auth/TLS/base-shape) must say so on
+                // every line, never hide behind the exception type name
+                var status = (ex as System.Net.Http.HttpRequestException)?.StatusCode;
+                var hint = status switch
+                {
+                    System.Net.HttpStatusCode.Unauthorized => "401 — feed credentials required (set NUGET_FEED_USER / NUGET_FEED_PASSWORD)",
+                    System.Net.HttpStatusCode.Forbidden => "403 — credentials lack read on this repo",
+                    System.Net.HttpStatusCode.NotFound => "404 — wrong base shape (the flat-container base ends right before {id}/index.json)",
+                    null => "transport/TLS/proxy failure",
+                    _ => $"{(int)status} {status}",
+                };
+                if (ex is not System.Net.Http.HttpRequestException) hint = $"feed returned unparseable data ({ex.GetType().Name}: {FirstLine(ex.Message)})";
+                Console.Error.WriteLine($"note: {id}: not fetchable from this feed — {hint}: {FirstLine(ex.Message)}");
                 notOnFeed++;
-                Console.Error.WriteLine($"note: {id}: not on this feed or unreachable ({ex.GetType().Name}) — its cache entry stands as-is (internal? use your Artifactory base)");
                 continue;
             }
             var cache = Load(cacheDir, id) ?? new CompatCacheFile { Id = id };
@@ -347,6 +364,13 @@ public static class CompatCache
                 new Drift.FeedFile { SchemaVersion = "feed-versions.v1", Source = feedBase, AsOf = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture), Packages = feedPackages.OrderBy(p => p.PackageId, StringComparer.Ordinal).ToList() }, WriteOpts).ReplaceLineEndings("\n") + "\n");
         Console.Error.WriteLine($"feed probe done: {probed} candidate(s) probed, {notOnFeed} package(s) not on this feed, {failures} download/parse failure(s)");
         return 0;
+    }
+
+    private static string FirstLine(string s)
+    {
+        var cut = s.IndexOfAny(['\r', '\n']);
+        var line = cut < 0 ? s : s[..cut];
+        return line.Length > 220 ? line[..220] + "…" : line;
     }
 
     // Full 4-part numeric rank for stable-parseable versions (CompareCore against a constant
