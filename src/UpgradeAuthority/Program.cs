@@ -4462,6 +4462,14 @@ public static class Program
                 AllVersionsSimple = ["4.19.0", "4.19.2", "4.20.0", "4.25.0"],
                 Versions = [new CompatVersion { Version = "4.19.2", TargetFrameworks = ["netstandard2.0"], IsLatestForMajor = true }],
             }, new JsonSerializerOptions { WriteIndented = true }));
+            // the lockfile channel: repo TFMs are evidenced HERE on real estates (a csproj
+            // PackageReference names no framework). repo-c's facts carry NO tfm — its net9.0
+            // group comes only from this file.
+            File.WriteAllText(Path.Combine(fixture2, "input", "lockfile-rows.v2.json"),
+                "{\"schemaVersion\":\"lockfile-rows.v2\",\"repos\":["
+                + "{\"repo\":\"repo-a\",\"rows\":[{\"packageId\":\"UASamples.Component\",\"type\":\"direct\",\"version\":\"13.0.1\",\"tfm\":\"net8.0\"}]},"
+                + "{\"repo\":\"repo-b\",\"rows\":[{\"packageId\":\"UASamples.Component\",\"type\":\"direct\",\"version\":\"15.0.3\",\"tfm\":\"net10.0\"}]},"
+                + "{\"repo\":\"repo-c\",\"rows\":[{\"packageId\":\"UASamples.Component\",\"type\":\"direct\",\"version\":\"13.0.1\",\"tfm\":\"net9.0\"}]}]}");
             var pegsMaster2 = Path.Combine(root, "pegs-master.json");
             File.WriteAllText(pegsMaster2, "{\"schemaVersion\":\"pegs.v0\",\"pegs\":[{\"packageName\":\"Contoso.Tracking\",\"kind\":\"maxExclusive\",\"version\":\"4.20.0\",\"note\":\"no telemetry\"}]}");
 
@@ -4541,12 +4549,23 @@ public static class Program
             // 6) the estate VIEW: TFM groups, potential vs allowed, license shift flagged
             File.WriteAllText(Path.Combine(fixture2, "input", "package-evidence.v0.json"),
                 "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[ {\"repo\":\"repo-a\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":7,\"path\":\"App.csproj\",\"projects\":[],\"commitSha\":\"x\"}, {\"repo\":\"repo-b\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"15.0.3\",\"format\":\"packagereference\",\"constraintSource\":\"Directory.Packages.props\",\"tfm\":\"net10.0\",\"line\":3,\"path\":\"Directory.Packages.props\",\"projects\":[],\"commitSha\":\"x\"}]}");
+            // repo-c: the fact carries NO tfm — its group must come from the lockfile channel
+            var factsNow = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(fixture2, "input", "package-evidence.v0.json")));
+            var factList = new List<string>();
+            foreach (var f2 in factsNow.GetProperty("facts").EnumerateArray())
+                factList.Add(JsonSerializer.Serialize(f2));
+            factList.Add("{\"repo\":\"repo-c\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"line\":2,\"path\":\"Lib.csproj\",\"projects\":[],\"commitSha\":\"x\"}");
+            File.WriteAllText(Path.Combine(fixture2, "input", "package-evidence.v0.json"),
+                "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[" + string.Join(",", factList) + "]}");
             var (_, viewText) = Upgrade.View(new Upgrade.ViewOptions(fixture2, cacheDir2, null, null, null));
             var view = JsonSerializer.Deserialize<JsonElement>(viewText!);
             var g8 = view.GetProperty("groups").GetProperty("net8.0").EnumerateArray().Single();
             if (g8.GetProperty("allowedMax").GetString() != "13.0.2" || g8.GetProperty("potentialMax").GetString() != "15.0.4")
                 throw new Exception($"the net8 group must show allowed 13.0.2 under potential 15.0.4 (got {g8.GetProperty("allowedMax").GetString()}/{g8.GetProperty("potentialMax").GetString()})");
             if (!g8.GetProperty("licenseShift").GetBoolean()) throw new Exception("MIT → Apache-2.0 across majors must flag licenseShift");
+            var g9 = view.GetProperty("groups").GetProperty("net9.0").EnumerateArray().Single();
+            if (g9.GetProperty("allowedMax").GetString() != "13.0.2")
+                throw new Exception($"net9 sits between the two cache records: net10-only 15.0.4 is invisible to it, so 13.0.2 (got {g9.GetProperty("allowedMax").GetString()})");
 
             Console.WriteLine("ok   upgrade-plan-layer-2 (estate join; update plan+apply under the apply law; peg cap; stale/pin-above-ceiling/current; per-TFM estate view with license shift)"); pass++;
         }

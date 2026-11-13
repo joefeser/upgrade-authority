@@ -87,6 +87,29 @@ public static class Upgrade
         return 0;
     }
 
+    // Repo TFM evidence: the lockfile envelope carries a tfm per row — a csproj PackageReference
+    // names no framework, so on real estates the fact's own tfm field is usually empty and the
+    // lockfile/deps rows are where the repo's target frameworks are actually evidenced.
+    internal static Dictionary<string, List<string>> LoadRepoTfms(string fixtureDir)
+    {
+        var map = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var path = Path.Combine(Path.GetFullPath(fixtureDir), "input", "lockfile-rows.v2.json");
+        if (!File.Exists(path)) return map; // no lockfile channel at all: every repo stays tfm-unknown
+        try
+        {
+            var v2 = JsonSerializer.Deserialize<LockfileRowsV2>(File.ReadAllText(path), ReadOpts);
+            if (v2 is null) return map;
+            foreach (var repo in v2.Repos)
+            {
+                var tfms = repo.Rows.Where(r => !string.IsNullOrWhiteSpace(r.Tfm)).Select(r => r.Tfm!.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
+                if (tfms.Count > 0) map[repo.Repo] = tfms;
+            }
+        }
+        catch (JsonException) { /* unparseable lockfile channel: no TFM evidence — never guessed */ }
+        return map;
+    }
+
     // ------------------------------------------------------------ shared resolution ----
     internal sealed record PackageResolution(
         string PackageName, string? PotentialMax, string? AllowedMax, Pegs.Resolved? Peg,
@@ -154,7 +177,10 @@ public static class Upgrade
         var repoFacts = evidence!.Facts.Where(f => string.Equals(f.Repo, o.Repo, StringComparison.Ordinal)).ToList();
         if (repoFacts.Count == 0)
         { Console.Error.WriteLine($"error: repo '{o.Repo}' has no facts in the fixture (repo keys are exact — check spelling/leaf form)"); return (1, null); }
-        var tfms = repoFacts.Where(f => f.Tfm is { Length: > 0 }).Select(f => f.Tfm!).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
+        var repoTfms = LoadRepoTfms(o.FixtureDir); // the lockfile channel: where a repo's TFMs are actually evidenced
+        var tfms = repoFacts.Where(f => f.Tfm is { Length: > 0 }).Select(f => f.Tfm!)
+            .Concat(repoTfms.TryGetValue(o.Repo, out var lt) ? lt : Array.Empty<string>())
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t, StringComparer.Ordinal).ToList();
 
         var packageRows = new List<Dictionary<string, object?>>();
         foreach (var group in repoFacts.GroupBy(f => f.PackageId, PkgComparer.Instance).OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
@@ -291,27 +317,33 @@ public static class Upgrade
     {
         if (!TryLoadEvidence(o.FixtureDir, out var evidence, out var error)) { Console.Error.WriteLine($"error: {error}"); return (1, null); }
         var pegs = LoadPegs(o.MasterPegs, o.EstatePegs);
-        // group key = the fact's TFM; repos without TFM evidence land in the explicit
-        // "(tfm-unknown)" group — visible, never dropped (the rev3 visibility law)
+        var repoTfms = LoadRepoTfms(o.FixtureDir); // the lockfile channel: where a repo's TFMs are actually evidenced
+        // A pin applies to EVERY framework its repo targets: each fact expands into one row per
+        // evidenced TFM (the fact's own tfm when present, else all of the repo's lockfile TFMs),
+        // so a multi-framework repo appears in each of its groups. A repo with no TFM evidence
+        // lands in the explicit "(tfm-unknown)" group — visible, never dropped (the rev3 law).
         var groups = new SortedDictionary<string, List<Dictionary<string, object?>>>(StringComparer.Ordinal);
         foreach (var g in evidence!.Facts
-            .GroupBy(f => f.Tfm is { Length: > 0 } ? f.Tfm!.Trim().ToLowerInvariant() : "(tfm-unknown)")
+            .SelectMany(f => f.Tfm is { Length: > 0 }
+                    ? new[] { f.Tfm.Trim() }
+                    : repoTfms.TryGetValue(f.Repo, out var lt) && lt.Count > 0 ? lt.ToArray() : new[] { "(tfm-unknown)" },
+                (f, tfm) => (Fact: f, Tfm: tfm))
+            .GroupBy(x => x.Tfm.ToLowerInvariant())
             .OrderBy(g => g.Key == "(tfm-unknown)" ? "~" : g.Key, StringComparer.Ordinal))
         {
             var rows = new List<Dictionary<string, object?>>();
-            foreach (var pkg in g.GroupBy(f => f.PackageId, PkgComparer.Instance).OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+            foreach (var pkg in g.GroupBy(x => x.Fact.PackageId, PkgComparer.Instance).OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
             {
                 var cache = CompatCache.Load(o.CacheDir, pkg.Key);
                 var peg = pegs.TryGetValue(pkg.Key, out var p) ? p : null;
-                var pins = pkg.Where(f => f.DeclaredConstraint.Length > 0 && Apply.ParseCorePublic(f.DeclaredConstraint) is not null).Select(f => f.DeclaredConstraint).ToList();
+                var pins = pkg.Select(x => x.Fact).Where(f => f.DeclaredConstraint.Length > 0 && Apply.ParseCorePublic(f.DeclaredConstraint) is not null).Select(f => f.DeclaredConstraint).ToList();
                 var pinCounts = pins.GroupBy(v => v, StringComparer.OrdinalIgnoreCase).ToDictionary(k => k.Key, k => k.Count(), StringComparer.OrdinalIgnoreCase);
-                var tfms = pkg.Where(f => f.Tfm is { Length: > 0 }).Select(f => f.Tfm!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                var resolution = Resolve(cache, g.Key == "(tfm-unknown)" ? new List<string>() : tfms, peg, pinCounts.Keys.ToList());
+                var resolution = Resolve(cache, g.Key == "(tfm-unknown)" ? Array.Empty<string>() : new[] { g.Key }, peg, pinCounts.Keys.ToList());
                 rows.Add(new Dictionary<string, object?>
                 {
                     ["packageName"] = pkg.Key,
                     ["pinCounts"] = pinCounts.OrderBy(kv => kv.Key, StringComparer.Ordinal).ToDictionary(kv => kv.Key, kv => kv.Value),
-                    ["repos"] = pkg.Select(f => f.Repo).Distinct(StringComparer.Ordinal).OrderBy(r => r, StringComparer.Ordinal).ToList(),
+                    ["repos"] = pkg.Select(x => x.Fact.Repo).Distinct(StringComparer.Ordinal).OrderBy(r => r, StringComparer.Ordinal).ToList(),
                     ["potentialMax"] = resolution.PotentialMax,
                     ["allowedMax"] = resolution.AllowedMax,
                     ["pegged"] = resolution.Pegged,
