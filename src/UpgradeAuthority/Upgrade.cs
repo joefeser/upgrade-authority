@@ -63,7 +63,10 @@ public static class Upgrade
             if (fact.PackageId.Length == 0 || fact.Repo.Length == 0) continue;
             if (!touched.TryGetValue(fact.PackageId, out var entry))
                 entry = touched[fact.PackageId] = (new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase), new SortedSet<string>(StringComparer.Ordinal));
-            if (fact.DeclaredConstraint.Length > 0 && Apply.ParseCorePublic(fact.DeclaredConstraint) is not null)
+            // ANY non-empty constraint is usage evidence — including prerelease pins
+            // (StyleCop.Analyzers pinned at 1.2.0-beta.556 for years: dropping it emptied
+            // usedVersions and hid the estate's own usage from the layer)
+            if (fact.DeclaredConstraint.Length > 0)
             {
                 if (!entry.ByVersion.TryGetValue(fact.DeclaredConstraint, out var repos)) entry.ByVersion[fact.DeclaredConstraint] = repos = new SortedSet<string>(StringComparer.Ordinal);
                 repos.Add(fact.Repo);
@@ -79,7 +82,13 @@ public static class Upgrade
             var pinnedVersions = entry.ByVersion.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var record in cache.Versions) record.InUse = pinnedVersions.Contains(record.Version);
             foreach (var version in pinnedVersions.Where(v => !cache.Versions.Any(r => r.Version.Equals(v, StringComparison.OrdinalIgnoreCase))))
-                cache.Versions.Add(new CompatVersion { Version = version, InUse = true, Note = "in use but unprobed — TFMs undetermined (onboarding)" });
+                cache.Versions.Add(new CompatVersion
+                {
+                    Version = version, InUse = true,
+                    Note = Apply.ParseCorePublic(version) is null
+                        ? "prerelease pin — in use, never a ceiling candidate (the probe records its assets when the feed carries it)"
+                        : "in use but unprobed — TFMs undetermined (onboarding)",
+                });
             Program.WriteArtifactFile(CompatCache.CachePath(cacheDir, packageId), JsonSerializer.Serialize(cache, WriteOpts).ReplaceLineEndings("\n") + "\n");
             joined++;
         }
@@ -141,8 +150,12 @@ public static class Upgrade
     // from the cheap feed list; allowedMax = min over TFMs of the compat ceiling under the
     // peg bound (min-with-unknown = unknown — one TFM with no compatible probed version
     // blocks the whole package); a forceMax floor above the ceiling is a typed violation.
-    internal static PackageResolution Resolve(CompatCacheFile? cache, IReadOnlyList<string> tfms, Pegs.Resolved? peg, IReadOnlyList<string> pins)
+    internal static PackageResolution Resolve(CompatCacheFile? cache, IReadOnlyList<string> tfms, Pegs.Resolved? peg, IReadOnlyList<string> allPins)
     {
+        // the ceiling math is STABLE-only (prerelease is never guessed — the apply law's N3);
+        // prerelease pins are displayed as usage evidence and surface as their own status
+        var pins = allPins.Where(v => Apply.ParseCorePublic(v) is not null).ToList();
+        var prereleasePins = allPins.Where(v => Apply.ParseCorePublic(v) is null).ToList();
         string? potentialMax = null;
         if (cache is not null)
             potentialMax = cache.AllVersionsSimple.Where(v => Apply.ParseCorePublic(v) is not null)
@@ -171,6 +184,9 @@ public static class Upgrade
             if (Rank(highest, ceiling!) == 0)
                 return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "current", peg is not null, LicenseShift(cache), null, tfms);
         }
+        if (prereleasePins.Count > 0 && pins.Count == 0)
+            return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "prerelease-pin", peg is not null, LicenseShift(cache),
+                $"pinned at {string.Join(", ", prereleasePins.Order(StringComparer.Ordinal))} — prerelease sites are never guessed (N3); the stable ceiling is shown for reference", tfms);
         return new PackageResolution(cache.Id, potentialMax, ceiling, peg, "would-update", peg is not null, LicenseShift(cache), null, tfms);
     }
 

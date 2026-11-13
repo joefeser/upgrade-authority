@@ -4643,6 +4643,18 @@ public static class Program
                     foreach (var tfm in tfms) zip.CreateEntry($"lib/{tfm}/lib.dll");
                 return ms.ToArray();
             }
+            byte[] AnalyzerOnlyNupkg()
+            {
+                using var ms = new MemoryStream();
+                using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                {
+                    zip.CreateEntry("analyzers/dotnet/cs/Contoso.dll");
+                    var nuspec = zip.CreateEntry("Contoso.Analyzers.nuspec");
+                    using var w = new StreamWriter(nuspec.Open());
+                    w.Write("<?xml version=\"1.0\"?><package><metadata><id>Contoso.Analyzers</id><version>1.3.180</version></metadata></package>");
+                }
+                return ms.ToArray();
+            }
             var indexServed = ""; var nupkgUrlsServed = new List<string>();
             var handler = new FakeFeedHandler
             {
@@ -4779,6 +4791,43 @@ public static class Program
             var cc = CompatCache.Load(regCache, "Contoso.Collector")!.Versions.Single();
             if (cc.TargetFrameworks.Single() != "netstandard2.0")
                 throw new Exception($"a build-only package must gain its TFMs from build/ (got [{string.Join(",", cc.TargetFrameworks)}])");
+
+            // the ANALYZER shape (StyleCop.Analyzers): only analyzers/ folders, a nuspec with no
+            // dependency groups — the evidence of absence of exclusions records "any"
+            var anyHandler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url == "https://feed.example/v3/af/index.json") return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/af/registration/\",\"@type\":\"RegistrationsBaseUrl\"}]}"));
+                    if (url.EndsWith("/registration/contoso.analyzers/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.analyzers/page/1.2.0-beta.556/1.3.180.json\",\"count\":2,\"lower\":\"1.2.0-beta.556\",\"upper\":\"1.3.180\"}]}"));
+                    if (url.EndsWith("/page/1.2.0-beta.556/1.3.180.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"1.2.0-beta.556\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.analyzers/1.2.0-beta.556\"}},{\"catalogEntry\":{\"version\":\"1.3.180\",\"packageContent\":\"https://feed.example/v3/af/registration/Download/contoso.analyzers/1.3.180\"}}]}"));
+                    if (url.EndsWith("/Download/contoso.analyzers/1.2.0-beta.556")) return (200, AnalyzerOnlyNupkg());
+                    if (url.EndsWith("/Download/contoso.analyzers/1.3.180")) return (200, AnalyzerOnlyNupkg());
+                    return (404, []);
+                }
+            };
+            var anyCache = Path.Combine(root, "cache-any"); Directory.CreateDirectory(anyCache);
+            // the estate pins the PRERELEASE (years of beta releases): the join must record the
+            // usage evidence instead of dropping it
+            Program.WriteArtifactFile(CompatCache.CachePath(anyCache, "Contoso.Analyzers"), JsonSerializer.Serialize(new CompatCacheFile
+            {
+                Id = "Contoso.Analyzers", UsedVersions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { ["1.2.0-beta.556"] = ["repo-a"] },
+                UsedByRepos = ["repo-a"],
+                Versions = [new CompatVersion { Version = "1.2.0-beta.556", InUse = true, Note = "prerelease pin" }],
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", anyCache, "Contoso.Analyzers", null, anyHandler) != 0)
+                throw new Exception("the analyzer probe exited non-zero");
+            var anyCacheFile = CompatCache.Load(anyCache, "Contoso.Analyzers") ?? throw new Exception("analyzer cache missing");
+            var stable = anyCacheFile.Versions.FirstOrDefault(v => v.Version == "1.3.180") ?? throw new Exception("the stable release must be probed");
+            if (stable.TargetFrameworks.Single() != "any") throw new Exception($"an analyzer-only package with no dependency groups must record any (got [{string.Join(",", stable.TargetFrameworks)}])");
+            if (CompatCache.SupportsTfm(stable.TargetFrameworks, "net10.0") != true) throw new Exception("any must admit net10.0");
+            var beta = anyCacheFile.Versions.First(v => v.Version == "1.2.0-beta.556");
+            if (!beta.InUse) throw new Exception("the pinned prerelease keeps InUse through the probe");
+
+            // and the RESOLUTION: prerelease-only pins read prerelease-pin, ceiling shown for reference
+            var pp = Upgrade.Resolve(anyCacheFile, ["net10.0"], null, ["1.2.0-beta.556"]);
+            if (pp.Status != "prerelease-pin" || pp.AllowedMax is null)
+                throw new Exception($"prerelease-only pins must read prerelease-pin with the stable ceiling shown (got {pp.Status}/{pp.AllowedMax})");
 
             // the ceiling cap: a probed record above the feed's list is not a recommendation
             probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });

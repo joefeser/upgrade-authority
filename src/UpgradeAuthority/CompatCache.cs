@@ -55,6 +55,7 @@ public static class CompatCache
     // in the onboarding path, never a guessed "compatible".
     public static bool? SupportsTfm(IReadOnlyList<string> packageTfms, string repoTfm)
     {
+        if (packageTfms.Any(t => t.Equals("any", StringComparison.OrdinalIgnoreCase))) return true; // the evidence-of-absence case: nothing in the package excludes a framework
         var major = RepoTfmMajor(repoTfm);
         if (major is null) return null;
         var admitted = false;
@@ -176,7 +177,7 @@ public static class CompatCache
                 try
                 {
                     using var zip = System.IO.Compression.ZipFile.OpenRead(path);
-                    tfms = TfmFolders(zip);
+                    tfms = GetTfmEvidence(zip);
                 }
                 catch (Exception ex) when (ex is IOException or System.IO.InvalidDataException)
                 {
@@ -203,13 +204,17 @@ public static class CompatCache
 
     // ---- the shared probe core (folder path and feed path both land here) ----
 
-    // TFM evidence from the package's framework-named asset folders, in confidence order:
-    // lib/** is the runtime truth; when a package has NO lib assets (collector/analyzer/build
-    // packages — coverlet.collector ships build/netstandard2.0 with no lib at all), ref/** and
-    // then build/** carry the same framework-named evidence. Marker entries (lib/_._) and
-    // non-net segments are not evidence. A package with no net-named folder anywhere stays
-    // undetermined — onboarding, never a guess.
-    private static List<string> TfmFolders(System.IO.Compression.ZipArchive zip)
+    // TFM evidence, in confidence order: lib/** is the runtime truth; when a package has NO
+    // lib assets (collector/build packages — coverlet.collector ships build/netstandard2.0
+    // with no lib), ref/** then build/** carry the same framework-named evidence; when there
+    // are no asset folders AT ALL (analyzer packages — StyleCop.Analyzers ships only
+    // analyzers/dotnet/), the nuspec's dependency groups are the evidence: a group with a
+    // targetFramework names it, and a package with NO dependency groups (or none carrying a
+    // targetFramework) admits EVERY framework — that is how NuGet's own engine decides
+    // compatibility (nothing exists that could exclude a framework), so recording "any" is
+    // the evidence of absence of exclusions, not a guess. Marker entries and non-net segments
+    // are not asset evidence.
+    private static List<string> GetTfmEvidence(System.IO.Compression.ZipArchive zip)
     {
         foreach (var root in new[] { "lib/", "ref/", "build/" })
         {
@@ -222,7 +227,33 @@ public static class CompatCache
                 .ToList();
             if (tfms.Count > 0) return tfms;
         }
-        return [];
+        return NuspecDependencyTfms(zip);
+    }
+
+    // the nuspec's dependency groups as the last evidence tier
+    private static List<string> NuspecDependencyTfms(System.IO.Compression.ZipArchive zip)
+    {
+        var nuspec = zip.Entries.FirstOrDefault(e => e.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+        if (nuspec is null || nuspec.Length > 1024 * 1024) return [];
+        try
+        {
+            using var stream = nuspec.Open();
+            var doc = System.Xml.Linq.XDocument.Load(stream, System.Xml.Linq.LoadOptions.None);
+            var groups = doc.Descendants()
+                .Where(e => e.Name.LocalName.Equals("dependencies", StringComparison.OrdinalIgnoreCase))
+                .SelectMany(d => d.Elements().Where(g => g.Name.LocalName.Equals("group", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (groups.Count == 0) return ["any"]; // no dependency groups: nothing excludes any framework
+            var declared = groups
+                .Select(g => g.Attribute("targetFramework")?.Value ?? "")
+                .Where(tfm => tfm.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(t => t, StringComparer.Ordinal)
+                .ToList();
+            if (declared.Count == 0) return ["any"]; // groups exist but none carries a targetFramework: applies to any
+            return declared.All(t => t.StartsWith("net", StringComparison.OrdinalIgnoreCase)) ? declared : [];
+        }
+        catch (System.Xml.XmlException) { return []; } // unparseable nuspec: undetermined, never guessed
     }
 
     // Apply one probe result: a stub record upgrades (InUse preserved), a probed record is
@@ -456,7 +487,7 @@ public static class CompatCache
                 {
                     using var stream = new MemoryStream(bytes);
                     using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read);
-                    tfms = TfmFolders(zip);
+                    tfms = GetTfmEvidence(zip);
                 }
                 catch (Exception ex) when (ex is IOException or System.IO.InvalidDataException)
                 {
