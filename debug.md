@@ -67,6 +67,14 @@ dotnet $ua discover-max --feed-url https://api.nuget.org/v3-flatcontainer/ --out
 dotnet $ua discover-max --from-folder C:\ua-estate\nupkg-feed --out C:\ua-estate\compat-cache
 
 # 3) the estate view — per TFM group x package: pins, potentialMax, allowedMax, status.
+
+# 3b) THE SWEEP (the batch driver): every repo, one plan per repo, review/apply per repo at
+#     your cadence — PER LAYER, PR MERGE, NEW VERSION (the feed is the barrier; a consumer
+#     moves only to a version that is PUBLISHED, so the sweep after an internal republish +
+#     merge is the one that moves the consumers):
+dotnet $ua update C:\ua-estate\fixture --all-max --cache C:\ua-estate\compat-cache --pegs C:\ua-estate\pegs-master.v0.json --repos-root C:\repos --out C:\ua-estate\sweep
+dotnet $ua update C:\ua-estate\fixture --all-max --cache C:\ua-estate\compat-cache --pegs C:\ua-estate\pegs-master.v0.json --repos-root C:\repos --apply --out C:\ua-estate\sweep
+
 dotnet $ua upgrade-plan C:\ua-estate\fixture --cache C:\ua-estate\compat-cache --out C:\ua-estate\upgrade-plan.json
 
 # IF EVERYTHING STILL READS (tfm-unknown) after the fix: does the lockfile channel carry anything?

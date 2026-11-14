@@ -277,6 +277,16 @@ dotnet $ua update C:\ua-estate\fixture --repo <repo> --cache C:\ua-estate\compat
   --pegs pegs-master.v0.json --repos-root C:\repos --out update-plan.json     # plan
 dotnet $ua update C:\ua-estate\fixture --repo <repo> --cache C:\ua-estate\compat-cache `
   --pegs pegs-master.v0.json --repos-root C:\repos --apply                    # move the pins
+
+# 3b) the batch driver — every repo in the fixture, one plan per repo
+#     (<out-dir>/<repo>.update-plan.json), review and apply per repo AT YOUR CADENCE:
+#     PER LAYER, PR MERGE, NEW VERSION — the feed is the barrier (a consumer moves only to a
+#     version that is PUBLISHED), so sweeping an internal API's consumers waits for the
+#     republish + merge. --all-max and --repo are mutually exclusive:
+dotnet $ua update C:\ua-estate\fixture --all-max --cache C:\ua-estate\compat-cache `
+  --pegs pegs-master.v0.json --repos-root C:\repos --out C:\ua-estate\sweep          # plans
+dotnet $ua update C:\ua-estate\fixture --all-max --cache C:\ua-estate\compat-cache `
+  --pegs pegs-master.v0.json --repos-root C:\repos --apply --out C:\ua-estate\sweep  # apply
 ```
 
 **Pegs** (`pegs.v0`): three bound shapes plus one flag — `exact` ("pegged at this version"),
