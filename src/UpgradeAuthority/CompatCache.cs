@@ -449,6 +449,7 @@ public static class CompatCache
             Console.Error.WriteLine($"feed {id}: fetching version list");
             string[] versions = [];
             Dictionary<string, string> contentUrls = new(StringComparer.OrdinalIgnoreCase);
+            var versionMeta = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase); // version-lower -> declared dependency-group TFMs (absent = silent: assets are the only evidence)
             try
             {
                 if (allRegistrationBases.Length > 0)
@@ -465,7 +466,7 @@ public static class CompatCache
                             var regText = await http.GetStringAsync(regBase.TrimEnd('/') + "/" + id.ToLowerInvariant() + "/index.json");
                             using var regDoc = System.Text.Json.JsonDocument.Parse(regText);
                             var pages = new List<string>();
-                            var collected = new List<(string Version, string Content)>();
+                            var collected = new List<(string Version, string Content, List<string>? MetaTfms)>();
                             foreach (var page in regDoc.RootElement.GetProperty("items").EnumerateArray())
                             {
                                 if (page.TryGetProperty("items", out var inline))
@@ -473,7 +474,7 @@ public static class CompatCache
                                     foreach (var leaf in inline.EnumerateArray())
                                     {
                                         var ce = leaf.GetProperty("catalogEntry");
-                                        collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                                        collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : "", MetaDependencyTfms(ce)));
                                     }
                                 }
                                 else pages.Add(page.GetProperty("@id").GetString() ?? "");
@@ -485,11 +486,15 @@ public static class CompatCache
                                 foreach (var leaf in pageDoc.RootElement.GetProperty("items").EnumerateArray())
                                 {
                                     var ce = leaf.GetProperty("catalogEntry");
-                                    collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : ""));
+                                    collected.Add((ce.GetProperty("version").GetString() ?? "", ce.TryGetProperty("packageContent", out var pc) ? pc.GetString() ?? "" : leaf.TryGetProperty("packageContent", out var pc2) ? pc2.GetString() ?? "" : "", MetaDependencyTfms(ce)));
                                 }
                             }
                             versions = collected.Select(c => c.Version).Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
-                            foreach (var (v, url) in collected) if (url.Length > 0 && !contentUrls.ContainsKey(v.ToLowerInvariant())) contentUrls[v.ToLowerInvariant()] = url;
+                            foreach (var (v, url, meta) in collected)
+                            {
+                                if (url.Length > 0 && !contentUrls.ContainsKey(v.ToLowerInvariant())) contentUrls[v.ToLowerInvariant()] = url;
+                                if (meta is not null && !versionMeta.ContainsKey(v.ToLowerInvariant())) versionMeta[v.ToLowerInvariant()] = meta;
+                            }
                             lastRegFailure = null;
                             break;
                         }
@@ -541,32 +546,47 @@ public static class CompatCache
             var probedHere = 0;
             foreach (var version in candidates)
             {
-                byte[] bytes;
-                try
-                {
-                    var url = contentUrls.TryGetValue(version.ToLowerInvariant(), out var content) ? content : NupkgUrl(feedBase, id, version);
-                    bytes = http.GetByteArrayAsync(url).GetAwaiter().GetResult();
-                }
-                catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or TaskCanceledException)
-                {
-                    Console.Error.WriteLine($"warning: {id} {version}: download failed ({ex.GetType().Name}) — skipped (onboarding)");
-                    Interlocked.Increment(ref failures);
-                    continue;
-                }
                 List<string> tfms;
-                try
+                var viaMetadata = versionMeta.TryGetValue(version.ToLowerInvariant(), out var meta) && meta is not null;
+                if (viaMetadata)
                 {
-                    using var stream = new MemoryStream(bytes);
-                    using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read);
-                    tfms = GetTfmEvidence(zip);
+                    // the API way (Joe's ask): the registration metadata's dependency groups ARE the
+                    // declared compatibility — no download needed for this class of package
+                    tfms = meta!;
                 }
-                catch (Exception ex) when (ex is IOException or System.IO.InvalidDataException)
+                else
                 {
-                    Console.Error.WriteLine($"warning: {id} {version}: unreadable nupkg ({ex.Message}) — skipped (onboarding)");
-                    Interlocked.Increment(ref failures);
-                    continue;
+                    byte[] bytes;
+                    try
+                    {
+                        var url = contentUrls.TryGetValue(version.ToLowerInvariant(), out var content) ? content : NupkgUrl(feedBase, id, version);
+                        bytes = await http.GetByteArrayAsync(url);
+                    }
+                    catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or TaskCanceledException)
+                    {
+                        Console.Error.WriteLine($"warning: {id} {version}: download failed ({ex.GetType().Name}) — skipped (onboarding)");
+                        Interlocked.Increment(ref failures);
+                        continue;
+                    }
+                    try
+                    {
+                        using var stream = new MemoryStream(bytes);
+                        using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read);
+                        tfms = GetTfmEvidence(zip);
+                    }
+                    catch (Exception ex) when (ex is IOException or System.IO.InvalidDataException)
+                    {
+                        Console.Error.WriteLine($"warning: {id} {version}: unreadable nupkg ({ex.Message}) — skipped (onboarding)");
+                        Interlocked.Increment(ref failures);
+                        continue;
+                    }
                 }
                 if (ApplyProbeRecord(cache, version, tfms)) Interlocked.Increment(ref failures); else { Interlocked.Increment(ref probed); probedHere++; }
+                if (viaMetadata)
+                {
+                    var metaRecord = cache.Versions.FirstOrDefault(v2 => v2.Version.Equals(version, StringComparison.OrdinalIgnoreCase));
+                    if (metaRecord is not null) metaRecord.Note = "evidence: registration metadata (no download)";
+                }
             }
             foreach (var grp in cache.Versions.Where(v => Apply.ParseCorePublic(v.Version) is not null).GroupBy(v => Apply.ParseCorePublic(v.Version)![0]))
             {
@@ -588,6 +608,24 @@ public static class CompatCache
                 Console.Error.WriteLine($"    {entry}");
         }
         return 0;
+    }
+
+    // the declared compatibility from a registration leaf's catalogEntry.dependencyGroups —
+    // the same data the nuspec tier reads from the zip, pre-harvested. Returns null when the
+    // metadata is SILENT (no dependencyGroups element — the StyleCop.Analyzers shape: only an
+    // asset inspection can answer). A group without a targetFramework = any.
+    private static List<string>? MetaDependencyTfms(System.Text.Json.JsonElement catalogEntry)
+    {
+        if (!catalogEntry.TryGetProperty("dependencyGroups", out var groups) || groups.ValueKind != System.Text.Json.JsonValueKind.Array) return null;
+        var list = new List<string>();
+        foreach (var g in groups.EnumerateArray())
+        {
+            var raw = g.TryGetProperty("targetFramework", out var tfm) && tfm.ValueKind == System.Text.Json.JsonValueKind.String ? tfm.GetString() ?? "" : "";
+            if (raw.Length == 0) return ["any"]; // a group without a targetFramework applies to any framework
+            var (short1, kind) = NormalizeTfm(raw);
+            if (kind != "other") list.Add(short1);
+        }
+        return list.Count > 0 ? list.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.Ordinal).ToList() : null;
     }
 
     // registration partition rank: /Versioned and /3.6.0 serve BOTH semver partitions and win;

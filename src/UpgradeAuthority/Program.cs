@@ -4983,6 +4983,30 @@ public static class Program
             var preBlocked = Upgrade.Resolve(preOnly, ["net8.0"], null, []);
             if (preBlocked.Status != "compat-blocked") throw new Exception("without the flag the prerelease-only package stays blocked");
 
+            // the METADATA-FIRST probe (Joe's API way): dependencyGroups in the registration pages
+            // answer compatibility WITHOUT downloading — the download counter must stay at zero
+            // for a metadata-resolved package
+            var dlCount = 0;
+            var metaHandler = new FakeFeedHandler
+            {
+                Responder = url =>
+                {
+                    if (url == "https://feed.example/v3/af/index.json") return (200, System.Text.Encoding.UTF8.GetBytes("{\"resources\":[{\"@id\":\"https://feed.example/v3/af/registration/\",\"@type\":\"RegistrationsBaseUrl\"}]}"));
+                    if (url.EndsWith("/registration/contoso.meta3/index.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"@id\":\"https://feed.example/v3/af/registration/contoso.meta3/page/1.1.0/1.2.0.json\",\"count\":2,\"lower\":\"1.1.0\",\"upper\":\"1.2.0\"}]}"));
+                    if (url.EndsWith("/page/1.1.0/1.2.0.json")) return (200, System.Text.Encoding.UTF8.GetBytes("{\"items\":[{\"catalogEntry\":{\"version\":\"1.1.0\",\"dependencyGroups\":[{\"targetFramework\":\"net8.0\"}]}},{\"catalogEntry\":{\"version\":\"1.2.0\",\"dependencyGroups\":[{\"targetFramework\":\"net10.0\"}]}}]}"));
+                    if (url.Contains("/Download/contoso.meta3/")) { dlCount++; return (200, Nupkg("net8.0")); }
+                    return (404, []);
+                }
+            };
+            var meta3Cache = Path.Combine(root, "cache-meta3"); Directory.CreateDirectory(meta3Cache);
+            Program.WriteArtifactFile(CompatCache.CachePath(meta3Cache, "Contoso.Meta3"), JsonSerializer.Serialize(new CompatCacheFile { Id = "Contoso.Meta3" }, new JsonSerializerOptions { WriteIndented = true }));
+            if (CompatCache.ProbeFeed("https://feed.example/v3/af/index.json", meta3Cache, "Contoso.Meta3", null, metaHandler).GetAwaiter().GetResult() != 0)
+                throw new Exception("the metadata-first probe exited non-zero");
+            if (dlCount != 0) throw new Exception($"metadata-resolved versions must not download (got {dlCount} download(s))");
+            var metaRec = CompatCache.Load(meta3Cache, "Contoso.Meta3")!.Versions.FirstOrDefault(v => v.Version == "1.2.0");
+            if (metaRec is null || !metaRec.TargetFrameworks.Contains("net10.0") || metaRec.Note is null || !metaRec.Note.Contains("registration metadata"))
+                throw new Exception($"the metadata evidence must land in the record (got {metaRec?.Version}: [{string.Join(",", metaRec?.TargetFrameworks ?? [])}] {metaRec?.Note})");
+
             // the ceiling cap: a probed record above the feed's list is not a recommendation
             probed3.Versions.Add(new CompatVersion { Version = "99.0.0", TargetFrameworks = ["net8.0"] });
             if (CompatCache.Ceiling(probed3, "net8.0", null, null, maxVersion: "16.0.0") != "13.0.2")
