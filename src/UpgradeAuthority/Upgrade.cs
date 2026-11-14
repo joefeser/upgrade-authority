@@ -332,7 +332,9 @@ public static class Upgrade
             ["tfms"] = tfms,
             ["packages"] = packageRows,
         };
-        return (0, JsonSerializer.Serialize(report, WriteOpts).ReplaceLineEndings("\n") + "\n");
+        var text = JsonSerializer.Serialize(report, WriteOpts).ReplaceLineEndings("\n") + "\n";
+        if (o.OutPath is { } op) Program.WriteArtifactFile(op, text); // the batch driver passes a per-repo path; Update honors it directly
+        return (0, text);
     }
 
     // E2's attribute spells "PackageVersion/Version" in the evidence; the FILE attribute is "Version"
@@ -408,6 +410,39 @@ public static class Upgrade
             return current;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return path; }
+    }
+
+    // --------------------------------------------- the batch driver: --all-max ----
+    // PER LAYER, PR MERGE, NEW VERSION (Joe's law): the batch never automates the internal
+    // cascade — the FEED is the barrier (a consumer can only move to a version that is
+    // PUBLISHED), and the operator drives the cadence: sweep the layer, apply, publish the
+    // next internal version, merge, sweep again. Each repo gets its own plan report so the
+    // review and the apply stay per-repo decisions.
+    public sealed record UpdateAllOptions(string FixtureDir, string ReposRoot, string CacheDir, string? MasterPegs, string? EstatePegs, bool Apply, string OutDir, int PlanLimit = 0);
+
+    public static (int Rc, int Planned, int Applied, List<string> Skipped) UpdateAll(UpdateAllOptions o)
+    {
+        if (!TryLoadEvidence(o.FixtureDir, out var evidence, out var error)) { Console.Error.WriteLine($"error: {error}"); return (1, 0, 0, []); }
+        Directory.CreateDirectory(o.OutDir);
+        var repos = evidence!.Facts.Select(f => f.Repo).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        var planned = 0; var applied = 0;
+        var skipped = new List<string>();
+        foreach (var repo in repos)
+        {
+            var leaf = RepoLeaf(repo);
+            var repoDir = Path.Combine(Path.GetFullPath(o.ReposRoot), leaf);
+            if (o.Apply && !Directory.Exists(repoDir))
+            {
+                skipped.Add($"{leaf} (no checkout under {o.ReposRoot})");
+                continue;
+            }
+            var (rc, _) = Update(new UpdateOptions(o.FixtureDir, repo, o.ReposRoot, o.CacheDir, o.MasterPegs, o.EstatePegs, o.Apply, Path.Combine(o.OutDir, leaf + ".update-plan.json"), UpdateDotNet: false));
+            if (rc != 0) { skipped.Add($"{leaf} (update exited {rc})"); continue; }
+            planned++;
+            if (o.Apply) applied++;
+            Console.Error.WriteLine($"all-max {leaf}: plan written" + (o.Apply ? " + applied" : ""));
+        }
+        return (0, planned, applied, skipped);
     }
 
     // ------------------------------------------------- surface 2: ua upgrade-plan ----

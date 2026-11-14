@@ -218,10 +218,24 @@ public static class Program
                 var repoU = GetOpt(args, "--repo");
                 var reposRootU = GetOpt(args, "--repos-root");
                 var cacheU = GetOpt(args, "--cache");
-                if (fixtureU is null || repoU is null || cacheU is null)
-                { Console.Error.WriteLine("error: update requires <fixture-dir>, --repo <name>, and --cache <dir> (--repos-root only needed for --apply)"); return 1; }
+                var allMax = args.Contains("--all-max");
+                if (allMax && repoU is not null)
+                { Console.Error.WriteLine("error: --all-max and --repo are mutually exclusive — the batch sweeps every repo, --repo targets one"); return 1; }
+                if (fixtureU is null || cacheU is null || (!allMax && repoU is null))
+                { Console.Error.WriteLine("error: update requires <fixture-dir>, --cache <dir>, and either --repo <name> or --all-max (--repos-root needed for --apply/--all-max)"); return 1; }
                 if (args.Contains("-keep-dot-net") || args.Contains("--keep-dot-net"))
                     Console.Error.WriteLine("note: -keep-dot-net is the only V0 behavior — package pins move, TFMs are never touched");
+                if (allMax)
+                {
+                    var outDirU = GetOpt(args, "--out") ?? GetOpt(args, "-o");
+                    if (outDirU is null)
+                    { Console.Error.WriteLine("error: --all-max writes one plan per repo — --out <dir> is required"); return 1; }
+                    var (rcAll, planned, applied, skipped) = Upgrade.UpdateAll(new Upgrade.UpdateAllOptions(
+                        fixtureU!, reposRootU ?? "", cacheU, GetOpt(args, "--pegs"), GetOpt(args, "--estate-pegs"), args.Contains("--apply"), outDirU));
+                    if (rcAll != 0) return rcAll;
+                    Console.Error.WriteLine($"all-max done: {planned} repo plan(s) written" + (args.Contains("--apply") ? $", {applied} repo(s) applied" : "") + (skipped.Count > 0 ? $", {skipped.Count} skipped: {string.Join("; ", skipped)}" : ""));
+                    return 0;
+                }
                 var (rcU, textU) = Upgrade.Update(new Upgrade.UpdateOptions(
                     fixtureU, repoU, reposRootU ?? "", cacheU, GetOpt(args, "--pegs"), GetOpt(args, "--estate-pegs"),
                     args.Contains("--apply"), GetOpt(args, "--out") ?? GetOpt(args, "-o"), args.Contains("--update-dot-net"))); // --keep-dot-net IS the V0 behavior; accepted below for muscle memory
@@ -5025,11 +5039,76 @@ public static class Program
             warnLine = errCap.ToString().Split('\n').FirstOrDefault(l => l.Contains("not fetchable")) ?? "";
             if (!warnLine.Contains("401") || !warnLine.Contains("NUGET_FEED_USER")) throw new Exception($"a 401 feed must name the credential fix (got: {warnLine.Trim()})");
 
-            Console.WriteLine("ok   feed-path (URL casing; index parse; prerelease never a candidate; per-major download; feed-out drift contract; ceiling cap)"); pass++;
+            // ---- the all-max batch driver on a synthetic 3-repo estate (api -> consumers) ----
+            // PER LAYER, PR MERGE, NEW VERSION: the feed is the barrier — a consumer moves only to
+            // what is PUBLISHED; the operator drives the cadence between sweeps
+            try
+            {
+            var amFixture = Path.Combine(root, "am-fixture"); Directory.CreateDirectory(Path.Combine(amFixture, "input"));
+            var amRepos = Path.Combine(root, "am-repos"); Directory.CreateDirectory(amRepos);
+            foreach (var (leaf, pins) in new[] {
+                ("am-api", new[] { ("UASamples.Component", "15.0.3") }),
+                ("am-consumer1", new[] { ("UASamples.Component", "13.0.2"), ("Contoso.Json", "11.0.2") }),
+                ("am-consumer2", new[] { ("UASamples.Component", "13.0.1") }),
+            })
+            {
+                var dir = Path.Combine(amRepos, leaf); Directory.CreateDirectory(dir);
+                var lines = new List<string> { "<Project Sdk=\"Microsoft.NET.Sdk\">", "  <ItemGroup>" };
+                foreach (var (pkg, ver) in pins) lines.Add($"    <PackageReference Include=\"{pkg}\" Version=\"{ver}\" />");
+                lines.Add("  </ItemGroup>"); lines.Add("</Project>"); lines.Add("");
+                File.WriteAllText(Path.Combine(dir, leaf + ".csproj"), string.Join("\n", lines));
+            }
+            var amFacts = new List<string>
+            {
+                "{\"repo\":\"am-api\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"15.0.3\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net11.0\",\"line\":3,\"path\":\"am-api.csproj\",\"projects\":[],\"commitSha\":\"x\"}",
+                "{\"repo\":\"am-consumer1\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.2\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":4,\"path\":\"am-consumer1.csproj\",\"projects\":[],\"commitSha\":\"x\"}",
+                "{\"repo\":\"am-consumer1\",\"packageId\":\"Contoso.Json\",\"declaredConstraint\":\"11.0.2\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":5,\"path\":\"am-consumer1.csproj\",\"projects\":[],\"commitSha\":\"x\"}",
+                "{\"repo\":\"am-consumer2\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":4,\"path\":\"am-consumer2.csproj\",\"projects\":[],\"commitSha\":\"x\"}",
+            };
+            File.WriteAllText(Path.Combine(amFixture, "input", "package-evidence.v0.json"),
+                "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[" + string.Join(",", amFacts) + "]}");
+            File.WriteAllText(Path.Combine(amFixture, "input", "repo-frameworks.v0.json"),
+                "{\"schemaVersion\":\"repo-frameworks.v0\",\"repos\":[ {\"repo\":\"am-api\",\"tfms\":[\"net11.0\"]},{\"repo\":\"am-consumer1\",\"tfms\":[\"net8.0\"]},{\"repo\":\"am-consumer2\",\"tfms\":[\"net8.0\"]} ]}");
+            var amCache = Path.Combine(root, "am-cache"); Directory.CreateDirectory(amCache);
+            Program.WriteArtifactFile(CompatCache.CachePath(amCache, "UASamples.Component"), JsonSerializer.Serialize(new CompatCacheFile
+            {
+                Id = "UASamples.Component", AllVersionsSimple = ["13.0.2", "15.0.4"],
+                Versions = [new CompatVersion { Version = "15.0.4", TargetFrameworks = ["net11.0"] }, new CompatVersion { Version = "13.0.2", TargetFrameworks = ["net8.0"] }],
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            var amOut = Path.Combine(root, "am-out"); Directory.CreateDirectory(amOut);
+            // PLAN mode: 3 per-repo plans; the api (net11) caps at 15.0.4, the consumers (net8) at 13.0.2 — THE LAYER BARRIER
+            var (rcAm, planned, applied, skipped) = Upgrade.UpdateAll(new Upgrade.UpdateAllOptions(amFixture, amRepos, amCache, null, null, Apply: false, amOut));
+            if (rcAm != 0 || planned != 3 || applied != 0 || skipped.Count != 0) throw new Exception($"the all-max plan must cover 3 repos (got {planned}/{applied}/{skipped.Count})");
+            var apiPlan = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(amOut, "am-api.update-plan.json")));
+            var apiRow = apiPlan.GetProperty("packages").EnumerateArray().Single();
+            if (apiRow.GetProperty("allowedMax").GetString() != "15.0.4") throw new Exception($"the net11 api takes 15.0.4 (got {apiRow.GetProperty("allowedMax").GetString()})");
+            var c2Plan = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(amOut, "am-consumer2.update-plan.json")));
+            var c2Row = c2Plan.GetProperty("packages").EnumerateArray().Single();
+            if (c2Row.GetProperty("allowedMax").GetString() != "13.0.2")
+                throw new Exception($"the net8 consumer's ceiling must stay at 13.0.2 — 15.0.4 is net11-only: THE LAYER BARRIER (got {c2Row.GetProperty("allowedMax").GetString()})");
+            if (c2Row.GetProperty("status").GetString() != "would-update")
+                throw new Exception($"...but 13.0.1 -> 13.0.2 is a legitimate within-net8 move (got {c2Row.GetProperty("status").GetString()})");
+            // APPLY mode: the api's pin moves in the real checkout; the consumers stay (current)
+            var (rcAmApply, _, appliedAm, _) = Upgrade.UpdateAll(new Upgrade.UpdateAllOptions(amFixture, amRepos, amCache, null, null, Apply: true, amOut));
+            if (rcAmApply != 0 || appliedAm != 3) throw new Exception($"the all-max apply must cover 3 repos (got {appliedAm})");
+            if (!File.ReadAllText(Path.Combine(amRepos, "am-api", "am-api.csproj")).Contains("Version=\"15.0.4\""))
+                throw new Exception("the api's pin must now read 15.0.4");
+            if (!File.ReadAllText(Path.Combine(amRepos, "am-consumer2", "am-consumer2.csproj")).Contains("Version=\"13.0.2\""))
+                throw new Exception("the net8 consumer must move to 13.0.2 — within its layer, never past the barrier");
+            // the skip receipt: a repo with no checkout
+            File.WriteAllText(Path.Combine(amFixture, "input", "package-evidence.v0.json"),
+                "{\"schemaVersion\":\"package-evidence.v0\",\"source\":\"selftest\",\"facts\":[ {\"repo\":\"am-ghost\",\"packageId\":\"UASamples.Component\",\"declaredConstraint\":\"13.0.1\",\"format\":\"packagereference\",\"constraintSource\":\"Project\",\"tfm\":\"net8.0\",\"line\":3,\"path\":\"g.csproj\",\"projects\":[],\"commitSha\":\"x\"} ]}");
+            var (rcGhost, plannedGhost, _, skippedGhost) = Upgrade.UpdateAll(new Upgrade.UpdateAllOptions(amFixture, amRepos, amCache, null, null, Apply: true, amOut));
+            if (rcGhost != 0 || plannedGhost != 0 || skippedGhost.Count != 1 || !skippedGhost[0].Contains("no checkout"))
+                throw new Exception($"a repo without a checkout must carry a skip receipt (got {plannedGhost}/{skippedGhost.Count})");
+
+            Console.WriteLine("ok   all-max-driver (per-repo plans; the layer barrier via feed truth; per-repo apply; the skip receipt)"); pass++;
+        }
+        catch (Exception ex) { fail++; Console.WriteLine($"FAIL all-max-driver: {ex.Message}"); }
+
+        Console.WriteLine("ok   feed-path (URL casing; index parse; prerelease never a candidate; per-major download; feed-out drift contract; ceiling cap)"); pass++;
         }
         catch (Exception ex) { fail++; Console.WriteLine($"FAIL feed-path: {ex.Message}"); }
-
-        Console.WriteLine(fail == 0 ? $"SELFTEST PASS ({pass} cases)" : $"SELFTEST FAIL ({fail} failing)");
 
         Console.WriteLine(fail == 0 ? $"SELFTEST PASS ({pass} cases)" : $"SELFTEST FAIL ({fail} failing)");
         return fail == 0 ? 0 : 1;
